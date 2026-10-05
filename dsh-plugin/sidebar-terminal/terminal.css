@@ -1,0 +1,160 @@
+/* Functional layout is available in desktop and 原版. xterm structure is bundled.
+ *
+ * This file and `ui-overlay/theme.css` are two tiers of the same surface, split by
+ * MODE rather than by taste. The sidebar rules are UNGATED, so they apply in 原版 as
+ * well: the terminal plugin registers its tab type in both modes (only the guide
+ * entry is withdrawn), so a terminal left open when the page switches must still
+ * lay out - it simply loses the overlay's palette and spacing.
+ *
+ * The rules here therefore carry structure and nothing else: flex, sizing,
+ * overflow, and the few colours that must exist even with no overlay loaded. Every
+ * value that is a design DECISION - the header's 38px, the state tones, the select
+ * look, the hover washes - lives in `theme.css`, where the `data-dsh-ui` gate can
+ * reach it. A value written in both places is a value that can drift.
+ *
+ * The Shell picker carries its own resting look as an INLINE style from
+ * `runtime.mjs` (the `SHELL_SELECT` table), because that is where the measurements
+ * behind it are recorded; `theme.css` owns only its hover, focus and font-family.
+ */
+html body .dshTerminal { display:flex; flex-direction:column; width:100%; height:100%; min-width:0; min-height:0; overflow:hidden; color:var(--dsw-alias-label-primary,#252830); background:var(--dsw-alias-bg-base,#fff); }
+html body .dshTerminal__header { display:flex; flex-wrap:nowrap; align-items:center; flex:none; box-sizing:border-box; min-width:0; min-height:38px; gap:8px; padding:5px 10px; border-bottom:1px solid var(--dsw-alias-border-l3,#ddd); }
+
+/* The status may SHRINK and truncate but never grows: it is `flex: 0 1 auto`, so
+   its tooltip's hover area is the text rather than the empty half of the row. The
+   controls sit in their own right-aligned group (`.dshTerminal__actions`), which is
+   what keeps the row's layout stable when the shell picker is absent.
+ *
+ * The dot-word spacing is `gap`, not the spaces in the markup: the status is a
+ * flex container, and an anonymous flex item holding only white space is never
+ * rendered, so the markup's spaces are inert here. The 6px matches the dock
+ * label's dot-to-title gap. */
+html body .dshTerminal__status { display:inline-flex; align-items:center; gap:6px; flex:0 1 auto; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; line-height:18px; color:var(--dsw-alias-label-secondary,#4a4f57); }
+/* Scale both controls, including their text, radii, chevron and spacing together.
+   Unlike transform, zoom also reduces their layout size: 36px becomes 27px,
+   leaving room for the header's padding and divider within its 38px height. */
+html body .dshTerminal__actions { display:inline-flex; align-items:center; flex:none; gap:8px; margin-left:auto; zoom:.75; }
+
+/* The dot is the colour and the state word beside it is the meaning, so a reader
+   who cannot separate the tints still gets the fact. The tones are the app's own
+   state tokens with a literal fallback, so the dot is right even in 原版, where
+   `theme.css` - and therefore its tone rules - is not applied. */
+html body .dshTerminal__dot { flex:none; width:6px; height:6px; border-radius:50%; background:var(--dsw-alias-label-tertiary,#8b9099); }
+html body .dshTerminal__status[data-dsh-terminal-tone='ok'] .dshTerminal__dot { background:var(--dsw-alias-state-success-primary,#2f9e63); }
+html body .dshTerminal__status[data-dsh-terminal-tone='busy'] .dshTerminal__dot { background:var(--dsw-alias-state-warn-primary,#c8871f); }
+html body .dshTerminal__status[data-dsh-terminal-tone='bad'] .dshTerminal__dot { background:var(--dsw-alias-state-error-primary,#d64545); }
+
+/* Both controls are pills. Only their shape is fixed here; their fills and hovers
+   belong to `theme.css` (and, for the select, to its inline style). */
+html body .dshTerminal__shell { flex:none; font-family:inherit; }
+
+.dshTerminalTabMenu__switch { display:flex; align-items:center; justify-content:space-between; gap:20px; width:100%; }
+.dshTerminalTabMenu__submenu { position:fixed; z-index:2147483647; min-width:180px; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; padding:4px; }
+.dshTerminalTabMenu__error { max-width:260px; padding:6px 10px; color:var(--dsw-alias-label-error, #df6060); font-size:12px; overflow-wrap:anywhere; }
+html body .dshTerminalSettings__row { display:flex; align-items:center; flex-wrap:wrap; gap:8px; padding:16px 0; border-bottom:.5px solid var(--dsw-alias-border-l2); }
+html body .dshTerminalSettings__text { display:flex; flex:1; flex-direction:column; gap:4px; min-width:160px; padding-right:16px; }
+html body .dshTerminalSettings__title { color:var(--dsw-alias-label-primary); font-size:14px; line-height:22px; }
+html body .dshTerminalSettings__hint { color:var(--dsw-alias-label-secondary); font-size:12px; line-height:18px; }
+html body .dshTerminalSettings__selector:hover { background:var(--dsw-alias-interactive-bg-hover)!important; }
+html body .dshTerminalSettings__selector:focus-visible { outline:2px solid var(--dsw-alias-state-focus-primary,#4c83e8); outline-offset:2px; }
+html body .dshTerminalSettings__selector:disabled { opacity:.55; cursor:default!important; }
+html body .dshTerminal__more { display:inline-flex; align-items:center; justify-content:center; flex:none; box-sizing:border-box; min-width:34px; height:28px; padding:0 10px; color:var(--dsw-alias-label-secondary,#4a4f57); font:inherit; font-size:14px; line-height:1; letter-spacing:1px; background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.12)); border:none; border-radius:14px; cursor:pointer; }
+
+/* The stand-in menu, for a page where the app's Menu primitive could not be
+   resolved. Ungated like the rest of this file: a fallback that only works in one
+   mode is not a fallback. */
+html body .dshTerminal__moreHost { position:relative; display:inline-flex; flex:none; }
+html body .dshTerminal__moreList { position:absolute; top:calc(100% + 4px); right:0; z-index:20; display:flex; flex-direction:column; gap:2px; min-width:132px; padding:4px; background:var(--dsw-alias-bg-layer-1,#fff); border:0.5px solid var(--dsw-alias-border-l3,#ddd); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
+html body .dshTerminal__moreList button { padding:6px 10px; color:inherit; font:inherit; font-size:12px; line-height:18px; text-align:left; background:transparent; border:none; border-radius:6px; cursor:pointer; }
+html body .dshTerminal__moreList button:hover { background:var(--dsw-alias-interactive-bg-hover,rgba(65,118,230,.08)); }
+
+/* The right-click menu (复制/粘贴) wears the same menu idiom as the fallback list
+   above, fixed to the pointer instead of hanging from a trigger. It is a child of
+   the screen element on purpose - see the note in `runtime.mjs`: a body-level
+   menu would let focus leave the surface and drop the input grant between the
+   right-click and the paste it serves. Fixed positioning still escapes the
+   viewport's overflow clip, because no ancestor of the screen transforms it. */
+html body .dshTerminal__context { position:fixed; z-index:20; display:flex; flex-direction:column; gap:2px; min-width:132px; padding:4px; background:var(--dsw-alias-bg-layer-1,#fff); border:0.5px solid var(--dsw-alias-border-l3,#ddd); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
+html body .dshTerminal__context button { padding:6px 10px; color:inherit; font:inherit; font-size:12px; line-height:18px; text-align:left; background:transparent; border:none; border-radius:6px; cursor:pointer; }
+html body .dshTerminal__context button:enabled:hover { background:var(--dsw-alias-interactive-bg-hover,rgba(65,118,230,.08)); }
+html body .dshTerminal__context button:disabled { opacity:.4; cursor:default; }
+html body .dshTerminal__context button:focus-visible { outline:2px solid var(--dsw-alias-state-info-primary,#4176e6); outline-offset:-2px; }
+html body .dshTerminal__context[data-dsh-upstream-terminal-menu] { z-index:1000; color:var(--dsw-alias-label-primary); }
+
+/* The notice rows and the 启动目录 row are gone from the surface: the state's
+   tooltip carries the directory and whichever condition a notice used to show.
+   Nothing writes `.dshTerminal__notice` or `.dshTerminal__cwd` any more, so no
+   rule for either is left here - a dead selector kept "just in case" is how a
+   later reader comes to believe the element still exists. */
+html body .dshTerminal__recovery { padding:6px 10px; font-size:12px; flex:none; overflow-wrap:anywhere; max-height:160px; overflow:auto; }
+html body .dshTerminal__recovery button { margin:3px; }
+html body .dshTerminal__viewport { position:relative; flex:1 1 0; min-height:0; min-width:0; overflow:hidden; }
+/* Empty conversations give the corner an auto margin; the fallback owns that spacing. */
+html body [data-dsh-dock-toggle-fallback] + [data-conversation-header-corner] { margin-left:8px; }
+html body .dshTerminal__screen { position:absolute; inset:0; padding:5px 6px; box-sizing:border-box; }
+html body .dshTerminal .xterm { height:100%; }
+
+/* Bottom surface: the overlay is pointer-events:none, so opt this seat in.
+   It stays in the frame's z=20 layer, below the host's portalled menus/dialogs.
+
+   THE REGION EXCLUDES THE LEFT COLUMN. The panel is anchored to the BOTTOM edge,
+   so its left edge starts where the sidebar ends and the sidebar keeps its full
+   height beside it. `--dsh-terminal-dock-left` is measured by the component (the
+   sidebar's width is a solved grid track with no variable to read), and the frame
+   reserves the row with `padding-bottom` on the columns to the right of the
+   sidebar rather than on the frame — see the paired rules in `ui-overlay/theme.css`.
+
+   A panel that ignored the sidebar would slide under it and hide the workspace
+   list, and the sidebar is `overflow:hidden` with a higher effective paint order,
+   so the columns would not even be visible to complain about. */
+/* Both insets determine the remaining width. Override the shared terminal's
+   width:100% in this file and theme.css, which would extend past the right edge. */
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock.dshTerminal { position:fixed; left:var(--dsh-terminal-dock-left,0px); right:0; width:auto; bottom:0; z-index:0; pointer-events:auto; box-sizing:border-box; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); border-top:1px solid var(--dsw-alias-border-l3); }
+html[data-dsh-ui='vanilla']:not([data-dsh-terminal-dock-visible]) body .dshTerminalDock { display:none; }
+/* A shortcut may explicitly reveal the terminal while using the original UI. */
+html[data-dsh-terminal-dock-visible] body [class*='_centerCol'] { padding-bottom:min(var(--dsh-terminal-dock-height,0px),100%); }
+html[data-dsh-terminal-dock-visible] body #root [data-sidebar-right-panel='push'] { bottom:var(--dsh-terminal-dock-height,0px); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__resize { position:absolute; left:0; right:0; top:0; height:5px; cursor:ns-resize; touch-action:none; z-index:1; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__resize:hover,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__resize:focus-visible { background:var(--dsw-alias-interactive-bg-hover); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__bar { display:flex; align-items:center; flex:none; gap:4px; height:38px; min-width:0; box-sizing:border-box; padding:4px 10px 3px 8px; border-bottom:.5px solid var(--dsw-alias-border-l3); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__tabs { display:flex; align-items:center; flex:0 1 auto; min-width:0; gap:4px; overflow-x:auto; scrollbar-width:thin; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__tab { display:flex; align-items:center; flex:0 0 auto; min-width:86px; max-width:180px; height:28px; border-radius:12px; color:var(--dsw-alias-label-secondary); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__tab[data-active='true'] { background:var(--dsw-alias-bg-module-platform); color:var(--dsw-alias-label-primary); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__tab > span:not(.dshTerminalDock__sr) { display:inline-flex; min-width:0; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock button { font-family:inherit; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__label { display:inline-flex; align-items:center; gap:6px; flex:1 1 auto; min-width:0; height:28px; padding:0 6px 0 8px; color:inherit; font-size:13px; border:0; border-radius:12px; background:transparent; cursor:pointer; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__label[data-dsh-terminal-tone='ok'] .dshTerminal__dot { background:var(--dsw-alias-state-success-primary,#2f9e63); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__label[data-dsh-terminal-tone='busy'] .dshTerminal__dot { background:var(--dsw-alias-state-warn-primary,#c8871f); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__label[data-dsh-terminal-tone='bad'] .dshTerminal__dot { background:var(--dsw-alias-state-error-primary,#d64545); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__close,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__add,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminal__collapse { display:inline-flex; align-items:center; justify-content:center; flex:none; width:24px; height:24px; padding:0; color:var(--dsw-alias-label-secondary); font-size:18px; line-height:1; background:transparent; border:0; border-radius:6px; cursor:pointer; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__close { width:20px; height:20px; margin-right:4px; font-size:16px; }
+/* Keep the shell/menu at their compact scale, but give 收起 the conversation
+   header's actual 28px button and centered 15px glyph. Scaling the whole actions
+   row would shrink this button to 21px. */
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock .dshTerminal__actions { zoom:1; gap:6px; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock .dshTerminal__actions > :not(.dshTerminal__collapse) { zoom:.75; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminal__collapse { box-sizing:border-box; width:28px; height:28px; padding:6px; border-radius:28px; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminal__collapse svg { display:block; flex:none; width:15px; height:15px; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__tab:hover,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__close:hover,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__add:hover,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminal__collapse:hover { background:var(--dsw-alias-interactive-bg-hover); }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock button:focus-visible,
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__resize:focus-visible { outline:2px solid var(--dsw-alias-state-info-primary,#4176e6); outline-offset:-2px; }
+/* The condition row that used to sit here is gone: nothing renders
+   `.dshTerminalDock__notice` any more, because a terminal that has gone wrong
+   reports itself through the tab dot's colour and its tooltip instead of a line of
+   text in the layout. The rule is deleted rather than kept "just in case" — a dead
+   selector is how a later reader comes to believe the element still exists, which is
+   exactly the note this file already carries for `.dshTerminal__notice` above. */
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__empty { margin:12px; color:var(--dsw-alias-label-secondary); font-size:12px; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__sr { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__tooltip { position:fixed; z-index:2; width:max-content; max-width:min(320px,calc(100vw - 8px)); overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; box-sizing:border-box; padding:8px 10px; border-radius:8px; background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); border:1px solid var(--dsw-alias-border-l3); box-shadow:0 4px 16px #0003; font-size:12px; pointer-events:none; }
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock .dshTerminal__moreList { top:auto; bottom:calc(100% + 4px); }
+@media (max-width:520px) {
+  html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock .dshTerminal__shell { max-width:140px !important; }
+  html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock__bar { padding-left:4px; padding-right:4px; }
+}

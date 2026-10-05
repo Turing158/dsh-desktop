@@ -1,0 +1,18 @@
+{
+  "name": "@dsh-desktop/sidebar-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Right-sidebar terminal interface for DeepseekHarness desktop",
+  "main": "index.js",
+  "exports": {
+    ".": { "default": "./index.js" },
+    "./client": { "default": "./client.js" }
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right"]
+    }
+  }
+}

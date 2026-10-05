@@ -1,0 +1,301 @@
+html[data-dsh-browser] .dshTb__controls { display: none; }
+
+/* ── the remote page's reduced title bar ────────────────────────────────────
+ * The bar renders only the quick actions, the mark, and the theme switch on a
+ * browser page (the title-bar plugin skips the menus and window controls
+ * there); these rules dress the two pieces it gains. They are keyed on
+ * `data-dsh-browser` rather than a width, because the remote page is a phone
+ * page at any size a browser opens it. */
+html[data-dsh-browser] .dshTb { padding-right: max(8px, env(safe-area-inset-right)); }
+
+/* The quick actions: the sidebar rail's controls, rebuilt by the overlay's DOM
+ * tier as icon buttons with accessible labels (see `ui-overlay/dom.js`). The rail's own drawer
+ * toggle is not among them — the bar's mark is that control. */
+html[data-dsh-browser] .dshTb__quick { display: flex; align-items: center; gap: 2px; flex: none; min-width: 0; }
+html[data-dsh-browser] .dshTb__quickItem {
+  appearance: none; border: 0; background: transparent; cursor: default;
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 40px; height: 40px; padding: 0; border-radius: 8px;
+  color: var(--dsw-alias-label-secondary, #4a4f57);
+  font: inherit; font-size: 13px; line-height: 1;
+  transition: background-color 120ms ease-out;
+}
+html[data-dsh-browser] .dshTb__quickItem:active { background-color: var(--dsw-alias-interactive-bg-active, rgb(0 0 0 / 8%)); }
+html[data-dsh-browser] .dshTb__quickIcon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+html[data-dsh-browser] .dshTb__quickIcon svg { width: 16px; height: 16px; display: block; }
+html[data-dsh-browser] .dshTb__quickLabel { display: none; }
+
+/* The theme owner supplies the next action's sun, moon or system glyph. */
+html[data-dsh-browser] .dshTb__theme {
+  appearance: none; border: 0; background: transparent; cursor: default;
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 40px; height: 40px; padding: 0; margin: 0; border-radius: 8px;
+  color: var(--dsw-alias-label-secondary, #4a4f57);
+  transition: background-color 120ms ease-out;
+}
+html[data-dsh-browser] .dshTb__theme:active { background-color: var(--dsw-alias-interactive-bg-active, rgb(0 0 0 / 8%)); }
+html[data-dsh-browser] .dshTb__theme span { display: inline-flex; align-items: center; justify-content: center; }
+html[data-dsh-browser] :is(.dshTb__quickItem, .dshTb__theme, [data-sidebar-right-toggle]):focus-visible {
+  outline: 2px solid var(--dsw-alias-link, #4176e6); outline-offset: -2px;
+}
+
+/* Upstream's menu token is translucent. Resolve phone surfaces from the solid
+   theme layer, including menus in settings, inline pickers and nested menus. */
+html[data-dsh-browser] body {
+  --dsw-specific-menu: var(--dsw-alias-bg-layer-1, #fff);
+  --dsh-menu-surface: var(--dsw-alias-bg-layer-1, #fff);
+}
+html[data-dsh-browser] body :is([role='menu'], [data-menu-material], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:has(> [role='listbox'])) {
+  background-color: var(--dsw-alias-bg-layer-1, #fff);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+html[data-dsh-browser] [data-menu-material] > [class*='_material'] { display: none; }
+/* Inline menus keep their React event tree. Raise their containing header or
+   composer above the chat, including the title row's container-query context. */
+html[data-dsh-browser] body :is(header, [class*='_titleRow']):has([role='menu'], [data-menu-material], [data-trigger-menu], [role='listbox']) {
+  position: relative; z-index: 1300; overflow: visible;
+}
+html[data-dsh-browser] body [data-composer-seat]:has([role='menu'], [data-menu-material], [data-trigger-menu], [role='listbox']) {
+  z-index: 1300; overflow: visible;
+}
+
+/* ── the sidebar is a drawer ────────────────────────────────────────────────
+ * On a browser page the sidebar never takes layout width: its grid track is
+ * closed (the `!important` beats the frame's inline track sizes) and the
+ * column floats over the conversation, sliding in from the left when the
+ * mark toggles it. Do not depend on data-rightbar-collapsed: a phone rotated
+ * to landscape still uses drawers, even when the layout store chooses push.
+ * The collapsed rail is gone with the same rules: closed drawer = hidden, and
+ * the rail's controls moved into the bar (see `dom.js`). */
+html[data-dsh-browser] [class*='_frame'] { grid-template-columns: 0px minmax(0, 1fr) 0px !important; }
+/* The drawer rule below takes the sidebar OUT OF GRID FLOW, and that is what the
+ * three pins are for. With the first child absolutely positioned, auto-placement
+ * hands the remaining children the tracks IN ORDER: the centre column — the
+ * conversation, the composer, the hero — lands on track 1 (0px) and the empty
+ * right bar takes track 2 (the whole viewport). Measured on a 390px phone before
+ * the pins: `centerCol` 0×844, `rightbarCol` 390×844, composer 22px wide — a
+ * blank page with the app's own chrome on top, which reads as "the session list
+ * never loads and 新会话 does nothing". Each column therefore NAMES its track
+ * instead of relying on where the flow happens to put it, and the overlay layer
+ * (portalled dialogs, menus, the lightbox) covers the row. */
+html[data-dsh-browser] [class*='_frame'] > [class*='_centerCol'] {
+  grid-column: 2; grid-row: 1;
+}
+html[data-dsh-browser] [class*='_frame'] > [class*='_rightbarCol'] {
+  grid-column: 3; grid-row: 1;
+}
+html[data-dsh-browser] [class*='_frame'] > [class*='_overlayLayer'] {
+  grid-column: 1 / -1; grid-row: 1;
+}
+html[data-dsh-browser] [class*='_frame'] [class*='_sidebarCol'] {
+  position: absolute; top: 0; bottom: 0; left: 0; z-index: 100;
+  width: min(280px, 82vw);
+  box-sizing: border-box;
+  padding-left: max(0px, env(safe-area-inset-left));
+  box-shadow: 0 12px 32px rgb(0 0 0 / 30%);
+  transform: translateX(calc(-100% - 16px));
+  visibility: hidden;
+  transition:
+    transform 220ms var(--ds-ease-in-out, ease-in-out),
+    visibility 0s 220ms;
+}
+/* Open drawer: the frame drops `data-sidebar-collapsed` exactly while the
+   layout considers the sidebar expanded, on narrow and wide alike. */
+html[data-dsh-browser] [class*='_frame']:not([data-sidebar-collapsed]) [class*='_sidebarCol'] {
+  transform: none;
+  visibility: visible;
+  transition: transform 220ms var(--ds-ease-in-out, ease-in-out);
+}
+/* The sidebar element sizes itself inline from the layout store; inside the
+   drawer its column is the measurement. */
+html[data-dsh-browser] [class*='_frame'] [class*='_sidebarCol'] > div { width: 100% !important; }
+/* The column-resize handles are desktop affordances the drawer has no use
+   for, and the layout only mounts them while the drawer is open. */
+html[data-dsh-browser] [class*='_frame'] [class*='_handle'] { display: none; }
+/* Match DSH's dialog mask, below the drawer and above the conversation/preview. */
+html[data-dsh-browser] .dshMobile__backdrop {
+  appearance: none; -webkit-appearance: none;
+  position: absolute; inset: 0; z-index: 90;
+  border: 0; padding: 0; margin: 0; border-radius: 0;
+  background: var(--dsw-alias-bg-mask-1, rgb(0 0 0 / 24%));
+  -webkit-backdrop-filter: var(--dsw-mask-blur, blur(2px));
+  backdrop-filter: var(--dsw-mask-blur, blur(2px));
+  opacity: 0; visibility: hidden; pointer-events: none; cursor: pointer;
+  transition: opacity 220ms ease-out, visibility 0s 220ms;
+}
+html[data-dsh-browser] [class*='_frame']:not([data-sidebar-collapsed]) > .dshMobile__backdrop {
+  opacity: 1; visibility: visible; pointer-events: auto;
+  transition: opacity 220ms ease-out;
+}
+html[data-dsh-browser] .dshMobile__sessionLoading {
+  position: absolute; inset: 0; z-index: 25;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--dsw-alias-bg-base, #fff);
+  color: var(--dsw-alias-label-secondary, #4a4f57);
+  font-size: 14px;
+}
+html[data-dsh-browser] .dshMobile__spinner {
+  width: 20px; height: 20px; flex: none; box-sizing: border-box;
+  border: 2px solid var(--dsw-alias-border-l3, #c9cdd4);
+  border-top-color: var(--dsw-alias-label-primary, #171717);
+  border-radius: 50%; animation: dsh-mobile-spin 700ms linear infinite;
+}
+@keyframes dsh-mobile-spin { to { transform: rotate(360deg); } }
+
+/* Safari gives native buttons inline padding even when their grid is centred.
+   Reset only the composer's three icon controls, including send/stop variants. */
+html[data-dsh-browser] [class*='_tools'] button[class*='_add'],
+html[data-dsh-browser] [class*='_card']:has([contenteditable='true']) button[class*='_primary'] {
+  -webkit-appearance: none; appearance: none;
+  padding: 0; box-sizing: border-box; min-width: 0; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1; text-indent: 0;
+}
+html[data-dsh-browser] [class*='_tools'] button[class*='_add'] svg,
+html[data-dsh-browser] [class*='_card']:has([contenteditable='true']) button[class*='_primary'] svg {
+  display: block; flex: none; margin: 0;
+}
+
+/* The conversation is one stacking context; the right panel covers its tabs,
+   messages and composer, below the left drawer and body-portalled menus. */
+html[data-dsh-browser] [class*='_centerCol'] { isolation: isolate; }
+html[data-dsh-browser] [class*='_rightbarCol'] { z-index: 70; }
+html[data-dsh-browser] body #root [data-sidebar-right-panel] {
+  position: fixed;
+  top: var(--dsh-mobile-right-top, 94px);
+  bottom: max(0px, calc(100vh - var(--dsh-mobile-height, 100vh)));
+  right: 0; width: 100vw !important;
+  --dsh-sidebar-width: 100vw !important;
+  visibility: hidden;
+  content-visibility: hidden;
+}
+html[data-dsh-browser] body #root [data-sidebar-right-panel][data-sidebar-right-open] {
+  visibility: visible;
+  content-visibility: visible;
+  background: var(--dsw-alias-bg-base, #fff);
+}
+html[data-dsh-browser] [data-sidebar-right-panel] :is([data-sidebar-right-mode], [data-dockkit-split-button]) {
+  display: none;
+}
+html[data-dsh-browser][data-dsh-mobile-right-open] :is([data-slot='conversation.session.header.actions'], [data-slot='conversation.session.header.utilities'], [data-slot='conversation.session.header.corner']) {
+  display: none !important;
+}
+html[data-dsh-browser] [data-sidebar-right-panel] [data-sidebar-right-toggle] {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0; flex: none; border-radius: 8px;
+  color: var(--dsw-alias-label-secondary, #4a4f57);
+}
+html[data-dsh-browser] [data-sidebar-right-toggle] svg { width: 16px; height: 16px; }
+html[data-dsh-browser] [data-sidebar-right-toggle]:active { background: var(--dsw-alias-interactive-bg-active); }
+html[data-dsh-browser][data-dsh-mobile-right-open] [data-conversation-header-corner] { margin-left: auto; }
+html[data-dsh-browser] [data-sidebar-right-float-host] {
+  top: var(--dsh-mobile-right-top, 94px);
+}
+
+/* Only the tabs scroll; native actions remain at the end of the same row. */
+html[data-dsh-browser] [data-sidebar-right-panel] [data-dockkit-strip] {
+  display: flex; flex-wrap: nowrap; min-width: 0; min-height: 40px;
+  padding-right: env(safe-area-inset-right);
+}
+html[data-dsh-browser] [data-sidebar-right-panel] [data-dockkit-strip-tabs] {
+  flex: 1 1 0; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-x: contain; touch-action: pan-x pinch-zoom;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+html[data-dsh-browser] [data-dockkit-strip-tabs]::-webkit-scrollbar { display: none; }
+html[data-dsh-browser] [data-sidebar-right-panel] [data-dockkit-tab] {
+  flex: 0 0 auto; max-width: min(240px, 65vw); touch-action: pan-x pinch-zoom;
+}
+html[data-dsh-browser] [data-sidebar-right-panel] [data-dockkit-strip-fill] { display: none; }
+html[data-dsh-browser] [data-sidebar-right-panel] [data-dockkit-strip-chrome] {
+  flex: none; margin-left: auto; position: relative;
+  background: var(--dsw-alias-bg-base, #fff);
+}
+
+/* Hide shortcut decorations, including portalled menus/tooltips, while keeping
+   their actions and accessible names. Do not hide key examples inside files. */
+html[data-dsh-browser] :is([class*='_keys_'], [class*='_shortcut'], .dshTextMenu__shortcut),
+html[data-dsh-browser] :is([role='menu'], [role='tooltip'], button) kbd {
+  display: none !important;
+}
+html[data-dsh-browser] [class*='_sidebarCol'] button:has([data-slot='settings.trigger']) {
+  display: none !important;
+}
+
+/* Keep the existing geometry and type scale. Native manipulation removes tap
+   delay without disabling zoom, text selection or vertical list scrolling. */
+html[data-dsh-browser] :is(button, [role='button'], [role='menuitem'], [role='option'], a, input, textarea, [contenteditable='true']) {
+  touch-action: manipulation;
+}
+html[data-dsh-browser] :is(button, [role='button'], [role='menuitem'], [role='option']):active {
+  -webkit-tap-highlight-color: transparent;
+}
+html[data-dsh-browser] :is([data-conversation-scroll], [class*='_sidebarCol'], [role='menu'], [role='listbox']) {
+  overscroll-behavior: contain;
+}
+/* An invisible terminal textarea can use 16px without changing terminal cells;
+   this stops iOS zooming the whole page when the soft keyboard opens. */
+html[data-dsh-browser] .xterm-helper-textarea { font-size: 16px !important; }
+html[data-dsh-browser] [data-dockkit-tab] [data-dockkit-tab-close] {
+  opacity: 1; visibility: visible;
+}
+/* Keep the preview paintable through its closing fade. Hiding its content in
+   the first closed frame used to cut off every descendant's exit animation. */
+html[data-dsh-browser] body #root [data-sidebar-right-panel] {
+  opacity: 0;
+  transition: opacity 220ms ease-out, visibility 0s 220ms, content-visibility 0s 220ms;
+  transition-behavior: allow-discrete;
+}
+html[data-dsh-browser] body #root [data-sidebar-right-panel][data-sidebar-right-open] {
+  opacity: 1;
+  transition-delay: 0s;
+}
+@starting-style {
+  html[data-dsh-browser]:not([data-dsh-ui='vanilla']) body #root [data-sidebar-right-panel][data-sidebar-right-open] { opacity: 0; }
+}
+html[data-dsh-browser] body #root [data-sidebar-right-panel] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
+  transform: none;
+  transition: visibility 0s 220ms;
+}
+html[data-dsh-browser] body #root [data-sidebar-right-panel][data-sidebar-right-open] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
+  transition-delay: 0s;
+}
+html[data-dsh-browser]:is([data-dsh-ui='vanilla'], [data-dsh-desktop-animation='off']) :is([class*='_frame'], [class*='_sidebarCol'], .dshMobile__backdrop, [data-sidebar-right-panel], [data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
+  transition: none !important;
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-dsh-browser]:not([data-dsh-desktop-animation='on']) :is([class*='_frame'], [class*='_sidebarCol'], .dshMobile__backdrop, [data-sidebar-right-panel], [data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
+    transition: none !important;
+    animation: none !important;
+  }
+  html[data-dsh-browser]:not([data-dsh-desktop-animation='on']) .dshMobile__spinner { animation: none; }
+}
+
+@media (max-width: 700px) {
+  html[data-dsh-browser], html[data-dsh-browser] body { height: var(--dsh-mobile-height, 100dvh); min-height: 0; }
+  html[data-dsh-browser] #root { height: auto; min-width: 0; max-width: 100%; bottom: max(0px, calc(100vh - var(--dsh-mobile-height, 100vh))); }
+  html[data-dsh-browser] .dshTb { padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right)); }
+  html[data-dsh-browser] .dshTb__wordmark, html[data-dsh-browser] .dshTb__badge { display: none; }
+  html[data-dsh-browser] .dshTb__brand { margin-right: 0; }
+  html[data-dsh-browser] .dshTb__nav { min-width: 0; gap: 0; }
+  html[data-dsh-browser] .dshTb__item { padding-inline: 8px; min-width: 44px; }
+  html[data-dsh-browser] .dshTb__mark { min-width: 36px; }
+  html[data-dsh-browser] [data-dsh-desktop= composer] { min-width: 0; max-width: 100%; padding-bottom: env(safe-area-inset-bottom); }
+  html[data-dsh-browser] [data-dsh-desktop= composer] [contenteditable] { overflow-wrap: anywhere; max-height: 30dvh; overflow-y: auto; }
+  html[data-dsh-browser] [role=dialog] { max-width: calc(100vw - 16px); max-height: calc(var(--dsh-mobile-height, 100dvh) - 20px); box-sizing: border-box; }
+  html[data-dsh-browser] [role=dialog] :is(input,textarea,select) { min-width: 0; }
+  html[data-dsh-browser] [data-slot='settings.section'] { min-width: 0; overflow-wrap: anywhere; }
+  /* The settings shell has a semantic nav and a content sibling. On phones
+     turn the 200px navigation column into a horizontal list of section tabs. */
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) { flex-direction: column; position: relative; }
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) > nav { width: 100%; min-width: 0; box-sizing: border-box; padding: 12px; flex-shrink: 0; }
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) > nav > div:has([data-slot='settings.header']) { padding-right: 44px; margin-bottom: 8px; }
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) > nav > div:has(> button) { flex-direction: row; overflow-x: auto; gap: 4px; }
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) > nav button { width: auto; flex: none; min-height: 44px; padding: 8px 12px; white-space: nowrap; }
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) > div { width: 100%; min-height: 0; box-sizing: border-box; }
+  html[data-dsh-browser] [role=dialog]:has([data-slot='settings.section']) > div > div:has([data-slot='settings.close']) { position: absolute; top: 6px; right: 6px; }
+  html[data-dsh-browser] [data-slot='conversation.view'] { min-width: 0; }
+  html[data-dsh-browser] [data-conversation-scroll] { min-width: 0; overflow-wrap: anywhere; }
+}

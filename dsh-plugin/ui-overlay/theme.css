@@ -1,0 +1,3365 @@
+/* DeepseekHarness desktop 鈥?appearance overlay (CSS tier).
+ *
+ * Injected into the served page's <head> by the desktop app's host plugin,
+ * through DSH's own `webserver/index-inject` seam. Only appearance changes: no
+ * DSH file is edited, and a plain `dsh web` in a terminal is unaffected.
+ *
+ * How this works
+ * --------------
+ * The DSH frontend is themed entirely through CSS custom properties on `body`
+ * (`--dsw-*`), with dark mode keyed on `body[data-ds-dark-theme]`. Overriding
+ * those variables restyles the whole app coherently 鈥?including components that
+ * do not exist yet 鈥?because consumers read the variables, not literals.
+ *
+ * Every rule here is written to degrade quietly: a selector that stops matching
+ * after a DSH upgrade produces "no change", never a broken layout.
+ *
+ * Edit freely 鈥?the host plugin re-reads this file on every page render, so a
+ * window reload (Ctrl+R) is enough to see changes. No build step.
+ *
+ * The 鍘熺増 switch
+ * --------------
+ * The title bar's 鏇村 menu can put the page back to the UNMODIFIED frontend 鈥? * no accent, no rounding, no menu restyling, no hover transitions, no DOM
+ * behaviour. That is what `html:not([data-dsh-ui='vanilla'])` on every rule in
+ * sections 1鈥? is for: with `data-dsh-ui="vanilla"` on `<html>`, those rules
+ * simply stop matching, so nothing has to be reset, un-injected, or fought with
+ * `!important`. The failure mode is "overlay does nothing", which is exactly the
+ * goal.
+ *
+ * WHY A GATE RATHER THAN RE-INJECTING THE FILE. The host plugin already re-reads
+ * this file per page render, so it *could* omit the stylesheet 鈥?but section 9
+ * (the title bar) must survive, and the window is `decorations(false)`: without
+ * the bar there is no way to click a window control, drag the frame, or switch
+ * back. One file, one gate, and the bar keeps working in both modes.
+ *
+ * Sections 1鈥? are gated; section 9 is not. Within section 9, the two rules that
+ * reserve the bar's space and the bar's own styling stay active, and the one
+ * rule that only exists to cancel section 4's separator is left ungated too (it
+ * was a no-op once section 4 stopped matching, and harmless either way).
+ */
+
+/* 鈹€鈹€ 1. brand accent 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * `--dsw-alias-brand-primary` is DeepSeek near-black in light mode and
+ * off-white in dark mode. Repointing it to the DeepSeek blue tints the primary
+ * button, links, and accent text together, and has to be done in both palettes
+ * or the app looks broken the moment the user switches theme.
+ *
+ * SELECTOR CHOICE MATTERS. This file is injected in <head>, but the theme plugin
+ * injects the app's own palette at *runtime*, i.e. later in source order. With
+ * equal specificity a later rule wins, so a plain `body { 鈥?}` override here is
+ * silently ignored 鈥?verified in the live page, where the computed value stayed
+ * at the app's own colour. `html body` (specificity 0,0,2) outranks the app's
+ * light-palette rules. Do not "simplify" these selectors to `body`.
+ */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-ui-accent: #4176e6;
+  --dsw-alias-brand-primary: #4176e6;
+  --dsw-alias-button-primary-fill: #4176e6;
+  --dsw-alias-link: #4176e6;
+  /* Interactive hover/active washes pick up the accent instead of neutral grey. */
+  --dsw-alias-interactive-bg-hover: color-mix(in srgb, #4176e6 8%, transparent);
+  --dsw-alias-interactive-bg-active: color-mix(in srgb, #4176e6 14%, transparent);
+}
+
+/* Dark palette: the same accent, lightened for contrast on dark surfaces. */
+html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] {
+  --dsw-alias-brand-primary: #5686fe;
+  --dsw-alias-link: #5686fe;
+  --dsw-alias-button-primary-fill: #4176e6;
+  --dsw-alias-interactive-bg-hover: color-mix(in srgb, #5686fe 14%, transparent);
+  --dsw-alias-interactive-bg-active: color-mix(in srgb, #5686fe 22%, transparent);
+}
+
+/* The selected sidebar row uses an opaque neutral fill; tint it with the accent
+   so the active workspace reads as "selected" rather than merely darker. */
+html:not([data-dsh-ui='vanilla']) body [class*='_sessionRow'][class*='_selected'] {
+  background: color-mix(in srgb, var(--dsh-ui-accent, #4176e6) 10%, transparent);
+}
+
+/* Left edge marker on the active row, a common desktop-navigation affordance. */
+html:not([data-dsh-ui='vanilla']) body [class*='_sessionRow'][class*='_selected'] {
+  box-shadow: inset 3px 0 0 var(--dsh-ui-accent, #4176e6);
+}
+
+/* 鈹€鈹€ 2. softer, roomier surfaces 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The composer card and menus get a larger radius. `[class*="_card"]` matches
+ * CSS-module hashes loosely on purpose, so a hash change means "no rounding"
+ * rather than a layout break.
+ *
+ * `html body` prefixes are required for the same source-order reason as the
+ * accent: the app's own `.hash_card { border-radius: 22px }` is injected later,
+ * so an equal-specificity rule here is ignored (verified 鈥?the computed radius
+ * stayed at the app's value).
+ */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-ui-radius: 26px;
+}
+
+/* Desktop chrome is not document text. Opt in only the conversation and the
+   actual diff/file contents, including nested syntax and Markdown spans.
+   xterm keeps its own buffer selection and accessibility-layer rules. */
+html:not([data-dsh-ui='vanilla']) body,
+html:not([data-dsh-ui='vanilla']) body :where(*):not(:where(.xterm, .xterm *)) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+html:not([data-dsh-ui='vanilla']) body :where([data-conversation-region], .dshChanges__line code, [data-textpreview-plain], [data-code-preview] [data-code-block-content], [data-document-markdown]),
+html:not([data-dsh-ui='vanilla']) body :where([data-conversation-region], .dshChanges__line code, [data-textpreview-plain], [data-code-preview] [data-code-block-content], [data-document-markdown]) * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* Controls remain chrome even when they are nested in a readable region. */
+html:not([data-dsh-ui='vanilla']) body :is(button, [role='button'], [role='menu'], [role='listbox'], [role='tooltip'], [data-composer-placeholder], .dshChanges__number, .dshChanges__sign),
+html:not([data-dsh-ui='vanilla']) body :is(button, [role='button'], [role='menu'], [role='listbox'], [role='tooltip'], [data-composer-placeholder]) * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* The welcome brand is chrome inside the otherwise selectable conversation. */
+html:not([data-dsh-ui='vanilla']) body [data-conversation-region] [class*='_headline']:has(> [class*='_titleGroup'] > [class*='_previewBadge']),
+html:not([data-dsh-ui='vanilla']) body [data-conversation-region] [class*='_headline']:has(> [class*='_titleGroup'] > [class*='_previewBadge']) * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* Inline file references are rendered as buttons, but their labels are prose. */
+html:not([data-dsh-ui='vanilla']) body :is([data-conversation-region], [data-document-markdown]) button[class*='_fileMention'],
+html:not([data-dsh-ui='vanilla']) body :is([data-conversation-region], [data-document-markdown]) button[class*='_fileMention'] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* Editing a field still needs caret placement, drag selection and replacement. */
+html:not([data-dsh-ui='vanilla']) body :is(input, textarea, [contenteditable]:not([contenteditable='false'])),
+html:not([data-dsh-ui='vanilla']) body [contenteditable]:not([contenteditable='false']) * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* File-preview paths scroll independently; their text remains selectable. */
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label] {
+  justify-content: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: auto;
+  line-height: 20px;
+  cursor: text;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label],
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label] * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* Animate each mask edge independently without covering selectable text. */
+@property --dsh-path-left-alpha {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+@property --dsh-path-right-alpha {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label] {
+  mask-image: linear-gradient(to right, rgb(0 0 0 / var(--dsh-path-left-alpha)) 0, black 28px, black calc(100% - 28px), rgb(0 0 0 / var(--dsh-path-right-alpha)) 100%);
+  transition: --dsh-path-left-alpha 160ms ease-out, --dsh-path-right-alpha 160ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label][data-dsh-path-left-shadow] {
+  --dsh-path-left-alpha: 0;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label][data-dsh-path-right-shadow] {
+  --dsh-path-right-alpha: 0;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label]::-webkit-scrollbar {
+  display: block;
+  height: 6px;
+  cursor: default;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label]::-webkit-scrollbar-track {
+  background: transparent;
+  cursor: default;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label]::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--dsw-alias-scrollbar-bg-l2);
+  cursor: default;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label]::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-scrollbar-hover-l2);
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-path][data-path-label]:focus-visible {
+  outline: 2px solid var(--dsw-alias-link);
+  outline-offset: -2px;
+}
+
+/* Image panning stays inside its scrollport; the floating zoom toolbar is separate. */
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-body] [data-document-zoom-scrollport]:where(:has([data-image-preview] [data-document-zoom-surface]:not([hidden]))) {
+  cursor: grab;
+  overscroll-behavior: contain;
+  scroll-behavior: auto;
+}
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-body] [data-dsh-image-dragging],
+html:not([data-dsh-ui='vanilla']) body [data-textpreview-body] [data-dsh-image-dragging] * {
+  cursor: grabbing;
+}
+html:not([data-dsh-ui='vanilla']) body [data-document-zoom-scrollport]:has([data-image-preview])::-webkit-scrollbar,
+html:not([data-dsh-ui='vanilla']) body [data-document-zoom-scrollport]:has([data-image-preview])::-webkit-scrollbar-track,
+html:not([data-dsh-ui='vanilla']) body [data-document-zoom-scrollport]:has([data-image-preview])::-webkit-scrollbar-thumb {
+  cursor: default;
+}
+
+/* Keep the image visible through the toolbar without fading its labels. The
+   upstream visible class owns opacity/transform; this transition covers both
+   directions and overrides upstream reduced motion when explicitly enabled. */
+html:not([data-dsh-ui='vanilla']) body :where([data-document-zoom-frame]:has([data-image-preview])) [data-document-zoom-controls] {
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 70%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  transition: opacity 180ms ease, transform 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Compact code headers keep their 24px copy controls vertically centered. */
+html:not([data-dsh-ui='vanilla']) body [data-code-block-banner] {
+  box-sizing: border-box;
+  min-height: 28px;
+  padding-block: 2px;
+}
+
+/* Model disclosure animations retain the real form and clip only during motion. */
+[data-dsh-model-motion] { box-sizing: border-box; overflow: clip; min-height: 0; }
+[data-dsh-model-exit] { pointer-events: none; }
+[data-dsh-provider-motion] { position: relative; }
+
+html:not([data-dsh-ui='vanilla']) body [class*='_card'] {
+  border-radius: var(--dsh-ui-radius, 26px);
+}
+
+/* Inventory cards have one rounded shell, with flush header/detail surfaces. */
+html:not([data-dsh-ui='vanilla']) body :is([data-plugin-module], .dshInventory__card) {
+  border-radius: 8px;
+  /* Grid rows follow their tallest card. Never stretch a closed neighbour to
+     that height, including while React has cleared data-open but a close ghost
+     still occupies the other card. */
+  align-self: start;
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([data-plugin-module], .dshInventory__card) [class*='_card'] {
+  border-radius: 0;
+}
+
+/* Replace the native tag visually only after its decoration is ready. Preserve
+   runtime phase dots (loading/error) and their accessible labels alongside it. */
+html:not([data-dsh-ui='vanilla']) body [data-plugin-module] [class*='_cardTrailing']:has(.dshPluginStatus) > [data-tone]:not(.dshPluginStatus) {
+  display: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus {
+  --dsh-status-color: var(--dsw-alias-label-tertiary);
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsh-status-color);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus[data-tone='success'] { --dsh-status-color: var(--dsw-alias-state-success-primary); }
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus[data-tone='info'] { --dsh-status-color: var(--dsw-alias-state-business-primary); }
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus[data-tone='warning'] { --dsh-status-color: var(--dsw-alias-state-warn-primary); }
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus[data-tone='danger'] { --dsh-status-color: var(--dsw-alias-state-error-primary); }
+
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus__text {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus:hover,
+html:not([data-dsh-ui='vanilla']) body [data-plugin-module] > button:focus-visible .dshPluginStatus {
+  padding: 0 8px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus:hover .dshPluginStatus__text,
+html:not([data-dsh-ui='vanilla']) body [data-plugin-module] > button:focus-visible .dshPluginStatus__text {
+  max-width: 16em;
+  margin-left: 6px;
+  opacity: 1;
+}
+
+/* Composer materials affect only the card's surface, never the opacity of its
+   editable text or controls. No clipping layer: completion menus remain usable. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body [data-dsh-desktop='composer'] {
+  /* Two linear ranges keep the previous tint at the default 50% strength,
+     reach full transparency at zero, and keep changing through 100%. */
+  --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 144%), calc(48% + var(--dsh-composer-strength) * 48%));
+  --dsh-composer-shine: rgb(255 255 255 / min(100%, calc(var(--dsh-composer-strength) * 120%)));
+  --dsh-composer-blur: calc(var(--dsh-composer-strength) * 36px);
+}
+/* Opaque keeps the original theme surface, including its subtle border. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body[data-ds-dark-theme] [data-dsh-desktop='composer'] {
+  --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 116%), calc(26% + var(--dsh-composer-strength) * 64%));
+  --dsh-composer-shine: rgb(255 255 255 / calc(var(--dsh-composer-strength) * 24%));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body [data-dsh-desktop='composer'] {
+  --dsh-composer-strength: var(--dsh-composer-glass-strength, .5);
+  background: linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-composer-strength) * 24%)), transparent 55%),
+    color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
+  box-shadow: inset 0 1px 0 var(--dsh-composer-shine), inset 0 0 0 1px var(--dsh-composer-shine), 0 8px 24px rgb(0 0 0 / calc(var(--dsh-composer-strength) * 24%));
+  -webkit-backdrop-filter: blur(var(--dsh-composer-blur)) saturate(calc(100% + var(--dsh-composer-strength) * 60%));
+  backdrop-filter: blur(var(--dsh-composer-blur)) saturate(calc(100% + var(--dsh-composer-strength) * 60%));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='frosted'] body [data-dsh-desktop='composer'] {
+  --dsh-composer-strength: var(--dsh-composer-frosted-strength, .5);
+  background: color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(var(--dsh-composer-blur));
+  backdrop-filter: blur(var(--dsh-composer-blur));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body [data-dsh-desktop='composer'] {
+  background: color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-transparent-tint, 80%), transparent);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* Keep glass readable in older browsers without backdrop filtering. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='glass'], [data-dsh-composer-material='frosted']) body [data-dsh-desktop='composer'] {
+    background: var(--dsw-alias-bg-module-platform);
+  }
+}
+
+/* A neutral inset edge and soft shadow identify the focused composer. Keep the
+   layer mounted at rest so focus and blur both fade, including rapid reversals.
+   A separate layer preserves every material's own background and shadow. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='composer'] {
+  position: relative;
+  outline: none;
+}
+html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='composer']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-label-primary) 28%, transparent),
+    0 4px 16px rgb(0 0 0 / 10%);
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='composer']:focus-within::before {
+  opacity: 1;
+}
+
+/* 鈹€鈹€ 3. scrollbars 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * Wider, higher-contrast scrollbars: desktop use without a trackpad makes the
+ * default hairline grab area awkward.
+ */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsw-alias-scrollbar-bg-l2: color-mix(in srgb, currentColor 16%, transparent);
+  --dsw-alias-scrollbar-hover-l2: color-mix(in srgb, currentColor 32%, transparent);
+}
+
+/* 鈹€鈹€ 4. desktop identity 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * A hairline separator along the top edge, so a desktop window is
+ * distinguishable from a browser tab at a glance.
+ *
+ * A 1px SOLID line, matching the app's own border language: the app expresses
+ * separators as `--dsw-alias-border-l2` (a very low-alpha ink), which reads as a
+ * quiet edge in both palettes rather than a coloured stripe. Using the token
+ * rather than a literal keeps this line consistent with every other border in
+ * the app, including future palette changes.
+ *
+ * `color-mix` against `currentColor` is avoided here on purpose: this element
+ * hangs off `body`, whose text colour differs from the border ink, and the
+ * decorator must not inherit a tint that fights the real borders.
+ *
+ * Purely decorative and pointer-transparent, so it can never intercept input.
+ */
+html:not([data-dsh-ui='vanilla']) body::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  /* Above app chrome so it stays a clean edge while panels scroll under it. */
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+/* ── 5. popup menus ──────────────────────────────────────────────────────────
+ * One surface for primitive menus, model pickers, command suggestions and dock
+ * tab menus. Keep the app's palette and typography; blue marks interaction, not
+ * the whole panel. Role/data selectors survive upstream CSS-module hash changes.
+ */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-menu-max-width: 360px;
+  /* A solid theme layer keeps native and injected submenus equally readable. */
+  --dsh-menu-surface: var(--dsw-alias-bg-layer-1, #fff);
+  --dsh-menu-border: var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  --dsh-menu-accent: var(--dsw-alias-link, #4176e6);
+  --dsh-menu-hover: var(--dsw-alias-interactive-bg-hover);
+  --dsh-menu-selected: var(--dsw-alias-interactive-bg-active);
+  --dsh-menu-warning: color-mix(in srgb, var(--dsw-alias-state-warn-label) 70%, var(--dsw-alias-label-primary));
+  --dsh-menu-danger: color-mix(in srgb, var(--dsw-alias-state-error-primary) 90%, var(--dsw-alias-label-primary));
+  --dsh-menu-shadow: 0 3px 8px rgb(0 0 0 / 6%), 0 12px 32px rgb(0 0 0 / 10%);
+}
+
+html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] {
+  --dsh-menu-warning: color-mix(in srgb, var(--dsw-alias-state-warn-label) 85%, var(--dsw-alias-label-primary));
+  --dsh-menu-danger: color-mix(in srgb, var(--dsw-alias-state-error-primary) 65%, var(--dsw-alias-label-primary));
+  --dsh-menu-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 12px 32px rgb(0 0 0 / 20%);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) {
+  box-sizing: border-box;
+  /* Some consumers pass an inline width/min-width based on the trigger. These
+     three overrides make the longest option, rather than the anchor, size it. */
+  width: max-content !important;
+  min-width: 0 !important;
+  max-width: min(var(--dsh-menu-max-width), calc(100vw - 16px)) !important;
+  max-height: min(420px, calc(100dvh - 16px));
+  padding: 4px;
+  gap: 0;
+  border: 1px solid var(--dsh-menu-border);
+  border-radius: 12px;
+  background: var(--dsh-menu-surface);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsh-menu-shadow);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: start;
+  isolation: isolate;
+}
+
+/* Newer upstream menus add a translucent material child; injected submenus
+   have no such child. Let the shared surface above paint both menu levels. */
+html:not([data-dsh-ui='vanilla']) body [role='menu'][data-menu-material] > [class*='_material'] {
+  display: none;
+}
+
+/* Completion menus used to span the entire composer (left: 0; right: 0).
+   Bound these inline surfaces to their available column as well as the window. */
+html:not([data-dsh-ui='vanilla']) body :is([data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) {
+  right: auto;
+  max-width: min(var(--dsh-menu-max-width), calc(100vw - 16px), 100%) !important;
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([class*='_viewport'], [class*='_groups']) {
+  min-width: 0;
+  min-height: 0;
+  gap: 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* A row keeps its icon and trailing affordance, and wraps its copy only after
+   the menu reaches the cap. Do not clip the entire panel: nested menus escape it. */
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox'], [role='option']),
+html:not([data-dsh-ui='vanilla']) body [data-dockkit-tab-menu] button {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  height: auto;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  line-height: 20px;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([class*='_itemLabel'], [class*='_itemName'], [class*='_itemDescription'], [class*='_modelName'], [class*='_cellValue'], [class*='_detail']) {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_itemLabel'] {
+  flex: 1 1 auto;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemName'] {
+  flex: 0 1 auto;
+  max-width: none;
+  font-weight: 500;
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([class*='_itemDescription'], [class*='_detail']) {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) [class*='_itemIcon'] {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([class*='_check'], [class*='_trailing'], [class*='_cellChevron']) {
+  flex-shrink: 0;
+}
+
+/* Searchable command choices place their explanation below the label. A long
+   provider description must not squeeze the model name into an ellipsis. */
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) [role='option'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) [class*='_label'] {
+  grid-area: 1 / 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) [class*='_detail'] {
+  grid-area: 2 / 1;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) [class*='_check'] {
+  grid-area: 1 / 2 / 3;
+  align-self: center;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsh-menu-border);
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) input:focus-visible {
+  outline: 2px solid var(--dsh-menu-accent);
+  outline-offset: -2px;
+}
+
+/* Selection and keyboard focus remain separate, visible signals. */
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox'], [role='option']):hover:not(:disabled):not([aria-disabled='true']),
+html:not([data-dsh-ui='vanilla']) body [data-dockkit-tab-menu] button:hover:not(:disabled) {
+  background: var(--dsh-menu-hover);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([aria-selected='true'], [aria-checked='true'], [class*='_selected'], [class*='_rowActive']) {
+  background: var(--dsh-menu-selected);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) [class*='_check'] {
+  color: var(--dsh-menu-accent);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) :is(button, [role='option'], [role='menuitem']):focus-visible {
+  outline: 2px solid var(--dsh-menu-accent);
+  outline-offset: -2px;
+  background: var(--dsh-menu-hover);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) :is(:disabled, [aria-disabled='true']) {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* Preserve destructive and permission-warning semantics after the shared row
+   rules. Mix the theme's state colours with its primary label for readable text.
+   The permission preset's amber treatment is also defined in section 7. */
+html:not([data-dsh-ui='vanilla']) body [role='menu'] :is([class*='_danger'], [class*='_danger'] [class*='_itemIcon']) {
+  color: var(--dsh-menu-danger);
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_danger']:is(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']) {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [data-dsh-danger='item'] {
+  color: var(--dsh-menu-warning);
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [data-dsh-danger='item']:is(:hover, :focus-visible):not(:disabled):not([aria-disabled='true']),
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [data-dsh-danger='item'][class*='_selected'] {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsh-menu-warning);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([class*='_label_'], [class*='_groupTitle'], [class*='_sectionTitle']) {
+  padding: 6px 10px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] :is([role='separator'], div[class*='_separator']) {
+  height: 1px;
+  margin: 3px 6px;
+  background: var(--dsh-menu-border);
+}
+
+/* ShortcutKeys also calls its '+' key a separator. Keep key combinations on
+   one line and reserve the hairline treatment above for actual menu dividers. */
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_shortcut'] {
+  flex: none;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] kbd {
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  white-space: nowrap;
+}
+
+/* The upstream Menu announces submenus but does not draw a trailing glyph. */
+html:not([data-dsh-ui='vanilla']) body [role='menuitem'][aria-haspopup='menu']::after {
+  content: '';
+  flex: 0 0 6px;
+  width: 6px;
+  height: 8px;
+  margin-inline-start: auto;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTextMenu {
+  position: fixed;
+  z-index: 1400;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTextMenu__label { flex: 1; }
+html:not([data-dsh-ui='vanilla']) body .dshTextMenu__shortcut {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_footer'] {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--dsh-menu-border);
+}
+
+html:not([data-dsh-ui='vanilla']) body :is([data-dsh-desktop='reveal-submenu'], [data-dsh-desktop='copy-submenu'], [data-dockkit-tab-menu], .dshTerminal__context, .dshTerminal__moreList) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Keep nested React menus in their event tree while placing them in viewport
+   coordinates. The DOM tier flips and clamps these after measuring the content. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='nested-menu'] {
+  position: fixed;
+  left: var(--dsh-menu-left);
+  top: var(--dsh-menu-top);
+  right: auto;
+  bottom: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Touch targets grow without imposing a width on the menu. */
+@media (pointer: coarse) {
+  html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([role='menuitem'], [role='menuitemradio'], [role='menuitemcheckbox'], [role='option']),
+  html:not([data-dsh-ui='vanilla']) body [data-dockkit-tab-menu] button {
+    min-height: 44px;
+  }
+}
+
+/* 5b. Checkboxes
+ *
+ * Checkbox artwork is shared by native controls (settings, confirmations,
+ * onboarding and Markdown tasks) and the question composer's decorative span.
+ * Keep inputs, labels and the question button intact so React, forms, keyboard
+ * input and accessible checked/disabled states still belong to the frontend.
+ */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-checkbox-surface: var(--dsw-alias-bg-base, #fff);
+  --dsh-checkbox-border: #7b8597;
+  --dsh-checkbox-accent: var(--dsw-alias-link, #4176e6);
+  --dsh-checkbox-ink: #fff;
+  --dsh-checkbox-disabled-surface: #edf0f5;
+  --dsh-checkbox-disabled-border: #a0a8b6;
+  --dsh-checkbox-disabled-fill: #7b8597;
+  --dsh-checkbox-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --dsh-checkbox-mixed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8h8' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
+html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] {
+  --dsh-checkbox-border: #8490a6;
+  --dsh-checkbox-disabled-surface: #282d38;
+  --dsh-checkbox-disabled-border: #535e72;
+  --dsh-checkbox-disabled-fill: #68758c;
+}
+
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox'],
+html:not([data-dsh-ui='vanilla']) body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true'] {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1.5px solid var(--dsh-checkbox-border);
+  border-radius: 5px;
+  background: var(--dsh-checkbox-surface);
+  color: var(--dsh-checkbox-ink);
+  box-shadow: none;
+  vertical-align: -3px;
+  opacity: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+/* Retire the upstream question's pseudo-border and SVG, and onboarding's
+ * separate indicator. Its native input now paints the same artwork directly.
+ */
+html:not([data-dsh-ui='vanilla']) body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true']::before {
+  content: none;
+}
+html:not([data-dsh-ui='vanilla']) body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true'] > svg,
+html:not([data-dsh-ui='vanilla']) body [class*='_cardCheckbox'] > input[type='checkbox'] + [aria-hidden='true'] {
+  display: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']::after,
+html:not([data-dsh-ui='vanilla']) body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  mask: var(--dsh-checkbox-mark, var(--dsh-checkbox-check)) center / 16px 16px no-repeat;
+  opacity: 0;
+  pointer-events: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:is(:checked, :indeterminate),
+html:not([data-dsh-ui='vanilla']) body [role='checkbox']:is([aria-checked='true'], [aria-checked='mixed']) > [class*='_checkbox'][aria-hidden='true'] {
+  border-color: var(--dsh-checkbox-accent);
+  background-color: var(--dsh-checkbox-accent);
+}
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:is(:checked, :indeterminate)::after,
+html:not([data-dsh-ui='vanilla']) body [role='checkbox']:is([aria-checked='true'], [aria-checked='mixed']) > [class*='_checkbox'][aria-hidden='true']::after {
+  opacity: 1;
+}
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:indeterminate,
+html:not([data-dsh-ui='vanilla']) body [role='checkbox'][aria-checked='mixed'] > [class*='_checkbox'][aria-hidden='true'] {
+  --dsh-checkbox-mark: var(--dsh-checkbox-mixed);
+}
+
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:where(:hover, label:hover > input):not(:disabled):not([aria-disabled='true']),
+html:not([data-dsh-ui='vanilla']) body [role='checkbox']:hover:not(:disabled):not([aria-disabled='true']) > [class*='_checkbox'][aria-hidden='true'] {
+  border-color: var(--dsh-checkbox-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsh-checkbox-accent) 14%, transparent);
+}
+
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:focus-visible,
+html:not([data-dsh-ui='vanilla']) body [class*='_cardCheckbox'] > input[type='checkbox']:focus-visible,
+html:not([data-dsh-ui='vanilla']) body [role='checkbox']:focus-visible > [class*='_checkbox'][aria-hidden='true'] {
+  outline: 2px solid var(--dsh-checkbox-accent);
+  outline-offset: 3px;
+}
+
+/* Use explicit disabled colours: opacity on both the label and input would
+ * compound and make the checked state unreadable, especially in dark mode.
+ */
+html:not([data-dsh-ui='vanilla']) body label[class*='_checkbox']:has(> input[type='checkbox']:disabled) {
+  opacity: 1;
+  color: var(--dsw-alias-label-tertiary);
+}
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:is(:disabled, [aria-disabled='true']),
+html:not([data-dsh-ui='vanilla']) body [role='checkbox']:is(:disabled, [aria-disabled='true']) > [class*='_checkbox'][aria-hidden='true'] {
+  border-color: var(--dsh-checkbox-disabled-border);
+  background-color: var(--dsh-checkbox-disabled-surface);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+html:not([data-dsh-ui='vanilla']) body input[type='checkbox']:is(:disabled, [aria-disabled='true']):is(:checked, :indeterminate),
+html:not([data-dsh-ui='vanilla']) body [role='checkbox']:is(:disabled, [aria-disabled='true']):is([aria-checked='true'], [aria-checked='mixed']) > [class*='_checkbox'][aria-hidden='true'] {
+  border-color: var(--dsh-checkbox-disabled-fill);
+  background-color: var(--dsh-checkbox-disabled-fill);
+}
+
+@media (forced-colors: active) {
+  html:not([data-dsh-ui='vanilla']) body,
+  html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] {
+    --dsh-checkbox-surface: Canvas;
+    --dsh-checkbox-border: CanvasText;
+    --dsh-checkbox-accent: Highlight;
+    --dsh-checkbox-ink: HighlightText;
+    --dsh-checkbox-disabled-surface: Canvas;
+    --dsh-checkbox-disabled-border: GrayText;
+    --dsh-checkbox-disabled-fill: GrayText;
+  }
+  html:not([data-dsh-ui='vanilla']) body input[type='checkbox'],
+  html:not([data-dsh-ui='vanilla']) body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true'] {
+    forced-color-adjust: none;
+  }
+}
+
+/* 鈹€鈹€ 6. hover transitions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The app has ~40 `:hover` rules but only 8 transitions, so most hover states
+ * snap on and off instantly. This section keeps every existing hover *state*
+ * exactly as it is and only adds the interpolation between the two.
+ *
+ * WHAT IS ANIMATED, AND WHAT IS NOT. Only properties that cannot move a
+ * neighbour: colour, background, opacity, border-colour, box-shadow. No
+ * `transform: scale()` on layout-bearing elements and no width/height/translate,
+ * because those either shift surrounding content on hover (a documented UX
+ * anti-pattern — the layout jumps under the cursor) or force layout instead of
+ * compositing. Colour is painted but confined to the element's own box, so it
+ * does not reflow anything.
+ *
+ * NO TRANSFORM EXCEPTION REMAINS. Two hover motions used to step outside that
+ * blanket: the composer's round tool buttons scaled (section 6a) and the 外观
+ * option buttons rose one pixel (section 8c). Each was defensible in isolation —
+ * both were layout-blind, neither moved a neighbour — but a hover on a control
+ * whose feedback is a fill change should read as exactly that, and motion beside
+ * a colour change competes with it for the eye. Both are now background-only, so
+ * the blanket below is absolute rather than "absolute except two", and the next
+ * rule that wants a transform has to argue for it here.
+ *
+ * TIMING. 120ms `ease-out`, matching the app's own micro-interaction idiom
+ * (`transition: color .12s ease-out`). The usual guidance is 150–300ms, but
+ * matching the existing vocabulary matters more here: a mix of 120ms and 200ms
+ * transitions in one interface reads as inconsistency, not polish. `ease-out`
+ * because the response should start immediately and settle, rather than
+ * accelerating into the end state.
+ *
+ * WHY A GLOBAL RULE RATHER THAN PER-COMPONENT. There is one rule per element
+ * *kind*, so a component the app adds later inherits the behaviour without
+ * anyone remembering to opt in. `transition-property` is listed explicitly
+ * rather than using `all`, because `all` also animates properties that should
+ * never animate (display, position, and anything a layout pass changes), which
+ * is how "hover animations" turn into flicker.
+ */
+html:not([data-dsh-ui='vanilla']) body button,
+html:not([data-dsh-ui='vanilla']) body a,
+html:not([data-dsh-ui='vanilla']) body summary,
+html:not([data-dsh-ui='vanilla']) body [role='menuitem'],
+html:not([data-dsh-ui='vanilla']) body [role='tab'],
+html:not([data-dsh-ui='vanilla']) body [role='treeitem'],
+html:not([data-dsh-ui='vanilla']) body [role='button'],
+html:not([data-dsh-ui='vanilla']) body [role='option'],
+html:not([data-dsh-ui='vanilla']) body [role='switch'],
+html:not([data-dsh-ui='vanilla']) body [role='checkbox'],
+html:not([data-dsh-ui='vanilla']) body [role='radio'] {
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out,
+    opacity 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+/* Rows are the app's densest interactive surface (sidebar workspaces, sessions,
+   search results). They get the same treatment, plus the trailing action buttons
+   they reveal, which the app currently pops from `display: none` 鈥?an animation
+   on `display` is not possible, so instead the app's own opacity/colour change
+   is interpolated and the appearance stays instant. */
+html:not([data-dsh-ui='vanilla']) body [class*='_sessionRow'],
+html:not([data-dsh-ui='vanilla']) body [class*='_projectRow'],
+html:not([data-dsh-ui='vanilla']) body [class*='_searchResultRow'],
+html:not([data-dsh-ui='vanilla']) body [class*='_item_'],
+html:not([data-dsh-ui='vanilla']) body [class*='_row_'] {
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+/* Icon buttons carry most of the app's chrome affordances; their glyph colour is
+   the hover feedback, so that is what gets interpolated. */
+html:not([data-dsh-ui='vanilla']) body [class*='_iconButton'] svg,
+html:not([data-dsh-ui='vanilla']) body [class*='_iconButton'],
+html:not([data-dsh-ui='vanilla']) body [class*='_button'] svg {
+  transition:
+    color 120ms ease-out,
+    opacity 120ms ease-out,
+    background-color 120ms ease-out;
+}
+
+/* Text inputs and the composer: the border and background already change on
+   focus/hover, so those become gradual too. */
+html:not([data-dsh-ui='vanilla']) body input,
+html:not([data-dsh-ui='vanilla']) body textarea,
+html:not([data-dsh-ui='vanilla']) body [contenteditable='true'] {
+  transition:
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    box-shadow 120ms ease-out;
+}
+
+/* The composer's "+" and paperclip share a background-only hover. Scope `_add`
+   to the tools row because other packages also use that class fragment.
+   Keep the transition at rest so the background fades in both directions. */
+html:not([data-dsh-ui='vanilla']) body [class*='_tools'] [class*='_add'] {
+  transition: background-color 120ms ease-out;
+}
+
+/* Use the desktop theme's hover wash in both palettes. This selector outranks
+   the app's `_add:hover:not(:disabled)` rule without changing disabled buttons. */
+html:not([data-dsh-ui='vanilla']) body [class*='_tools'] [class*='_add']:hover:not(:disabled) {
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Keep glyphs still even when the generic icon-button rule also matches. */
+html:not([data-dsh-ui='vanilla']) body [class*='_tools'] [class*='_add'] svg {
+  transition: none;
+}
+
+/* Browser chrome: the address form identifies this pane without a module hash
+   or translated label. Keep the page inside its iframe outside this scope.
+   Low-specificity transition selectors let the global motion-off rules win. */
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] [class*='_root']:has(> form [class*='_addressBox'])) :is(button, input) {
+  transition:
+    background-color 180ms ease-out,
+    border-color 180ms ease-out,
+    color 180ms ease-out,
+    box-shadow 180ms ease-out,
+    opacity 180ms ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) button[class*='_tool'] {
+  border-radius: 7px;
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) button[class*='_tool']:not(:disabled):not([class*='_sandboxOff']) {
+  background-color: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) button[class*='_tool']:hover:not(:disabled) {
+  background-color: var(--dsw-alias-interactive-bg-hover);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-business-primary) 24%, transparent);
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) button[class*='_tool']:active:not(:disabled) {
+  background-color: var(--dsw-alias-interactive-bg-active);
+}
+
+/* Keep the disabled-sandbox warning distinct while its button is hovered. */
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) button[class*='_sandboxOff']:hover:not(:disabled) {
+  color: var(--dsw-alias-state-error-primary);
+  background-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-alias-state-error-primary) 30%, transparent);
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) input {
+  border-radius: 7px;
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) input:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, var(--dsw-alias-bg-layer-1));
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 40%, var(--dsw-alias-border-l2));
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] form:has([class*='_addressBox'])) input:focus:not(:disabled) {
+  background-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, var(--dsw-alias-bg-layer-1));
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 16%, transparent);
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] [class*='_root']:has(> form [class*='_addressBox'])) button:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] [class*='_root']:has(> form [class*='_addressBox'])) [class*='_restore'] button:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 85%, white);
+}
+
+/* Small composited movement leaves the menu's anchor coordinates untouched.
+   No fill: transforms disappear after entering, including for fixed submenus. */
+html:not([data-dsh-ui='vanilla']) body [role='menu']:not([data-dsh-ghost]) {
+  transform-origin: top left;
+  animation: dsh-desktop-menu-in 160ms cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes dsh-desktop-menu-in {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+    scale: .985;
+  }
+}
+
+
+
+/* 鈹€鈹€ 6b. dialogs open and close 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * With the animation preference on, a menu faded in while every dialog 鈥?the
+ * settings overlay, the app's Modal confirmations, the lightbox, the bar's own
+ * 鍏充簬 鈥?popped on and off the screen with no transition at all. This section
+ * gives the dialog surfaces the same treatment the menus have, in the app's own
+ * entrance vocabulary: the toast arrives with a fade and a 6px rise
+ * (`_dsh-toast-in`, .16s ease-out) and the tooltip with a plain fade, so those
+ * are the two idioms used here rather than an invented one.
+ *
+ * THE OPEN HALF IS CSS ALONE, and it hangs off the layer tag because that is
+ * the only stable name a dialog layer has: roles and `aria-modal` come from the
+ * component's accessibility contract, while every class is a per-build hash.
+ * The tag is written by the DOM tier in the same frame the layer mounts (the
+ * mutation observer's callback runs before that frame paints), so the animation
+ * starts at the layer's first painted frame 鈥?no untagged flash before it.
+ *
+ * THE SELECTORS ARE THE ROLE CANDIDATES, NOT THE BARE TAG, and that is what
+ * keeps a slow tag from animating something already on screen. The fullscreen
+ * right panel is a full-surface layer with no role of its own; it is tagged by
+ * the periodic sweep, up to two seconds after the click, and a fade that starts
+ * two seconds late is a flicker, not a transition. A layer that carries a role
+ * is tagged in its mount frame, so only freshly mounted surfaces animate.
+ *
+ * The panel rises 6px and scales from .99 for 180ms. These properties have no
+ * fill, so the panel stops being a containing block for fixed descendants as
+ * soon as the entrance finishes. The viewport-sized backdrop only fades.
+ *
+ * THE CLOSE HALF IS NOT CSS, because the app unmounts its dialogs 鈥?a node
+ * removed from the document has no stylesheet rule left to animate. The DOM
+ * tier replays the removal: it re-inserts a clone of the surface where the
+ * original was, marks it `data-dsh-ghost`, and the rule below fades that. The
+ * mechanics live in `dom.js`; what the stylesheet owes the ghost is one rule
+ * that fades it and one that keeps it from ever catching a pointer.
+ */
+
+html:not([data-dsh-ui='vanilla']) body [role='presentation'][data-dsh-chrome='layer']:not([data-dsh-ghost]),
+html:not([data-dsh-ui='vanilla']) body [role='dialog'][data-dsh-chrome='layer']:not([data-dsh-ghost]),
+html:not([data-dsh-ui='vanilla']) body [aria-modal='true'][data-dsh-chrome='layer']:not([data-dsh-ghost]),
+html:not([data-dsh-ui='vanilla']) body [role='status'][data-dsh-chrome='layer']:not([data-dsh-ghost]) {
+  animation: dsh-desktop-layer-in 180ms ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-dsh-chrome='layer']:not([data-dsh-ghost]) [role='dialog'] {
+  animation: dsh-desktop-panel-in 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='alertdialog']:not([data-dsh-ghost]) {
+  animation: dsh-desktop-panel-in 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes dsh-desktop-layer-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dsh-desktop-panel-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+    scale: .99;
+  }
+}
+
+/* The ghost: a fading clone of a surface that just unmounted. `forwards` holds
+   the last frame until the DOM tier retires the node, so a lost `animationend`
+   cannot leave it half-faded; the backstop timeout removes it regardless. */
+html body [data-dsh-ghost] {
+  pointer-events: none;
+  animation: dsh-desktop-fade-out 160ms ease-in forwards;
+}
+
+html body [data-dsh-ghost='menu'] {
+  transform-origin: top left;
+  animation-name: dsh-desktop-menu-out;
+}
+html body [data-dsh-ghost='surface'],
+html body [data-dsh-ghost='layer'] [role='dialog'] {
+  animation: dsh-desktop-panel-out 160ms ease-in forwards;
+}
+@keyframes dsh-desktop-menu-out {
+  to { opacity: 0; translate: 0 -3px; scale: .985; }
+}
+@keyframes dsh-desktop-panel-out {
+  to { opacity: 0; translate: 0 5px; scale: .99; }
+}
+
+
+@keyframes dsh-desktop-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* 鈹€鈹€ 6c. the plugin cards' collapse panels 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * 璁剧疆 鈻?鎻掍欢 鈻?鎻掍欢閰嶇疆 renders one card per configurable plugin. Each card's
+ * header is a toggle: choosing it mounts a body holding that plugin's form. The
+ * chevron already rotates (the app's own `.鈥chevronOpen { transform:
+ * rotate(180deg) }`, with a `.16s` transition), but the BODY appears and
+ * disappears instantly 鈥?so opening a card is a jump rather than an expansion,
+ * and closing one makes the form vanish under the pointer.
+ *
+ * ## Why the open half is CSS and the close half is not
+ *
+ * The card is React state, and the app renders the body only while `open` is
+ * true 鈥?`open ? <div class=鈥body>鈥?/div> : null`. So:
+ *
+ *   - OPENING mounts a node, which is the one direction CSS can animate on its
+ *     own. The rule below animates the mounted body, and its grid-row grow is what
+ *     makes the card expand rather than snap.
+ *
+ *   - CLOSING unmounts a node, and a removed node has no rule left to animate.
+ *     The DOM tier therefore replays the removal 鈥?the same mechanism section 6b
+ *     uses for dialogs 鈥?by re-inserting a clone, tagging it `data-dsh-ghost`, and
+ *     letting the ghost rule above fade it out.
+ *
+ * ## Why the height animates without a fixed height
+ *
+ * `height: auto` is not animatable, which is why most "accordion" CSS needs a
+ * measured pixel height written from JavaScript. This does not, and the reason is
+ * `interpolate-size: allow-keywords`: it is supported from Chromium 129, and this
+ * window is WebView2 (measured 153 on the development machine), which makes
+ * `block-size` from `0` to `auto` a real interpolation. That matters beyond
+ * tidiness 鈥?the body's height depends on which controls the card holds, on the
+ * font size the user chose in 澶栬, and on the wrapping of a description string,
+ * so a JavaScript measurement would be wrong the moment any of those changed.
+ *
+ * The animation is written on the BODY with `overflow: hidden` for its duration
+ * only. A persistent `overflow: hidden` would clip the focus ring of the Save
+ * button and the `:focus-visible` outline the app draws at `outline-offset: 1px`;
+ * `animation-fill-mode: none` (the default) means the property is gone the instant
+ * the animation ends.
+ *
+ * `overflow` MUST BE NAMED IN BOTH KEYFRAMES, and that is not redundant. It is a
+ * DISCRETE property 鈥?it cannot interpolate 鈥?so a `from`-only declaration flips
+ * at the 50% mark, and the form would spill out of its half-height box for the
+ * second half of the expansion. Naming it in `to` as well holds the clip for the
+ * whole animation; the flip to the element's real `visible` then happens on the
+ * last frame, when `block-size` has already reached `auto` and there is nothing
+ * left to clip. `block-size` is written explicitly as `auto` in `to` for the same
+ * reason `from` writes `0`: with `interpolate-size: allow-keywords` that pair is
+ * what the engine interpolates between, rather than an implicit end value.
+ *
+ * The body carries `border-top` and `margin: 0 16px`, so collapsing it to zero
+ * `block-size` still leaves its 1px rule and 32px of side margin. That is why the
+ * close animation collapses `margin-block` and `border-block-width` as well: the
+ * goal is that the card's own height returns to what it was, not merely that the
+ * form disappears. Those two ARE continuously animatable, so they need no `to`.
+ *
+ * ## The selector, and why it is safe
+ *
+ * `_cardOpen` is unique to this package across every shipped client bundle 鈥?it is
+ * the card's own open-state class, written by React on the same commit that mounts
+ * the body. So the tag the DOM tier writes is a SECOND signal rather than the only
+ * one: a freshly opened card animates from this rule alone, in its mount frame,
+ * with no dependence on a pass landing first. The tag then covers the paths React
+ * does not re-render for 鈥?a card restored as already-open, a page re-entered 鈥? * and it is what the close ghost is keyed on.
+ */
+html:not([data-dsh-ui='vanilla']) body [class*='_cardOpen'] [class*='_body']:not([data-dsh-ghost]) {
+  interpolate-size: allow-keywords;
+  animation: dsh-desktop-collapse-open 160ms ease-out;
+}
+
+/* The changes sidebar mounts these detail bodies only while their disclosure is open. */
+html:not([data-dsh-ui='vanilla']) body :is(.dshChanges__detail, .dshChanges__records, .dshChanges__recordDiff):not([data-dsh-ghost]) {
+  interpolate-size: allow-keywords;
+  animation: dsh-changes-collapse-open 160ms ease-out;
+}
+
+/* The conversation task list is mounted only while expanded. Include its
+   parent's 8px gap so removing the closing clone does not move the header. */
+html:not([data-dsh-ui='vanilla']) body [data-testid='todo-panel'] > div > ul:not([data-dsh-ghost]) {
+  min-block-size: 0;
+  interpolate-size: allow-keywords;
+  animation: dsh-todo-open 160ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [data-testid='todo-panel'] > div > [data-dsh-ghost='collapse'] {
+  min-block-size: 0;
+  animation: dsh-todo-close 160ms ease-in forwards;
+}
+@keyframes dsh-todo-open {
+  from { block-size: var(--dsh-group-start-height, 0px); margin-block-start: var(--dsh-group-start-gap, -8px); overflow: clip; }
+  to { block-size: auto; margin-block-start: 0; overflow: clip; }
+}
+@keyframes dsh-todo-close {
+  from { block-size: auto; margin-block-start: 0; }
+  to { block-size: 0; margin-block-start: -8px; overflow: clip; }
+}
+
+@keyframes dsh-desktop-collapse-open {
+  from {
+    block-size: 0;
+    margin-block: 0;
+    border-block-width: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+
+  to {
+    block-size: auto;
+    opacity: 1;
+    overflow: hidden;
+  }
+}
+
+/* The ghost of a body that just unmounted: the same fade section 6b uses, with
+   the collapse direction reversed so it shrinks rather than merely dimming.
+   `overflow: hidden` is declared on the rule AND in the `to` frame, for the reason
+   the open animation gives: it is discrete, so a `to`-only declaration would leave
+   the shrinking clone unclipped for its first half 鈥?spilling the form over the
+   card below while it collapsed. */
+html body [data-dsh-ghost='collapse'] {
+  animation: dsh-desktop-collapse-close 160ms ease-in forwards;
+  overflow: hidden;
+  interpolate-size: allow-keywords;
+}
+
+html body [data-dsh-ghost='collapse']:is(.dshChanges__detail, .dshChanges__records, .dshChanges__recordDiff) {
+  animation-name: dsh-changes-collapse-close;
+}
+
+@keyframes dsh-desktop-collapse-close {
+  from {
+    block-size: auto;
+    opacity: 1;
+  }
+
+  to {
+    block-size: 0;
+    margin-block: 0;
+    border-block-width: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+}
+
+/* The changes panel's detail wrappers carry their own vertical padding. Include
+   it in the same interpolation so a closed ghost leaves no residual gap. */
+@keyframes dsh-changes-collapse-open {
+  from {
+    block-size: 0;
+    padding-block: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+
+  to {
+    block-size: auto;
+    padding-block: var(--dsh-collapse-padding-block, 0px);
+    opacity: 1;
+    overflow: hidden;
+  }
+}
+
+@keyframes dsh-changes-collapse-close {
+  from {
+    block-size: auto;
+    padding-block: var(--dsh-collapse-padding-block, 0px);
+    opacity: 1;
+    overflow: hidden;
+  }
+
+  to {
+    block-size: 0;
+    padding-block: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+}
+
+/* 鈹€鈹€ 7. the full-access permission, flagged as risky 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * `danger-full-access` ("瀹屽叏鏉冮檺") is the preset that removes confirmation
+ * steps and allows sensitive operations, file writes, and external commands. The
+ * app already treats it as the dangerous one 鈥?it is the only preset that opens a
+ * confirmation dialog before taking effect, and its own id says `danger` 鈥?but
+ * once chosen it renders identically to the safe presets. This section gives it a
+ * persistent warning colour so the active state is visible at a glance, in all
+ * three places it appears:
+ *
+ *   1. the composer's permission chip  (`<hash>_trigger`)
+ *   2. the settings row's selector     (`<hash>_selector`)
+ *   3. the same entry inside either opened dropdown
+ *
+ * WHY AN ATTRIBUTE INSTEAD OF A TEXT MATCH. CSS cannot select on text, and the
+ * class hashes change between builds. The DOM tier therefore tags every element
+ * whose visible label is exactly 瀹屽叏鏉冮檺 with `data-dsh-danger`, and the rules
+ * below key on that. Tagging by exact label also means the warning follows the
+ * user's language only in the sense that the app's zh dictionary is what renders
+ * here; if it changed, the tag would simply not apply and the UI degrades to the
+ * default colour rather than breaking.
+ *
+ * COLOURS ARE THE APP'S OWN. `--dsw-alias-state-warn-tertiary` (background) and
+ * `--dsw-alias-state-warn-label` (text) are the pair the app already uses for its
+ * warning chip in plan mode, so this reads as the same "attention, not error"
+ * severity the rest of the interface uses. Both palettes define them, so light
+ * and dark are handled without a second rule.
+ *
+ * HOVER. The tinted fill is deliberately kept on hover and only darkened, rather
+ * than switching to the app's neutral hover wash 鈥?losing the warning colour
+ * exactly when the pointer is over it would defeat the point.
+ */
+
+/* 1. The composer chip, while it shows the dangerous preset. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='chip'] {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='chip']:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-tertiary) 80%, var(--dsw-alias-state-warn-primary));
+  color: var(--dsw-alias-state-warn-label);
+}
+
+/* The chip's own label span, because the app colours the text there rather than
+   on the button. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='chip'] [class*='triggerLabel'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+/* 2. The settings row's selector, while it shows the dangerous preset. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='selector'] {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='selector']:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-tertiary) 80%, var(--dsw-alias-state-warn-primary));
+}
+
+/* 3. The option inside an opened dropdown. `_selected_` marks the active entry in
+   the app's own menu, but the warning applies whether or not it is the current
+   value 鈥?the risk is in the choice, not in it being already chosen. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='item'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='item']:hover:not(:disabled) {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+/* The selected entry keeps a faint tint at rest, so the current value is
+   identifiable without hovering. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='item'][class*='_selected_'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-tertiary) 55%, transparent);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+/* Reduced motion, and the animation setting that overrides it.
+ *
+ * The app respects `prefers-reduced-motion` in three places, and this overlay
+ * must not give a user more motion than they asked the OS for 鈥?so by default
+ * (`system`) the media query wins and transitions are dropped.
+ *
+ * But reduced-motion is also why the hover transitions above appear to do
+ * nothing on a machine whose "show animations" setting is off: the OS reports
+ * `reduce`, and everything is suppressed. That is correct behaviour for
+ * `system`, and the appearance settings section exists so the user can override
+ * it deliberately:
+ *
+ *   data-dsh-desktop-animation="system"  follow the OS (this block)
+ *   data-dsh-desktop-animation="on"      animate regardless of the OS
+ *   data-dsh-desktop-animation="off"     never animate
+ *
+ * `:not([...="on"])` is what lets an explicit "on" win over the media query
+ * without `!important`: the rule simply stops matching, so the transition
+ * declarations earlier in this file apply unopposed.
+ */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body button,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body a,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body summary,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='menuitem'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='tab'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='treeitem'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='button'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='option'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_sessionRow'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_projectRow'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_searchResultRow'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_iconButton'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body input,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body textarea,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-dsh-desktop='composer']::before,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_tools'] [class*='_add'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_tools'] [class*='_add'] svg,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body .dshAppearance__option,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body .dshAppearance__selector,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-textpreview-path][data-path-label],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body :where([data-document-zoom-frame]:has([data-image-preview])) [data-document-zoom-controls],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [contenteditable='true'] {
+    transition: none;
+  }
+
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='alertdialog'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='menu']:not([data-dsh-ghost]) {
+    animation: none;
+  }
+
+  /* Section 6c's collapse animations stand down with the rest. The ghost is not
+     listed here for the reason the layer ghosts are not: the DOM tier creates
+     none under reduced motion, and an existing ghost's rule sits outside the
+     gate, so a ghost made before the preference changed still finishes. */
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-testid='todo-panel'] > div > ul:not([data-dsh-ghost]),
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_cardOpen'] [class*='_body']:not([data-dsh-ghost]),
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body :is(.dshChanges__detail, .dshChanges__records, .dshChanges__recordDiff):not([data-dsh-ghost]) {
+    animation: none;
+  }
+
+  /* The dialog open/close animations of section 6b stand down with the rest.
+     Ghosts are not listed: the DOM tier creates none under reduced motion, and
+     the ghost rule sits below, outside the gate, so a ghost created before the
+     preference changed still finishes its fade and is retired. */
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='presentation'][data-dsh-chrome='layer'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='dialog'][data-dsh-chrome='layer'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [aria-modal='true'][data-dsh-chrome='layer'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='status'][data-dsh-chrome='layer'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-dsh-chrome='layer'] [role='dialog'] {
+    animation: none;
+  }
+}
+
+/* An explicit "off" disables motion regardless of the OS setting. Written
+   without a media query so it applies on machines that report `no-preference`
+   too, where the block above would not match. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body button,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body a,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body summary,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='menuitem'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='tab'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='treeitem'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='button'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='option'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_sessionRow'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_projectRow'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_searchResultRow'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_iconButton'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body input,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='checkbox'] > [class*='_checkbox'][aria-hidden='true'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body textarea,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-dsh-desktop='composer']::before,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_tools'] [class*='_add'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_tools'] [class*='_add'] svg,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body .dshAppearance__option,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body .dshAppearance__selector,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-textpreview-path][data-path-label],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body :where([data-document-zoom-frame]:has([data-image-preview])) [data-document-zoom-controls],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [contenteditable='true'] {
+  transition: none;
+}
+
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='alertdialog'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='menu']:not([data-dsh-ghost]) {
+  animation: none;
+}
+
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-testid='todo-panel'] > div > ul:not([data-dsh-ghost]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_cardOpen'] [class*='_body']:not([data-dsh-ghost]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body :is(.dshChanges__detail, .dshChanges__records, .dshChanges__recordDiff):not([data-dsh-ghost]) {
+  animation: none;
+}
+
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='presentation'][data-dsh-chrome='layer'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='dialog'][data-dsh-chrome='layer'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [aria-modal='true'][data-dsh-chrome='layer'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='status'][data-dsh-chrome='layer'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-dsh-chrome='layer'] [role='dialog'] {
+  animation: none;
+}
+
+/* 鈹€鈹€ 7b. the ungrouped bucket 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The sidebar's last section is not a workspace. It is the bucket the app
+ * renders for sessions that belong to none, and it draws its header exactly
+ * like a real workspace: the same folder glyph, the same 14px title. The
+ * result reads as a folder that is not one. This section gives that header a
+ * face of its own 鈥?an inbox glyph (the tray sessions land in) and the app's
+ * meta-text voice 鈥?while the session rows under it stay untouched, because
+ * they are ordinary sessions.
+ *
+ * WHY A TAG. CSS cannot select on text, the header's label is locale-dependent
+ * (`鏈垎缁刞 in zh, `Ungrouped` in en), and the row's class hashes are
+ * regenerated per build. The DOM tier identifies the bucket from the row's own
+ * React data (its group has no `workspaceId` 鈥?the one group built without a
+ * host workspace) and tags it `data-dsh-desktop='ungrouped'`; every rule below
+ * keys on that tag, so a missed identification degrades to the app's own
+ * folder row, never to a wrong restyle.
+ *
+ * WHY A MASK. React owns the folder `<svg>` and swaps it as the group expands
+ * and collapses, so replacing that node from the DOM tier would fight the
+ * reconciler. Hiding the svg and painting the glyph as a CSS mask on the icon
+ * slot leaves React's tree untouched: the swap still happens underneath,
+ * invisibly, and the mask survives it. `background-color: currentColor` under
+ * the mask is what makes the glyph follow the slot's colour 鈥?both palettes,
+ * and the app's own business-primary tint when the bucket is the expanded
+ * group holding the current session (`_folderActive`) 鈥?exactly as the app's
+ * own icons do. The tray has no open/closed pair by design: a tray does not
+ * open. The app's hover behaviour is untouched, so the chevron still replaces
+ * the glyph on hover, as it replaces the folder on a workspace row.
+ *
+ * The glyph is drawn at the app's own 1.3px outline weight (its `Icon鈥?6`
+ * set is 1.3 strokes expanded to fill; a 1.3 stroke renders the same weight),
+ * as a data URI because this tier ships no assets.
+ */
+
+/* The whole treatment is guarded so an engine without mask support 鈥?where the
+   background would paint as an unmasked solid block 鈥?keeps the app's own
+   folder icon instead. WebView2 is evergreen Chromium and supports both forms;
+   the prefixed one is carried for an engine that predates the unprefixed
+   property. */
+@supports (mask-image: none) or (-webkit-mask-image: none) {
+  html:not([data-dsh-ui='vanilla']) body {
+    --dsh-ungrouped-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 3.5h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2zM2 8.3h3.2l1.1 1.9h3.4l1.1-1.9H14' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='ungrouped'] [class*='_folder'] {
+    -webkit-mask: var(--dsh-ungrouped-glyph) center / 16px 16px no-repeat;
+    mask: var(--dsh-ungrouped-glyph) center / 16px 16px no-repeat;
+    background-color: currentColor;
+  }
+
+  /* React's folder glyph stays in the tree but never shows; removing it would
+     be a fight with the reconciler, and it lives inside this guard together
+     with the mask so an unsupported engine loses neither way. */
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='ungrouped'] [class*='_folder'] svg {
+    display: none;
+  }
+}
+
+/* The title drops to the app's meta voice 鈥?the 12px secondary text it uses
+   for timestamps and paths 鈥?so the bucket reads as filing, not as a peer
+   workspace. Specificity note: `html body` plus two attribute selectors
+   outranks the app's own `.hash_title` rule, which is injected later. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='ungrouped'] [class*='_title'] {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+/* The bucket's "+" button is removed. The app already withholds the row's
+ * "鈥? menu from the bucket (`actions: workspaceId === void 0 ? void 0 : 鈥)
+ * but still renders the new-session button 鈥?whose own handler guards
+ * `workspaceId !== void 0` and does nothing. So the "+" on 鏈垎缁?is a dead
+ * affordance: drawn, hoverable, and inert. This finishes what the app started.
+ *
+ * WHY THE DIRECT-CHILD COMBINATOR. The button carries no class of its own
+ * beyond the shared icon button, and its aria-label is locale-dependent
+ * ("鍦ㄢ€滄湭鍒嗙粍鈥濅腑鏂板缓浼氳瘽"). What does distinguish it is position: the "鈥?
+ * menu button of a real workspace sits nested inside the Menu primitive's
+ * wrapper span, so the new-session button is the one DIRECT `button` child of
+ * the actions span. If the app ever nests its buttons differently, the
+ * selector degrades to no removal 鈥?never to hiding the wrong button.
+ *
+ * WHY CSS, NOT DOM REMOVAL. React owns the node, and the overlay does not
+ * delete React's children (the same reconciliation rule as the folder glyph
+ * above). `display: none` is the removal the overlay can do safely, and it is
+ * complete: an unrendered box leaves the hover row, the tab order, and the
+ * accessibility tree.
+ */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='ungrouped'] [class*='_rowActions'] > button {
+  display: none;
+}
+
+/* Settings navigation: palette and wireless display, drawn on the same 16px
+   grid and 1.3px outline as the neighbouring glyphs. Keep React's fallback icon
+   in its tree; the mask inherits the row colour in either theme and state. */
+@supports (mask-image: none) or (-webkit-mask-image: none) {
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-appearance'] {
+    --dsh-settings-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.75C4.55 1.75 1.75 4.55 1.75 8s2.8 6.25 6.25 6.25h.75c1.25 0 1.9-1.5 1-2.4l-.15-.15c-.55-.55-.15-1.5.65-1.5h1.25c1.6 0 2.75-1.2 2.75-2.75C14.25 4.05 11.4 1.75 8 1.75Z' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cg fill='%23000'%3E%3Ccircle cx='5' cy='5.5' r='.8'/%3E%3Ccircle cx='8.5' cy='4.5' r='.8'/%3E%3Ccircle cx='11' cy='6.7' r='.8'/%3E%3Ccircle cx='4.5' cy='9' r='.8'/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-remote'] {
+    --dsh-settings-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M7.75 3.25h-4.5c-.83 0-1.5.67-1.5 1.5v5c0 .83.67 1.5 1.5 1.5h9.5c.83 0 1.5-.67 1.5-1.5v-1.5M8 11.25v3M5.5 14.25h5M10.25 1.75a4 4 0 0 1 4 4M10.25 4.25a1.5 1.5 0 0 1 1.5 1.5' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='10.25' cy='6.5' r='.7' fill='%23000'/%3E%3C/svg%3E");
+  }
+
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-appearance']::before,
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-remote']::before {
+    content: '';
+    width: 16px;
+    height: 16px;
+    flex: none;
+    background-color: currentColor;
+    -webkit-mask: var(--dsh-settings-glyph) center / contain no-repeat;
+    mask: var(--dsh-settings-glyph) center / contain no-repeat;
+  }
+
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-appearance'] > [class*='_navIcon'],
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-remote'] > [class*='_navIcon'] {
+    display: none;
+  }
+}
+
+/* 鈹€鈹€ 8. appearance section 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * Hides the two rows this overlay relocates out of General, so they appear once,
+ * in the 澶栬 section, rather than twice.
+ *
+ * WHY CSS RATHER THAN UNREGISTERING THEM. The theme plugin registers both rows
+ * into `settings.general.item` and publishes no way to withdraw a registration 鈥? * a slot's contributor owns its own lifetime. Hiding is the only non-invasive
+ * option, and it keeps working if those registrations change order or gain
+ * siblings.
+ *
+ * WHY THE HOOK IS AN ATTRIBUTE, NOT A SELECTOR. The rows carry no id of their own
+ * (their wrapper is the single `settings.general.item` element holding every
+ * General row) and their CSS-module hashes change between builds. Matching on
+ * title text is not possible in CSS at all, since text is not selectable. So the
+ * DOM tier finds each group by its title and tags it 鈥?`data-dsh-hidden` 鈥?and
+ * the rule below is the only thing that has to stay stable.
+ */
+html:not([data-dsh-ui='vanilla']) body [data-slot='settings.general.item'] [data-dsh-relocated='true'] {
+  display: none;
+}
+
+/* 鈹€鈹€ 8b. the sidebar's own header 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The sidebar's first row is a lockup: the app mark, the wordmark, and 鈥?beside
+ * them 鈥?the 鏀惰捣渚ц竟鏍?button. In this window that whole row is redundant. The
+ * title bar directly above it already carries the same mark, one strip higher,
+ * and it carries the sidebar control too (section 9). Two marks reading as two
+ * product identities, eight pixels apart, was the first thing wrong with it.
+ *
+ * So the row is removed. Exactly one thing is lost with it 鈥?the button 鈥?and
+ * that is the request: the control MOVED to the title bar rather than being
+ * duplicated, so the sidebar no longer offers a second way to do the same thing.
+ * The row's other affordance, the brand button that starts a session, is not a
+ * loss either: 鏂颁細璇?sits immediately below, which is where it is looked for.
+ *
+ * WHAT THIS BUYS BESIDES TIDINESS. The row is `flex: none` and 60px tall with an
+ * 8px margin below it (`36px`/`12px` in the rail), so removing it gives that
+ * space to the workspace list, which is the part of the sidebar that scrolls.
+ *
+ * WHY A CLASS FRAGMENT, AND WHY SCOPED. `_logoRow` is the CSS module's own local
+ * name, prefixed by a per-build hash (`hHd-Xa_logoRow`) 鈥?the hash is regenerated
+ * every DSH build, the local name is not. This project already keys on fragments
+ * of exactly this kind for the sidebar (`_sidebarCol`, `_projectRow`,
+ * `_sessionRow`), and the rule is scoped under the left column rather than left
+ * bare, so a `_logoRow` in some other package could not be caught by it.
+ *
+ * GATED, like the rest of sections 1鈥?. 鍘熺増 is the unmodified frontend, so the
+ * row comes back there 鈥?together with the collapse button inside it, which is
+ * what keeps the sidebar operable in a mode that does not draw this app's bar
+ * controls. The bar's own control stays usable in 鍘熺増 too (section 9 is ungated),
+ * so the two simply coexist, which is the honest state of a mode defined as
+ * "none of this project's changes".
+ *
+ * A NOTE ON THE RAIL. The row is rendered in the collapsed rail as well, where it
+ * holds only the toggle 鈥?the same mark, shown in place of the panel glyph. It is
+ * hidden there too, by this one rule: the rail's first item becomes 鏂颁細璇? and
+ * the mark the user pressed to collapse is still in the title bar, unshifted.
+ */
+html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] [class*='_logoRow'] {
+  display: none;
+}
+
+/* 鈹€鈹€ 8c. the 澶栬 section's own controls 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The theme / animation option buttons and the font-size selector are rendered by
+ * `ui-client/client.js` 鈥?this project's own plugin, not the app 鈥?and they are
+ * styled with INLINE styles there, which is what makes this section necessary
+ * rather than merely nice: an inline style beats any stylesheet rule, so a
+ * `theme.css` hover could not otherwise touch the properties the plugin writes.
+ *
+ * The plugin therefore writes class names of its own 鈥?`dshAppearance` on the
+ * section and `dshAppearance__option` / `dshAppearance__selector` on the controls 鈥? * and the hover states live here, where the section 6 machinery already is. That
+ * split is deliberate: the plugin owns the DOM and the values, the stylesheet owns
+ * the motion and the palette, and neither has to know the other's internals.
+ *
+ * Hover changes only the background. The border, label and geometry stay fixed;
+ * the selected option keeps its fill as well. The font-size selector uses the
+ * same transition on its pill button, with the app's Menu primitive as its popup.
+ */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__option {
+  transition: background-color 120ms ease-out;
+}
+
+/* The hover fill must override the plugin's inline background. */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__option:hover {
+  background-color: var(--dsw-alias-interactive-bg-hover) !important;
+}
+
+/* Keep the selected option's fill so hover does not obscure the selection. */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__option[aria-pressed='true']:hover {
+  background-color: var(--dsw-alias-bg-module-platform) !important;
+}
+
+/* The font-size control is the app's own selector pill (see the `style` object in
+   `ui-client/client.js`), so it takes the selector's own hover: the app's hover
+   wash on the same `bg-module-platform` fill, interpolated by the transition
+   above. Nothing here reaches into the popup — that is the app's own `Menu`,
+   which styles itself.
+
+   THE FLAG IS STILL NEEDED, and for the reason the option buttons' is: the plugin
+   writes `background` as an INLINE style, and an inline declaration outranks every
+   selector-based rule — this one included — so without it the wash would silently
+   lose the cascade and the control would show no hover feedback at all. Only the
+   fill is declared: the pill is `border: none`, so there is no border colour left
+   to animate, and `transform` is deliberately absent — this control is
+   background-only, like the option buttons beside it. */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__selector {
+  transition: background-color 120ms ease-out;
+}
+
+/* `background-color`, NOT the `background` shorthand, and that is load-bearing.
+   The chevron is an inline `background-image` on this control, and a `background`
+   shorthand — flagged or not — resets every background longhand it does not name,
+   so the arrow would disappear the moment the pointer crossed the pill. The
+   terminal's shell picker writes its hover the same way for the same reason. */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__selector:hover {
+  background-color: var(--dsw-alias-interactive-bg-hover) !important;
+}
+
+/* Keyboard focus gets the app's own ring, and MOUSE focus gets nothing. The pill
+   is a `<button>`, so WebView2 matches `:focus-visible` only from the keyboard —
+   which is exactly why the control is a button rather than the native `<select>`
+   it used to be: a select matches on every click, and each one drew the thick
+   ring this rule would have had to suppress. The same 2px brand outline the other
+   plugin controls draw keeps the keyboard visible; the click stays quiet. */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__selector:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* 鈹€鈹€ 8d. the terminal surface 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The right column's terminal tab (`dsh-plugin/sidebar-terminal/client.js`).
+ *
+ * The BODY is a flex column that fills the tab and never grows past it: the
+ * column is a fixed-width dock panel beside a full-width conversation, so the one
+ * failure that would actually hurt is this surface pushing the chat area or
+ * spilling out of its own pane. Hence `min-width: 0` / `min-height: 0` on both the
+ * section and the scrollport 鈥?a flex item's default `auto` minimum refuses to
+ * shrink below its content, which is what turns a long unbroken line into a
+ * widened panel.
+ *
+ * The content area shares the tab strip and header's base background. The xterm
+ * runtime reads this surface's computed colours, so its cells, padding and the
+ * unused space below the last row form one continuous background in both themes.
+ *
+ * GATED LIKE EVERY OTHER APPEARANCE RULE (sections 1鈥?): the 缁堢 entry is this
+ * project's addition, so 鍘熺増 shows no terminal chrome at all. The tab itself is a
+ * session record this plugin does not own and cannot close 鈥?see the note in
+ * `sidebar-terminal/client.js` 鈥?so a terminal left open when the page switches
+ * keeps its slot and is restored, unstyled, when it switches back.
+ */
+/* The bottom terminal lives inside the frame overlay. Its height is published
+   by the component; title-bar and dialog offsets stay independent.
+ *
+ * THE RESERVED SPACE EXCLUDES THE LEFT COLUMN. The panel occupies the frame's
+ * bottom strip MINUS the sidebar, so the row is reserved on what sits BESIDE the
+ * panel and never on the frame. Padding the frame would shorten the sidebar's own
+ * grid cell too, cutting the sidebar short of the bottom edge directly beside a
+ * panel that starts to its right: a visible notch, with the workspace list ending
+ * early for no reason the user could see.
+ *
+ * The CENTER column takes the padding, because its content (the conversation and
+ * its composer) is in normal flow and the padding is what lifts the composer clear
+ * of the panel. `min()` rather than a bare variable so a panel taller than the
+ * column cannot ask for a negative padding, which is invalid CSS and would drop
+ * the declaration instead of clamping.
+ *
+ * NO `box-sizing` IS NEEDED, and it is worth saying why rather than leaving the
+ * question open. The column is a grid item stretched to the frame's single
+ * `grid-template-rows: 100%` row, and a stretched item's used height is solved so
+ * its MARGIN box fills the area — the specified `height` stays `auto`. `box-sizing`
+ * only changes how a SPECIFIED height is interpreted, so it cannot apply here: the
+ * padding resolves inside the 704px cell either way. Measured in
+ * `tools/_dockregionprobe.mjs`, which forces `content-box` on this column and
+ * re-measures: the composer stays clear of the panel and the column stays inside
+ * the frame. Writing `border-box` "for safety" would have been a declaration that
+ * does nothing, with a comment claiming it was essential. */
+html:not([data-dsh-ui='vanilla']) body [class*='_centerCol'] {
+  padding-bottom: min(var(--dsh-terminal-dock-height, 0px), 100%);
+}
+
+/* The docked right panel stops above the panel, keyed on the app's OWN attribute
+   rather than on the tag.
+ *
+ * `data-sidebar-right-panel` is written by React synchronously (`"push"` docked,
+ * `"fullscreen"` covering), which is the same reason the title-bar offset above
+ * keys on it: a tag needs a scan pass and would land up to two seconds late, as a
+ * visible jump. Selecting `push` and not the bare attribute is what keeps this
+ * honest — a fullscreen panel is a deliberate covering of the whole frame, and the
+ * app's own `inset: 0` is left to mean exactly that.
+ *
+ * `#root` scope for the same reason as the title-bar rules: the app's own rule is
+ * `.P3OORG_panel { bottom: 0 }`, and an attribute-only selector ties with it on
+ * class/attribute count and would then win or lose on source order alone. The id
+ * outranks any number of class-level selectors. */
+html:not([data-dsh-ui='vanilla']) body #root [data-sidebar-right-panel='push'] {
+  bottom: var(--dsh-terminal-dock-height, 0px);
+}
+
+/* Both directions, including the left rail's own content animations and resize
+   handles, share the appearance preference. Vanilla keeps the upstream rules. */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-sidebar-motion-duration: 220ms;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-sidebar-right-panel] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
+  transition: transform var(--dsh-sidebar-motion-duration) ease-out,
+    visibility 0s linear var(--dsh-sidebar-motion-duration);
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-sidebar-right-panel][data-sidebar-right-open] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
+  transition-delay: 0s;
+}
+/* New tab hosts and empty placeholders mount at rest. Their transition above
+   responds only to the panel's open state, not to tab creation or removal. */
+
+/* Install the transition before a toggle. Upstream adds data-animating in a
+   layout effect after changing the tracks; a layout read in between makes the
+   opening direction jump to its final width before that flag arrives. */
+html:not([data-dsh-ui='vanilla']):not([data-dsh-browser]) body [class*='_frame']:where(:not([data-dragging]):not([data-rightbar-fullscreen]):not([data-rightbar-instant])) {
+  transition: grid-template-columns var(--dsh-sidebar-motion-duration) ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']):not([data-dsh-browser]) body [class*='_frame']:where(:not([data-dragging]):not([data-rightbar-fullscreen]):not([data-rightbar-instant])) [class*='_handle'] {
+  transition: left var(--dsh-sidebar-motion-duration) ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] [class*='_wide'] {
+  animation: dsh-desktop-fade-in 150ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] [class*='_fading'] > * {
+  transition: opacity 150ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] [class*='_railIn'] :is([class*='_iconButton'], [class*='_newSession'], [class*='_panelList'], [class*='_regionArea'], [class*='_footArea']) {
+  animation: dsh-sidebar-rail-in 150ms ease-out backwards;
+}
+@keyframes dsh-sidebar-rail-in {
+  from { opacity: 0; transform: translateX(16px); }
+}
+
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-sidebar-right-panel] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_frame'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_frame'] [class*='_handle'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_sidebarCol'] :is([class*='_wide'], [class*='_fading'] > *, [class*='_railIn'] *) {
+  transition: none !important;
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-sidebar-right-panel] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]),
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_frame'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_frame'] [class*='_handle'],
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_sidebarCol'] :is([class*='_wide'], [class*='_fading'] > *, [class*='_railIn'] *) {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-titlebar-border-width: 0px;
+}
+
+html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] {
+  border-right: none;
+  /* Keep the sidebar at full height beside the bottom terminal dock. */
+  padding-bottom: 0;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-base);
+}
+/* The title row: the surface's name on the left, its connection state on the
+   right. Separate from the tab chip, which the column draws on its own.
+ *
+ * IT WEARS THE TAB STRIP'S COLOUR AND HEIGHT, and both come from a measurement
+ * rather than a guess. The right column is one surface split in two: `P3OORG_panel`
+ * paints the strip and its `background` computes to `--dsw-alias-bg-base` (#151517),
+ * while this header started life on `--dsw-alias-bg-layer-1` (#232324) — so the
+ * boundary between the tabs and the content was a visible band change that the
+ * window does not draw anywhere else.
+ *
+ * THE HEIGHT LINES THE TWO DIVIDERS UP. The conversation column's own header is
+ * `.wSkVaW_header { min-height: 76px; border-bottom: .5px solid
+ * var(--dsw-alias-border-l3) }`, and both columns start at the same y — under the
+ * title bar, at 44px in this window. Its divider therefore sits at 44+76 = 120,
+ * while this header begins where the strip ends (44 + the strip's own 38 = 82) and
+ * had grown to 41 on its own padding. 38px puts this row's divider on the same line
+ * as the conversation's, which is the whole point of the rule.
+ *
+ * `terminal.css` scales the actions group to 75%, making the 36px picker 27px
+ * tall. With 5px padding on each side and the divider, it fits inside 38px.
+ * Keeping the old 8px padding would still let the controls grow this row beyond
+ * its min-height and push the divider below the conversation's. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__header {
+  display: flex;
+  flex: none;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 38px;
+  padding: 5px 14px;
+  background: var(--dsw-alias-bg-base);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+/* The `终端` heading is gone with this rule: the tab chip already names the
+   surface, and a second copy of the same word in the row below it was exactly the
+   redundancy the user asked to remove. Nothing else referenced
+   `.dshTerminal__title`, so no rule was left dangling. */
+
+/* ── the header control that opens and closes the bottom panel ───────────────
+ *
+ * It sits in the conversation header's utilities row, immediately left of the
+ * shipped 打开侧边栏 button. That placement is not a preference: the seat beside
+ * that button (the header's `corner`) is a SINGLE slot, so a second occupant would
+ * REPLACE the app's own sidebar control rather than stand next to it. The
+ * utilities row is a list, renders in ascending `order`, and ends exactly where the
+ * corner begins — so `order: 1` puts this button where the user asked for it while
+ * leaving the app's control untouched.
+ *
+ * IT TOGGLES, and it is always in the row in desktop mode. The label names the
+ * action the press performs (打开 while the panel is hidden, 收起 while it is
+ * shown), `aria-expanded` carries the panel's state, and the resting fill below
+ * says "on" — a way out that vanished with the panel would be no way out.
+ *
+ * IT BORROWS THE APP'S OWN ICON-BUTTON IDIOM rather than inventing one. The
+ * shipped control it stands beside is a 28px round, borderless, transparent button
+ * revealing a hover wash and wrapping a 15px `currentColor` glyph:
+ *
+ *     ._1kL45W_button { width:28px; height:28px; border-radius:28px; padding:6px;
+ *                        background:0 0; border:none; color:var(--…label-secondary) }
+ *     ._1kL45W_button svg { width:15px; height:15px }
+ *
+ * Copying those numbers is what makes this read as part of the same row instead of
+ * as a control dropped in from another surface. The class is the plugin's own, so
+ * nothing here depends on the app's build-specific hash. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__dockToggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 28px;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__dockToggle svg {
+  width: 15px;
+  height: 15px;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__dockToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The panel is open, and the control says so without the pointer: the hover wash
+   as a resting fill and the primary label ink — the same pair the hover uses, so
+   "on" is one look rather than two. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__dockToggle[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__dockToggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* The state, as a dot then a state word. Their distance is the container's `gap`
+   rather than the spaces in the markup: an anonymous flex item holding only white
+   space is never rendered, so without the gap the dot sits flush against the word.
+ *
+ * IT DOES NOT GROW. It is `flex: 0 1 auto` with a `min-width: 0` and an ellipsis:
+ * it may SHRINK and truncate, but it never takes slack, so the hover area of the
+ * tooltip is the text itself rather than the empty half of the row — a tooltip
+ * that appeared from a pointer nowhere near the words it describes would be a
+ * worse affordance than the rows this replaced. The leading auto margin on the
+ * actions group is what pushes the controls right instead.
+ *
+ * THE DOT IS DECORATION AND THE WORD IS THE MEANING. Colour alone would say
+ * nothing to a reader who cannot separate the tints, so every state spells itself
+ * out and the dot is only the at-a-glance half of the same fact. It is a child
+ * element rather than a ::before because it is tinted PER STATE, which a pseudo
+ * element on a single class cannot do without one parent rule per state. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__status {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The controls travel as one right-aligned group, so the auto margin lives here
+   rather than on each control: when the select is absent (no view yet) the menu
+   stays where it belongs instead of drifting left on its own. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+/* The tones, on the app's own state tokens rather than literals, so the dot
+   follows the palette and the theme instead of being correct in one of them. Read
+   off the live page: `--dsw-alias-state-success-primary`, `-warn-primary` and
+   `-error-primary` are all published, and the app keys its own status dot on the
+   first and the third.
+ *
+ * `idle` is the muted label colour on purpose - 已退出 and a page with no desktop
+ * bridge are settled states, not alarms, and painting a normal exit red would say
+ * a failure happened when none did. `busy` covers both 创建中 and 重新连接中, which
+ * are the two states where something is genuinely still in flight. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__status[data-dsh-terminal-tone='ok'] .dshTerminal__dot {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__status[data-dsh-terminal-tone='busy'] .dshTerminal__dot {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__status[data-dsh-terminal-tone='bad'] .dshTerminal__dot {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+/* THE SHELL PICKER AND THE "..." CONTROL, and why they are split across two files.
+ *
+ * The picker's resting look is an INLINE style written by `runtime.mjs` (its
+ * `SHELL_SELECT` table), because that is where the measurements that produced it
+ * live and because `terminal.css` ships in the same bundle. An inline style wins
+ * over every selector, so anything this file has to say about the picker is either
+ * a state an inline style cannot express or a property it deliberately does not
+ * write - and both rules below are the former.
+ *
+ * The height is 36px because that is what a settings selector is: the app's own
+ * `_selector` rule in `dsh-client-ui-permission-presets` (and `-locale`, `-theme`,
+ * `-chat`) is `height:36px; border-radius:18px; padding:0 14px; gap:12px` on
+ * `--dsw-alias-bg-module-platform` at `font-size:14px`. Copying those numbers is
+ * what makes the control read as a settings control rather than as a form field
+ * dropped into the header - the user's actual request, and the reason the border is
+ * `none` rather than the hairline an input would wear.
+ *
+ * `appearance:none` belongs to the fallback `<select>` only (the control the page
+ * gets when the app's `Menu` primitive is unavailable); the primary control is a
+ * pill `<button>`, whose popup is that `Menu` - the same pair every settings
+ * selector renders. Being a button rather than a select is also what quiets the
+ * focus ring: WebView2 matches `:focus-visible` on a select even for a mouse
+ * click, so every click used to draw the thick keyboard ring; a button matches
+ * only from the keyboard, which is what the rule below keeps visible. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__shell {
+  font-family: inherit;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+/* The hover wash needs the flag for the reason the 外观 section's selector does:
+   the plugin writes `background` INLINE, and an inline declaration outranks every
+   selector-based rule, this one included. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__shell:hover {
+  background-color: var(--dsw-alias-interactive-bg-hover) !important;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__shell:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* The "..." control: a compact pill in the same family as the picker beside it -
+   the same hover wash, the same 120ms - but deliberately SHORTER than 36px, so the
+   row still has one obvious primary control and one secondary one rather than two
+   equal weights competing for the same glance. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__more {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 34px;
+  height: 28px;
+  padding: 0 10px;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 1px;
+  background: var(--dsw-alias-bg-module-platform);
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__more:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__more:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+/* The stand-in list, reached only when the app's Menu primitive could not be
+   resolved. It is positioned against the trigger's own wrapper, so it cannot
+   escape into the header's stacking context; the real path is the portalled Menu,
+   which needs none of this and is what a normal page gets. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__moreHost {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__moreList {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 132px;
+  padding: 4px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__moreList button {
+  padding: 6px 10px;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__moreList button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The content area. `overflow: auto` with a `min-height: 0` parent is what keeps
+   the offline notice inside the panel when the column is narrow or short, instead
+   of stretching the tab.
+ *
+ * It keeps the surface's own `layer-1` fill while the header above it wears the tab
+ * strip's `base`. That difference is the app's own idiom rather than an invention:
+ * `wSkVaW_root` paints the conversation with `bg-base` and its scrolled body sits
+ * on the layer above it, so a header row flush with the tabs and a content field
+ * one step lighter is what the neighbouring column already looks like. */
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding: 24px 18px;
+  overflow: auto;
+  text-align: center;
+  /* The app's OWN code face, not a literal stack: `--dsw-font-markdown-code-font-family`
+     is what its code blocks use, with `--ds-font-family-code` (its
+     platform-seeded family) behind it. A literal `monospace` here would be a
+     different face from every other code surface in the window. */
+  font-family: var(
+    --dsw-font-markdown-code-font-family,
+    var(--ds-font-family-code, ui-monospace, Consolas, monospace)
+  );
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshTerminal__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Each enabled region paints three layers: an opaque neutral canvas, the
+ * aligned photograph, then its translucent theme fill. Keep the canvas local
+ * to the region, so overlays cannot reveal another panel's text underneath. */
+html:not([data-dsh-ui='vanilla']) body { --dsh-background-canvas: #fff; }
+html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] { --dsh-background-canvas: #000; }
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-titlebar] body :is(.dshTb) {
+  --dsh-background-surface: color-mix(in srgb, var(--dsw-specific-sidebar-fill) calc(var(--dsh-background-titlebar-opacity) * 100%), transparent);
+  --dsh-background-image-fade: color-mix(in srgb, var(--dsh-background-canvas) calc((1 - var(--dsh-background-image-opacity)) * 100%), transparent);
+  background-color: var(--dsh-background-canvas);
+  background-image: linear-gradient(var(--dsh-background-surface), var(--dsh-background-surface)), linear-gradient(var(--dsh-background-image-fade), var(--dsh-background-image-fade)), var(--dsh-background-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sidebarCol'] {
+  --dsh-background-surface: color-mix(in srgb, var(--dsw-specific-sidebar-fill) calc(var(--dsh-background-left-opacity) * 100%), transparent);
+  --dsh-background-image-fade: color-mix(in srgb, var(--dsh-background-canvas) calc((1 - var(--dsh-background-image-opacity)) * 100%), transparent);
+  background-color: var(--dsh-background-canvas);
+  background-image: linear-gradient(var(--dsh-background-surface), var(--dsh-background-surface)), linear-gradient(var(--dsh-background-image-fade), var(--dsh-background-image-fade)), var(--dsh-background-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+/* The saved Right preference controls both sidebar locations. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body .dshTerminalDock[data-dsh-terminal-dock],
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm) {
+  --dsh-background-surface: color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-background-right-opacity) * 100%), transparent);
+  --dsh-background-image-fade: color-mix(in srgb, var(--dsh-background-canvas) calc((1 - var(--dsh-background-image-opacity)) * 100%), transparent);
+  background-color: var(--dsh-background-canvas);
+  background-image: linear-gradient(var(--dsh-background-surface), var(--dsh-background-surface)), linear-gradient(var(--dsh-background-image-fade), var(--dsh-background-image-fade)), var(--dsh-background-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] {
+  --dsh-background-surface: color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-background-chat-opacity) * 100%), transparent);
+  --dsh-background-image-fade: color-mix(in srgb, var(--dsh-background-canvas) calc((1 - var(--dsh-background-image-opacity)) * 100%), transparent);
+  background-color: var(--dsh-background-canvas);
+  background-image: linear-gradient(var(--dsh-background-surface), var(--dsh-background-surface)), linear-gradient(var(--dsh-background-image-fade), var(--dsh-background-image-fade)), var(--dsh-background-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sidebarCol'] [data-slot='sidebar'] > [class*='_root'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] [class*='_root']:has(> [data-conversation-region]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] [class*='_composerSeat'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-sidebar-right-panel] :is([data-dockkit-pane], [data-dockkit-strip-chrome], [data-dockkit-tab-strip], [class*='_tabBody'], .dshTerminal, .dshTerminal__content),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-dsh-terminal-dock] :is(.dshTerminal, .dshTerminal__content) {
+  background: transparent;
+}
+/* xterm writes its scrolling surfaces inline. Reveal the region's layers while
+ * preserving terminal cell colours and the screen colour read by its palette. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) :is(.xterm-viewport, .xterm-scrollable-element) {
+  background-color: transparent !important;
+}
+.dshAppearance__background { padding: 20px 0; border-bottom: 1px solid var(--dsw-alias-border-l3); }
+.dshAppearance__background h3 { font-size: 15px; margin: 0 0 8px; font-weight: 500; }
+.dshAppearance__background p { font-size: 12px; color: var(--dsw-alias-label-tertiary); line-height: 1.6; margin: 0 0 12px; }
+.dshAppearance__background p[role='alert'] { color: var(--dsw-alias-state-error-primary); }
+.dshAppearance__backgroundActions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.dshAppearance__backgroundActions button { font: inherit; font-size: 13px; padding: 7px 14px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 16px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-module-platform); cursor: pointer; }
+.dshAppearance__backgroundActions span { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+.dshAppearance__background button:disabled, .dshAppearance__background input:disabled { opacity: .45; cursor: default; }
+.dshAppearance__backgroundPreview { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 10px; margin-top: 12px; }
+:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) { display: flex; align-items: center; gap: 12px; padding: 12px 0; font-size: 13px; }
+:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) span { flex: 0 1 150px; }
+:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) input { min-width: 60px; flex: 1; accent-color: var(--dsh-ui-accent); }
+:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) output { flex: 0 0 38px; text-align: right; font-variant-numeric: tabular-nums; }
+.dshAppearance__materialTuning p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary); }
+.dshAppearance__backgroundRegion { border-top: 1px solid var(--dsw-alias-border-l3); padding-top: 12px; }
+.dshAppearance__backgroundRegion > label { font-size: 13px; }
+.dshAppearance__backgroundRegion input[type='checkbox'] { accent-color: var(--dsh-ui-accent); margin: 0 8px 0 0; vertical-align: middle; }
+
+/* One duration follows the desktop preference, including explicit "on" when
+   Windows requests reduced motion. Inventory scope comes from its aria-busy
+   section, so loading/error/empty states are covered before cards exist. */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-inventory-motion: 180ms;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body {
+  --dsh-inventory-motion: 0ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body {
+    --dsh-inventory-motion: 0ms;
+  }
+}
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus {
+  transition: padding var(--dsh-inventory-motion) ease, background-color var(--dsh-inventory-motion) ease, color var(--dsh-inventory-motion) ease;
+}
+html:not([data-dsh-ui='vanilla']) body .dshPluginStatus__text {
+  transition: max-width var(--dsh-inventory-motion) ease, margin-left var(--dsh-inventory-motion) ease, opacity var(--dsh-inventory-motion) ease;
+}
+html:not([data-dsh-ui='vanilla']) body [class*='_section'][aria-busy] :is(button, input, a, [data-plugin-module], [class*='_cardTitle'], [class*='_cardDescription'], [class*='_chevron']) {
+  transition: background-color var(--dsh-inventory-motion) ease,
+    border-color var(--dsh-inventory-motion) ease,
+    color var(--dsh-inventory-motion) ease,
+    box-shadow var(--dsh-inventory-motion) ease,
+    transform var(--dsh-inventory-motion) ease,
+    opacity var(--dsh-inventory-motion) ease;
+}
+html:not([data-dsh-ui='vanilla']) body [class*='_section'][aria-busy] :is([class*='_search'], [class*='_groupTitleRow'], [class*='_groupSub'], [data-plugin-module], [class*='_hint'], [class*='_status'], [class*='_failure'], [class*='_brokenNote'], [class*='_skeletonCard']):not([data-dsh-ghost]) {
+  animation: dsh-inventory-enter var(--dsh-inventory-motion) ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [data-plugin-module] > [class*='_cardDetails']:not([data-dsh-ghost]) {
+  min-block-size: 0;
+  interpolate-size: allow-keywords;
+  animation: dsh-inventory-expand calc(var(--dsh-inventory-motion) * 1.22) cubic-bezier(.2, 0, 0, 1);
+}
+html:not([data-dsh-ui='vanilla']) body [data-plugin-module] > [data-dsh-ghost='collapse'] {
+  min-block-size: 0;
+  animation: dsh-inventory-collapse calc(var(--dsh-inventory-motion) * 1.22) cubic-bezier(.4, 0, .2, 1) forwards;
+}
+/* The two inventory groups reveal one stable content plane. Animating each
+   card as well made the list drift/fade while its container was being clipped.
+   Include the parent's 10px flex gap so the last frame cannot snap shut. */
+html:not([data-dsh-ui='vanilla']) body [data-plugin-scope] > [class*='_groupBody']:not([data-dsh-ghost]) {
+  min-block-size: 0;
+  interpolate-size: allow-keywords;
+  animation: dsh-inventory-group-open calc(var(--dsh-inventory-motion) * 1.22) cubic-bezier(.2, 0, 0, 1);
+}
+html:not([data-dsh-ui='vanilla']) body [data-plugin-scope] > [data-dsh-ghost='collapse'] {
+  min-block-size: 0;
+  interpolate-size: allow-keywords;
+  animation: dsh-inventory-group-close calc(var(--dsh-inventory-motion) * 1.22) cubic-bezier(.4, 0, .2, 1) forwards;
+}
+html:not([data-dsh-ui='vanilla']) body [class*='_section'][aria-busy] [data-plugin-scope] [class*='_groupBody'] :is([data-plugin-module], [class*='_hint'], [class*='_status'], [class*='_failure'], [class*='_brokenNote']),
+html:not([data-dsh-ui='vanilla']) body [data-plugin-scope] > [data-dsh-ghost='collapse'] * {
+  animation: none;
+}
+@keyframes dsh-inventory-group-open {
+  from { block-size: var(--dsh-group-start-height, 0px); margin-block-start: var(--dsh-group-start-gap, -10px); overflow: clip; }
+  to { block-size: auto; margin-block-start: 0; overflow: clip; }
+}
+@keyframes dsh-inventory-group-close {
+  from { block-size: auto; margin-block-start: 0; }
+  to { block-size: 0; margin-block-start: -10px; overflow: clip; }
+}
+/* Suppress upstream skeleton/phase animations too when motion is disabled. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_section'][aria-busy] *,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_section'][aria-busy] *::before,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [class*='_section'][aria-busy] *::after {
+  animation-duration: 0s;
+  animation-iteration-count: 1;
+  transition-duration: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_section'][aria-busy] *,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_section'][aria-busy] *::before,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [class*='_section'][aria-busy] *::after {
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    transition-duration: 0s;
+  }
+}
+@keyframes dsh-inventory-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes dsh-inventory-expand {
+  from { block-size: 0; padding-block: 0; border-block-width: 0; overflow: clip; }
+  to { block-size: auto; overflow: clip; }
+}
+@keyframes dsh-inventory-collapse {
+  from { block-size: auto; }
+  to { block-size: 0; padding-block: 0; margin-block: 0; border-block-width: 0; overflow: clip; }
+}
+
+/* dsh-titlebar:start */
+
+
+/* Composer commands (+), timing/token statistics and context details. Exclude
+   modal dialogs: plugin disclosures also add/remove dl descendants inside the
+   settings panel, and must never change that panel's entrance animation. */
+html:not([data-dsh-ui='vanilla']) body :is([data-trigger-menu], [role='dialog'][class*='_panel']:not([aria-modal='true']):has(dl, [class*='_percent'])):not([data-dsh-ghost]) {
+  transform-origin: bottom left;
+  animation: dsh-composer-popup-in 160ms cubic-bezier(.2,.8,.2,1);
+}
+@keyframes dsh-composer-popup-in {
+  from { opacity: 0; translate: 0 4px; scale: .985; }
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body :is([data-trigger-menu], [role='dialog'][class*='_panel']:not([aria-modal='true']):has(dl, [class*='_percent'])) {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body :is([data-trigger-menu], [role='dialog'][class*='_panel']:not([aria-modal='true']):has(dl, [class*='_percent'])) {
+    animation: none;
+  }
+}
+
+/* 鈹€鈹€ 9. desktop title bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The window is created with `decorations(false)`, so the app draws its own
+ * caption: the mark, four menus (缂栬緫 / 浼氳瘽 / 椤圭洰 / 鏇村), and the window
+ * buttons. This section styles it.
+ *
+ * HEIGHT. `--dsh-desktop-titlebar-height` is published by the client plugin (see
+ * `title-bar/client.js`), so the height lives in one place and the two cannot
+ * drift. It is taller than a native caption 鈥?a logo, a wordmark, and a text menu
+ * need more room than three glyphs do.
+ *
+ * WHERE THE BAR LIVES, AND WHY IT IS NOT IN THE OVERLAY LAYER. The component is
+ * *registered* into `shell.overlay` but *rendered* into `document.body` through a
+ * portal, and it is `position: fixed` here to match. A bar left inside the frame
+ * loses two fights it cannot win from there:
+ *
+ *   1. STACKING. The frame's overlay layer is a stacking context at `z-index: 20`
+ *      (see `dsh-client-ui-layout`), and the app portals every dialog and mask to
+ *      `document.body` instead 鈥?the dialog root at 1000, the onboarding overlay
+ *      at 1100. Anything inside the layer is therefore painted *below* a dialog's
+ *      mask: opening 璁剧疆 or any confirmation dimmed the bar and blocked its
+ *      buttons. The bar is chrome, not app content, so it belongs on the body
+ *      plane with a z-index above every one of them.
+ *
+ *   2. `inert`. The app's onboarding overlay sets `#root.inert = true` while it is
+ *      shown, which makes everything inside the root non-interactive. A bar in the
+ *      frame would have been visible but dead 鈥?no way to close the window.
+ *
+ * 1200 is deliberately just above the app's own ceiling of 1100, and well below
+ * the 2147483647 section 4 uses for its hairline: a value that "wins by a mile"
+ * would also win against any future surface that legitimately belongs on top.
+ *
+ * MAKING ROOM. The bar floats above the page, so the app's columns must start
+ * below it or the sidebar's own header would sit under the bar and swallow its
+ * clicks.
+ *
+ * The offset goes on the FRAME as padding, not on `body`. An absolutely
+ * positioned overlay resolves `inset: 0` against its containing block's *padding
+ * box*, so padding on the frame leaves the overlay covering the full frame while
+ * pushing the grid columns down 鈥?the bar then occupies exactly the space the
+ * padding reserved, and nothing is covered.
+ *
+ * `box-sizing: border-box` is required: the frame is `height: 100%`, so padding
+ * without it would add to that height and overflow the window by one bar.
+ *
+ * FINDING THE FRAME 鈥?READ THIS BEFORE CHANGING THE SELECTOR. The frame is
+ * identified structurally rather than by its CSS-module hash (`pI_x6G_frame`),
+ * which changes every build. The original selector here was
+ * `[data-rightbar-collapsed]`, and that was WRONG in a way that only shows up
+ * when the right panel is opened:
+ *
+ *     "data-rightbar-collapsed": cols.rightbar === 0 || void 0
+ *
+ * That attribute is CONDITIONAL. React omits an attribute whose value is
+ * `void 0`, so the frame carries it only WHILE the right bar is collapsed.
+ * Expanding the panel removed the attribute, the rule below stopped matching,
+ * the frame lost its 44px of top padding, and every column slid up under the
+ * opaque bar 鈥?the centre session area and the right panel's own header both
+ * disappearing behind it.
+ *
+ * The anchors used now are both UNCONDITIONAL, and both live on nodes that are
+ * always rendered:
+ *
+ *   `:has(> [data-shell-overlay])`  the frame, found by its own overlay layer
+ *   `[data-dsh-desktop='frame']`    the same node, tagged by the DOM tier
+ *
+ * `data-shell-overlay` is written as the literal `true` (not a computed
+ * condition), and the layer is a DIRECT child of the frame 鈥?a React Fragment
+ * between them adds no DOM node, so the child combinator is accurate.
+ *
+ * These are THREE SEPARATE RULES with identical declarations, not one selector
+ * list, and that is deliberate: a selector the engine cannot parse invalidates
+ * the entire rule it appears in. Combined into one list, a browser without
+ * `:has()` would discard the whole thing 鈥?including the fallbacks that exist
+ * for it. Split up, each engine gets the best match it can understand.
+ *
+ * 鈹€鈹€ THE CONTAINER 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ *
+ * The bar's space is reserved by making `#root` a CONTAINER: a fixed box whose top
+ * edge is the bar's height. Everything the frontend renders then begins below the
+ * bar, and 鈥?this is why it is a container rather than a padding rule 鈥?so does
+ * everything the frontend portals OUT of itself, because a `position: fixed`
+ * overlay inside a full-viewport app is already only ever as tall as the app.
+ *
+ * WHAT THIS REPLACED, AND WHY THE OLD WAY WAS NOT ENOUGH. The space used to be
+ * reserved as `padding-top` on the layout frame. That pushed the app's COLUMNS
+ * down, but a dialog is `position: fixed; inset: 0` and resolves against the
+ * VIEWPORT 鈥?it never saw the frame's padding at all. So each full-screen layer
+ * needed its own correction, and the corrections had to be re-applied by
+ * JavaScript after every re-render. Two things went wrong with that:
+ *
+ *   1. **鍘熺増 lost them.** The tags are removed by `clearDecorations`, which is the
+ *      whole point of 鍘熺増, so opening 璁剧疆 there put the panel's header back under
+ *      the bar. Measured: `panelTop: 24` in 鍘熺増 against `46` in the desktop mode.
+ *      That is the reported bug, and it is structural 鈥?a per-layer correction
+ *      maintained by the overlay tier cannot survive the mode whose purpose is to
+ *      remove the overlay tier.
+ *   2. **Every new layer needed remembering.** A surface that shipped later would
+ *      silently sit under the bar until someone noticed.
+ *
+ * With the container, both modes are laid out by CSS from one declaration, and
+ * nothing has to be re-applied after a render.
+ *
+ * WHY IT IS NOT ALSO A CONTAINING BLOCK. `transform` on the container would let a
+ * layer's own fixed DESCENDANTS resolve against it, which is what the lightbox's
+ * close button needs 鈥?but it would also capture the app's coordinate-positioned
+ * popups. The tooltip bubble, the hover card and the JSON copy anchor are rendered
+ * as ordinary children INSIDE `#root` (not portalled) and set `left`/`top` from
+ * `getBoundingClientRect()`, i.e. in REAL viewport coordinates. Measured with a
+ * fixture of exactly that shape inside `#root`:
+ *
+ *     container at y=0, no transform      popup measured y=400  (correct)
+ *     container at y=0, transformed       popup measured y=400  (correct)
+ *     container at y=44, transformed      popup measured y=444  (WRONG, +44)
+ *
+ * So the displacement comes from offsetting the containing block, not from the
+ * transform, and any container that is both offset AND a containing block moves
+ * every tooltip in the app by the bar's height. The transform is therefore scoped
+ * to the tagged dialog layers instead (see the full-surface-layer rule below),
+ * where the only fixed children are the layer's own.
+ *
+ * `height: auto` IS LOAD-BEARING, not a default. The app ships
+ * `html,body,#root{height:100%}`. For a fixed box with both `top` and `bottom` set
+ * AND a specified height, the `bottom` inset is IGNORED 鈥?so `height: 100%` would
+ * make the container 840px tall starting at y=44 and overflow the window by exactly
+ * one bar. Measured: with `height: auto` the container is `[44, 796]` and
+ * `scrollHeight` stays 840; the columns and the composer all end inside the window.
+ *
+ * NO `!important`. The app's own `#root` selector is (1,0,0) 鈥?a bare id 鈥?while
+ * `html body #root` here is (1,0,2) and wins outright, exactly like the gate in
+ * section 1. Verified live by loading this rule alone and reading the container's
+ * resolved box back.
+ *
+ * The frame-padding selectors that follow are retained as a FALLBACK for an engine
+ * where `#root` is missing or is not the app's root. They cost nothing when the
+ * container applies: the frame's padding would double the offset, so they are
+ * neutralised by the rule directly below rather than left to fight it.
+ */
+html body #root {
+  position: fixed;
+  inset: var(--dsh-desktop-titlebar-height, 44px) 0 0 0;
+  height: auto;
+}
+
+/* Native toasts portal to body and keep a viewport-relative top, so #root's
+   offset cannot clear the title bar for them. Leave room for the 6px entrance
+   animation too. This belongs to window chrome in both appearance modes. */
+html body [role='alert'][class*='_toast_'] {
+  top: calc(var(--dsh-desktop-titlebar-height, 44px) + 16px);
+}
+
+/* With the container carrying the offset, the frame inside it must NOT also pad 鈥?   that would apply the bar's height twice. The neutraliser below has higher
+   specificity (it adds `#root` to the same compound), so it wins regardless of the
+   order the two rules are written in. Kept as its own rule so the intent is explicit
+   and a future reader does not "restore" the padding. */
+html body :has(> [data-shell-overlay]) {
+  box-sizing: border-box;
+  padding-top: var(--dsh-desktop-titlebar-height, 44px);
+}
+
+html body #root :has(> [data-shell-overlay]) {
+  padding-top: 0;
+}
+
+/* The original anchor, kept as the last resort for the same reason. It matches only
+   while the right panel is collapsed 鈥?see the banner above for why that is not
+   enough on its own 鈥?and it is likewise neutralised inside the container. */
+html body [data-rightbar-collapsed] {
+  box-sizing: border-box;
+  padding-top: var(--dsh-desktop-titlebar-height, 44px);
+}
+
+html body #root [data-rightbar-collapsed] {
+  padding-top: 0;
+}
+
+/* The 1px separator that used to mark the viewport's top edge now belongs to the
+   bar's own bottom border, so the standalone line is removed. */
+html body::before {
+  display: none;
+}
+
+/* 鈹€鈹€ full-surface layers start below the bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ * The bar is chrome and stays above every dialog, so a layer must give up the
+ * bar's strip or its content centres in the full viewport and slides under it.
+ *
+ * WHY THIS IS STILL NEEDED ON TOP OF THE CONTAINER. The container moves `#root`,
+ * and a `position: fixed` layer does not care where its ancestor is 鈥?it resolves
+ * against the viewport. So a layer must be pushed explicitly, in BOTH modes.
+ *
+ * WHY THE TAG IS `data-dsh-chrome` AND NOT `data-dsh-desktop`. 鍘熺増 is defined by
+ * the ABSENCE of this project's modifications, and `ui-overlay/dom.js` enforces
+ * that by stripping every `data-dsh-desktop` attribute. The bar's strip is not an
+ * appearance choice 鈥?it is the window's layout, and 鍘熺増 still has the bar 鈥?so
+ * these tags must survive the cleanup. They therefore live in their own family that
+ * `clearDecorations` never touches. Before this, opening 璁剧疆 in 鍘熺増 put the panel
+ * header back under the bar (measured: `panelTop: 24` against `46`).
+ *
+ * NO TRANSFORM HERE, AND THAT IS A MEASURED DECISION. Transforming the layer makes
+ * it the containing block for its fixed DESCENDANTS, which is what the image
+ * lightbox's close button (`position: fixed; top: 20px` inside an `inset: 0`
+ * backdrop) would need. But this app also renders ordinary tooltips INSIDE dialogs
+ * 鈥?`dsh-client-ui-agent-preset`'s Agent presets section wraps a description in a
+ * `Tooltip` 鈥?and the tooltip bubble is `position: fixed` with `left`/`top` taken
+ * from `getBoundingClientRect()`, i.e. REAL viewport coordinates. Measured with a
+ * fixture of exactly that shape inside the settings layer:
+ *
+ *     tagged + transformed      bubble measured y=544  (WRONG, +44)
+ *     tag kept, transform off   bubble measured y=500  (correct)
+ *
+ * So a transform here trades a broken lightbox button for a broken tooltip in
+ * settings. The lightbox's own case is handled by the rule below it instead, which
+ * is scoped to the layer shape that actually needs it.
+ *
+ * `top` rather than `padding-top`: the layer centres its content, so moving the top
+ * edge shrinks the box it centres within AND stops its mask from covering the bar.
+ * Padding would leave the mask's own box under the bar, dimming the chrome it is
+ * supposed to sit below.
+ *
+ * NO `!important`, MEASURED RATHER THAN ASSUMED: the app's own rule is a single
+ * class (`.VOzbGW_overlay{position:fixed;inset:0}`) injected at runtime, so it comes
+ * later in source order and its `inset` shorthand does set `top`. But source order
+ * only breaks ties on EQUAL specificity, and this selector is (0,1,2) against the
+ * app's (0,1,0). Verified live by stripping the flag from the loaded rule: the
+ * computed `top` stayed `44px` and the panel stayed clear.
+ *
+ * Ungated, like the rest of section 9. */
+html body [data-dsh-chrome='layer'] {
+  top: var(--dsh-desktop-titlebar-height, 44px);
+}
+
+/* THE SAME OFFSET, ONE SCOPE DEEPER 鈥?and why one rule was not enough.
+ *
+ * The rule above is (0,1,2): two types and one attribute. That beats the settings
+ * overlay (`.VOzbGW_overlay`, (0,1,0)) but LOSES to any app rule carrying two
+ * class-level selectors, and the right sidebar's fullscreen opening is exactly
+ * one:
+ *
+ *     .P3OORG_panel[data-sidebar-right-panel=fullscreen] { position:fixed; inset:0 }
+ *
+ * (0,2,0) wins over (0,1,2) because the class/attribute count is compared BEFORE
+ * the type count, so the fullscreen rule's `inset: 0` outvoted the offset 鈥?the
+ * panel kept the bar's strip, and its own top row, the tab strip that carries the
+ * 鍏ㄥ睆 button, sat under the opaque bar where it could be neither seen nor
+ * clicked.
+ *
+ * Scoping this copy under `#root` adds an ID, which outranks any number of
+ * class-level selectors. The panel renders inside the frame, which is inside
+ * `#root` (see the grounding comment at the top of `dom.js`), so the scope is
+ * free 鈥?and every layer the app renders inside `#root`, the settings overlay
+ * among them, is hardened the same way for free. Body-portalled layers keep the
+ * rule above; their app rules are single-class today.
+ */
+html body #root [data-dsh-chrome='layer'] {
+  top: var(--dsh-desktop-titlebar-height, 44px);
+}
+
+/* The fullscreen right panel, keyed on the app's OWN attribute rather than on the
+   tag.
+ *
+ * The tag needs a pass to arrive: the cheap candidate scan keys on ARIA roles,
+ * which the panel declares none of, and the sweep that catches it runs every
+ * WATCH_MS 鈥?so a tag-keyed rule lands up to two seconds after the click, as a
+ * visible jump. `data-sidebar-right-panel` is written by React synchronously with
+ * the switch (`"fullscreen"` or `"push"`), so keying on it applies the offset in
+ * the same frame as the click and stops applying it the moment the panel docks
+ * back.
+ *
+ * That round trip matters because the panel is ONE element in both shapes:
+ * fullscreen is `position: fixed; inset: 0`, docked is `position: absolute;
+ * top: 0` inside its column, below a bar the container has already cleared. An
+ * offset that outlived the fullscreen shape would leave the docked panel starting
+ * 44px below its column's top edge. (`markFullSurfaceLayers` retires the tag on
+ * the same grounds; this rule simply never participates in it.)
+ *
+ * `#root` scope for the same reason as the rule above: the app's own fullscreen
+ * rule is (0,2,0), and an attribute-only selector cannot beat it. */
+html body #root [data-sidebar-right-panel='fullscreen'] {
+  top: var(--dsh-desktop-titlebar-height, 44px);
+}
+
+/* A layer whose own fixed children position themselves against the viewport needs
+   one more thing: to BE their containing block. The image lightbox is the only
+   surface in the app with that shape 鈥?a `position: fixed` close button pinned to
+   `top: 20px; right: 20px` inside an `inset: 0` backdrop 鈥?and without this the
+   button sits under the bar. Measured: untagged control at 20px; with this rule at
+   64px, clear of the 44px bar.
+ *
+ * Scoped by `:has(> [style*="position: fixed"])`, i.e. only a layer that actually
+ * contains an inline-styled fixed child. That is deliberately narrow: the settings
+ * layer contains no such child, so it never gets the transform, and the tooltip it
+ * renders in the Agent presets section keeps measuring its real viewport
+ * coordinates. A blanket transform on every layer is what broke that.
+ *
+ * The transform was checked for its own cost: it creates a new BACKDROP ROOT, and
+ * `backdrop-filter` samples only within its own, so the lightbox mask's blur could
+ * have stopped sampling the app behind it. Screenshotting the same masked region
+ * with and without it produced byte-identical PNGs, and the comparison was shown
+ * non-vacuous by hiding the mask, which did change the bytes (40676 -> 21832). */
+html body [data-dsh-chrome='layer']:has(> [style*='position: fixed']) {
+  transform: translateZ(0);
+}
+
+/* 鈹€鈹€ menus are the top layer, above the bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ *
+ * Every popup menu in the app 鈥?the workspace and session row menus, the
+ * composer's pickers, a dropdown inside the settings dialog, and this bar's own
+ * four menus 鈥?is portalled to `document.body` and carries the app's
+ * `_portal_鈥z-index:1100}`. The bar is 1200, so a menu is painted UNDER it.
+ *
+ * WHY THAT IS A REAL BUG AND NOT A THEORETICAL ONE. The overlay's own right-click
+ * placement clamps a menu to `MENU_MARGIN` (8px) from the viewport top, and the
+ * bar occupies the top 44px 鈥?so a menu opened from a row near the top of the
+ * sidebar has its first item inside the bar's strip. Measured live at that
+ * geometry, in two clean page loads (one with this rule forced back to 1100):
+ *
+ *     menu top 8px   first item top 12px, 32px of it under the bar
+ *     pre-fix   the item's own centre hit-tests to `dshTb__item` 鈥?the BAR, so
+ *               the click landed on the title bar and 閲嶅懡鍚?could not be chosen
+ *     post-fix  the same point belongs to the menu item
+ *
+ * The bar's own popups were clipped too 鈥?the bar painted over their top 6px 鈥? * though their items stayed reachable. The same applies to any surface that
+ * happens to overlap an open menu: a toast, a hover card, a dialog mask.
+ *
+ * 1300 is deliberately just above the bar's 1200, for the reason given there: it
+ * wins against the chrome it must, without being a maximum value that would also
+ * win against a surface which legitimately belongs on top later.
+ *
+ * WHY THIS IS UNGATED, LIKE THE REST OF SECTION 9. 鍘熺増 shows the unmodified
+ * frontend 鈥?but it does not remove the window's title bar, which exists in both
+ * modes because the window is `decorations(false)`. A menu painted under that
+ * bar is the window failing to show its own UI, not an appearance preference, so
+ * the correction belongs with the layout rather than with sections 1鈥?.
+ *
+ * `[data-dockkit-tab-menu]` is included because the dock's own tab menu is not a
+ * `[role=menu]` primitive: it ships `z-index:70`, which is below even the app's
+ * hover cards (100) and tooltips (100) 鈥?the lowest surface in the interface.
+ *
+ * NO `!important`: the app's rule is a single class `(0,1,0)` injected at
+ * runtime, while `html body [role='menu']` is `(0,1,2)` and wins outright, for
+ * the same source-order reason section 1 documents. The compact-menu variant
+ * `._list.compactList{鈥` does not set a z-index at all, so there is nothing to
+ * outrank there.
+ */
+html body [role='menu'],
+html body [data-dockkit-tab-menu] {
+  z-index: 1300;
+}
+
+.dshTb {
+  /* Fixed, not absolute: the bar is portalled to `document.body` (see the section
+     banner), so it is no longer positioned against the frame. `fixed` also takes
+     it out of the frame's stacking context, which is the point 鈥?z-index only
+     competes within one context, and the frame's overlay layer sits at 20. */
+  position: fixed;
+  inset: 0 0 auto 0;
+  /* Above every overlay the app portals to the body (dialogs 1000, onboarding
+     1100). See the section banner for why this is 1200 rather than a maximum. */
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 0 10px;
+  box-sizing: border-box;
+  background: var(--dsw-specific-sidebar-fill);
+  border-bottom: var(--dsh-titlebar-border-width, 1px) solid var(--dsw-alias-border-l2);
+  /* The bar is the window's drag surface; interactive children opt out below. */
+  user-select: none;
+  cursor: default;
+}
+
+
+/* 鈹€鈹€ the mark and wordmark 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+
+.dshTb__brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  /* A little right margin so the mark does not crowd the first menu. */
+  margin-right: 6px;
+}
+
+/* The mark, in the same ink as the wordmark beside it.
+ *
+ * It used to carry `--dsw-alias-brand-primary`, the DeepSeek blue 鈥?but the
+ * wordmark next to it has always been `--dsw-alias-label-primary`, so the two
+ * halves of the lockup were pulling from different palettes and the blue
+ * dominated a bar whose only other colour is text.
+ *
+ * Label-primary rather than a literal, so it inverts with the palette for free:
+ * near-black in the light theme, off-white in the dark one. That is the whole
+ * point 鈥?the bar reads as one monochrome mark plus a word, in either theme,
+ * with no second rule to keep in step.
+ *
+ * The taskbar icon is this same mark in the same two inks, chosen from the
+ * Windows theme instead (`src-tauri/src/app_icon.rs`). */
+.dshTb__logo {
+  display: block;
+  color: var(--dsw-alias-label-primary);
+  flex: none;
+}
+
+/* 鈹€鈹€ the mark as the sidebar's collapse control 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+ *
+ * WHY THE MARK IS A BUTTON. The sidebar's own header 鈥?the mark, the wordmark
+ * and 鏀惰捣渚ц竟鏍?鈥?is hidden in this mode (section 8b), so the control has to
+ * live somewhere. The bar's mark is the same artwork eight pixels higher, in the
+ * strip directly above the sidebar it acts on, which makes it the honest place to
+ * put it: one mark, one control, no second button added to the bar.
+ *
+ * THE HOVER SWAP IS THE APP'S OWN IDIOM, not an invention. Its collapsed rail
+ * shows the mark on the toggle and swaps it for the panel glyph while the pointer
+ * is over it:
+ *
+ *     .鈥collapsed .鈥toggle:hover .鈥railMark  { display: none }
+ *     .鈥collapsed .鈥toggle:hover .鈥panelIcon { display: inline }
+ *
+ * So the reveal reads as "this mark is a sidebar control" to anyone who has seen
+ * the rail, and the glyph shown is the app's own `IconPanelLeftOutline16` 鈥?the
+ * same one its button uses. `currentColor` is inherited from `.dshTb__logo`, so
+ * both states stay on the bar's single ink.
+ *
+ * BOTH GLYPHS ARE ALWAYS IN THE TREE and the stylesheet chooses between them,
+ * rather than the component mounting one on pointer-enter. A swap driven by React
+ * state would depend on a render landing before the pointer left again; this way
+ * the two are one repaint apart at worst, and the button is a control in every
+ * state 鈥?including for a keyboard user, who never hovers and therefore always
+ * sees the mark, which is what the label beside it describes.
+ *
+ * The button is unstyled beyond its box: no background, no border, no padding
+ * that would move the lockup. The hover feedback is the GLYPH CHANGE itself,
+ * exactly as the app's rail does it 鈥?an added background would put a chip in the
+ * bar that the app's own control does not have.
+ */
+.dshTb__mark {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  /* A grid with one cell, so the two glyphs below stack in it. See the
+     cross-fade note. */
+  display: inline-grid;
+  place-items: center;
+  /* The glyph's box, so the swap cannot resize the lockup and shift the
+     wordmark beside it. */
+  width: 20px;
+  height: 20px;
+  flex: none;
+  cursor: default;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The two glyphs STACK, and the swap is a cross-fade rather than a `display`
+ * flip.
+ *
+ * WHY STACKED. The bar's mark is a 20px box with the wordmark beside it, so the
+ * two artworks have to occupy the same pixels: whichever is showing must not
+ * change the box, or the lockup would breathe every time the pointer crossed it.
+ * A grid with both in cell 1/1 does that by construction 鈥?and it is what makes a
+ * cross-fade possible at all, because a `display: none` glyph cannot fade while
+ * it is out of the tree.
+ *
+ * WHY A CROSS-FADE AND NOT A ROTATE OR A SCALE. The app's own chevrons rotate
+ * (`.鈥chevronOpen { transform: rotate(180deg) }`), and that is right for a
+ * chevron: rotation describes "the panel flipped". Neither glyph here is a
+ * direction 鈥?one is a whale, one is a panel 鈥?so rotating between them would
+ * spin the product mark, which is the one thing a brand mark must never do. An
+ * opacity cross-fade is the honest interpolation for two unrelated shapes.
+ *
+ * TIMING. 160ms rather than section 6's 120ms, for a reason specific to this
+ * control: it is a SHAPE change, not a colour one, and at 120ms the two glyphs
+ * overlap so briefly that the eye reads a flicker rather than a transition.
+ * 160ms is still inside the app's own micro-interaction vocabulary 鈥?its
+ * `PluginCard` card and chevron both use `.16s` 鈥?so it adds no third tempo.
+ */
+.dshTb__markLogo,
+.dshTb__markPanel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Both glyphs in the same cell, so they occupy the same pixels. */
+  grid-area: 1 / 1;
+  transition: opacity 160ms ease-out;
+}
+
+/* The panel glyph is the hover state, so it starts transparent. It keeps its box
+   鈥?see the stacking note above 鈥?so this is opacity, never `display`. */
+.dshTb__markPanel {
+  opacity: 0;
+}
+
+/* Keyboard focus gets the same reveal as hover, or a tabbing user would be
+   looking at a control that never says what it does. `:focus-visible` rather than
+   `:focus`, so a mouse click does not leave the panel glyph stuck on after the
+   pointer leaves. */
+/* Keyboard focus gets the same reveal as hover, or a tabbing user would be
+   looking at a control that never says what it does. `:focus-visible` rather than
+   `:focus`, so a mouse click does not leave the panel glyph stuck on after the
+   pointer leaves. Hover is the preference-gated half; focus stays ungated. */
+html:not([data-dsh-titlebar-hover='off']) .dshTb__mark:hover .dshTb__markLogo {
+  opacity: 0;
+}
+
+html:not([data-dsh-titlebar-hover='off']) .dshTb__mark:hover .dshTb__markPanel {
+  opacity: 1;
+}
+
+.dshTb__mark:focus-visible .dshTb__markLogo {
+  opacity: 0;
+}
+
+.dshTb__mark:focus-visible .dshTb__markPanel {
+  opacity: 1;
+}
+
+.dshTb__mark:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.dshTb__wordmark {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--dsw-alias-label-primary);
+  line-height: 1;
+}
+
+/* The product badge, echoing the one the app shows in its sidebar. */
+.dshTb__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+/* 鈹€鈹€ the menus 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+
+.dshTb__nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+/* The trigger, rendered by the Menu primitive as its `anchor`.
+ *
+ * NOT `.dshTb__menu`: that class is passed to `Menu` and lands on the primitive's
+ * own wrapper span, which also contains the popup. Sizing that wrapper would size
+ * the trigger button too 鈥?the first attempt gave every trigger `min-width`, which
+ * spread the four labels across the bar. This rule targets the button itself. */
+.dshTb__item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+/* Hover reactions on the bar's own icons are a preference (外观 ▸ 标题栏图标悬停),
+   published as `data-dsh-titlebar-hover` on <html> — absent and "on" agree, so
+   the gate below only stops matching for "off". :focus-visible stays ungated: a
+   keyboard user must keep the reveal whatever the pointer does. */
+html:not([data-dsh-titlebar-hover='off']) .dshTb__item:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The open trigger stays lit, so the button and its popup read as one control. */
+.dshTb__item--open {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshTb__item:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+/* The gap between the brand and the window buttons, and the click-through region
+   that still drags the window. */
+.dshTb__spacer {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
+/* 鈹€鈹€ window controls 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+
+.dshTb__controls {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  align-self: stretch;
+}
+
+.dshTb__control {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  width: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+html:not([data-dsh-titlebar-hover='off']) .dshTb__control:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Close is the one destructive control, so it tints red on hover 鈥?the same
+   signal every Windows application gives, and the app's own error colour. */
+html:not([data-dsh-titlebar-hover='off']) .dshTb__control--close:hover {
+  background: var(--dsw-alias-state-error-primary);
+  color: #fff;
+}
+
+.dshTb__control:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+/* 鈹€鈹€ dialogs 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ */
+
+.dshTb__dialogField {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.dshTb__dialogError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+
+.dshTb__updateHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dshTb__updateHeader > .dshTb__recheck {
+  flex: none;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.dshTb__versions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 16px;
+  margin: 8px 0;
+}
+
+.dshTb__versions dt {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dshTb__versions dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.dshTb__versionTag,
+.dshTb__recommendation {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-primary);
+  vertical-align: middle;
+}
+
+.dshTb__versionTag {
+  padding: 2px 8px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.dshTb__recommendation {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.dshTb__updateError {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* 鈹€鈹€ 鍏充簬 dialog 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+   Deliberately plain: the mark, the name, the version, one sentence. The
+   surface, radius, shadow and focus handling are the app's own Modal; only
+   the content layout lives here, on the app's own ink tokens so both
+   palettes read correctly. */
+
+.dshTb__about {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 264px;
+}
+
+.dshTb__aboutHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The bar's own whale, enlarged for the dialog; `currentColor` keeps it on
+   the app's ink, which the Modal's surface supplies. */
+.dshTb__aboutMark svg {
+  width: 30px;
+  height: 30px;
+}
+
+.dshTb__aboutIdent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dshTb__aboutName {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshTb__aboutVersion {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshTb__aboutText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* With animations off, the bar's hover transitions are dropped like the rest 鈥?   including the mark's cross-fade, which is a transition and therefore stops
+   interpolating, leaving an instant swap. Note that the SWAP STILL HAPPENS: the
+   hover `opacity` rules are ungated, so the panel glyph still replaces the mark,
+   it simply does so on one frame. Dropping the reveal itself would leave the
+   sidebar's collapse control looking inert. */
+html[data-dsh-desktop-animation='off'] body .dshTb__item,
+html[data-dsh-desktop-animation='off'] body .dshTb__control,
+html[data-dsh-desktop-animation='off'] body .dshTb__markLogo,
+html[data-dsh-desktop-animation='off'] body .dshTb__markPanel {
+  transition: none;
+}
+
+/* The optional DOM overlay may be disabled, so settings cannot rely on its
+   data-dsh-chrome tags to leave the window caption clear. */
+html body [role='presentation']:has(> [data-shortcut-modal='settings']) {
+  top: var(--dsh-desktop-titlebar-height, 44px);
+}
+html body [data-shortcut-modal='settings'] {
+  max-height: calc(100dvh - var(--dsh-desktop-titlebar-height, 44px) - 4px);
+}
+/* dsh-titlebar:end */
+
+
+
+
+/* Changes content remains readable for already-open tabs in either UI mode. */
+.dshChanges {
+  --changes-muted: var(--dsw-alias-label-secondary);
+  --changes-add: color-mix(in srgb, var(--dsw-alias-file-diff-added-marker, var(--dsw-alias-state-success-primary)) 80%, var(--dsw-alias-label-primary));
+  --changes-remove: color-mix(in srgb, var(--dsw-alias-file-diff-deleted-marker, var(--dsw-alias-state-error-primary)) 80%, var(--dsw-alias-label-primary));
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: hidden;
+  color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px;
+  container-type: inline-size;
+}
+.dshChanges :is(button, [tabindex]):focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
+.dshChanges button { transition: background-color 150ms ease, color 150ms ease; }
+.dshChanges__toolbar {
+  display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 44px; padding: 6px 8px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+.dshChanges__scope { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.dshChanges__source { flex: none; }
+.dshChanges .dshChanges__sourceButton { gap: 8px; font-size: 13px; padding: 0 8px; }
+.dshChanges__summary { display: flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
+.dshChanges .dshChanges__collapse { width: 28px; padding: 0; flex: none; }
+.dshChanges__metadata { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px 0; }
+.dshChanges__tag { display: inline-flex; min-width: 0; max-width: 100%; border-radius: 999px; }
+.dshChanges__tag > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.dshChanges__list { flex: 1; overflow: auto; min-height: 0; padding: 8px; scrollbar-gutter: stable; }
+.dshChanges__item { min-width: 0; border: 0.5px solid transparent; border-radius: var(--dsw-radius-sm, 8px); margin-bottom: 2px; overflow: hidden; }
+.dshChanges__item[data-open='true'] { border-color: var(--dsw-alias-border-l2); margin-bottom: 8px; }
+.dshChanges .dshChanges__file { width: 100%; height: auto; min-height: 36px; justify-content: flex-start; text-align: left; padding: 8px 6px; gap: 6px; font: inherit; }
+.dshChanges__item[data-open='true'] > .dshChanges__file { background: var(--dsw-alias-bg-module-platform); border-radius: 0; }
+.dshChanges__chevron { display: flex; flex: none; color: var(--changes-muted); }
+.dshChanges__fileIcon { flex: none; }
+.dshChanges__fileTags { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 6px 42px; }
+.dshChanges__row { display: flex; align-items: baseline; flex: 0 1 auto; justify-content: flex-start; min-width: 0; max-width: 100%; gap: 8px; }
+.dshChanges__path { display: flex; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; }
+.dshChanges__path > span { min-width: 0; max-width: 100%; }
+.dshChanges__stats { flex: 0 0 auto; white-space: nowrap; font-size: 12px; font-variant-numeric: tabular-nums; }
+.dshChanges__added { color: var(--changes-add); }
+.dshChanges__removed { color: var(--changes-remove); }
+.dshChanges__placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 160px; padding: 28px 20px; color: var(--changes-muted); text-align: center; line-height: 1.6; overflow-wrap: anywhere; }
+.dshChanges > .dshChanges__placeholder, .dshChanges__list > .dshChanges__placeholder:only-child { flex: 1; height: 100%; min-height: 0; box-sizing: border-box; }
+.dshChanges__placeholderIcon { display: flex; padding: 12px; border-radius: var(--dsw-radius-md, 12px); background: var(--dsw-alias-bg-module-platform); }
+.dshChanges__placeholder[role='alert'] .dshChanges__placeholderIcon { color: var(--changes-remove); }
+.dshChanges__detail { --dsh-collapse-padding-block: 8px; min-width: 0; padding: 4px 0; }
+/* Session history already supplies row spacing; keep its outer box flush. */
+.dshChanges__detail:has(> .dshChanges__historyButton) { --dsh-collapse-padding-block: 0px; padding-block: 0; }
+.dshChanges__records, .dshChanges__recordDiff { --dsh-collapse-padding-block: 0px; }
+.dshChanges__detail .dshChanges__placeholder { min-height: 96px; padding: 16px; gap: 8px; font-size: 12px; }
+.dshChanges__detail .dshChanges__placeholderIcon { display: none; }
+.dshChanges__detail .dshChanges__metadata { padding: 4px 10px; }
+.dshChanges__loading { padding: 18px 12px; text-align: center; color: var(--changes-muted); font-size: 12px; }
+/* Keep the host's exact, paged diff rows while sharing DSH DiffBlock's tokens. */
+.dshChanges__code { display: grid; grid-template-columns: minmax(max-content, 1fr); overflow-x: auto; max-width: 100%; font: var(--dsw-font-markdown-code-block, 12px/1.65 Consolas, monospace); font-size: 12px; }
+.dshChanges__line { display: flex; min-width: 0; }
+.dshChanges__line[data-kind='+'] { background: var(--dsw-alias-code-diff-added); box-shadow: inset 2px 0 0 var(--changes-add); }
+.dshChanges__line[data-kind='-'] { background: var(--dsw-alias-code-diff-deleted); box-shadow: inset 2px 0 0 var(--changes-remove); }
+.dshChanges__line code { display: block; font: inherit; white-space: pre; padding-right: 12px; }
+.dshChanges__number { box-sizing: content-box; width: 4ch; flex: 0 0 4ch; color: var(--changes-muted); text-align: right; padding-right: 1ch; user-select: none; }
+.dshChanges__sign { width: 2ch; flex: 0 0 2ch; user-select: none; color: var(--changes-muted); }
+.dshChanges__line[data-kind='+'] .dshChanges__sign { color: var(--changes-add); }
+.dshChanges__line[data-kind='-'] .dshChanges__sign { color: var(--changes-remove); }
+.dshChanges .dshChanges__context { width: 100%; height: auto; min-height: 28px; border-radius: 0; padding: 5px 10px; color: var(--changes-muted); white-space: normal; }
+/* Compact history rows include their padding and divider in the row height. */
+.dshChanges .dshChanges__historyButton, .dshChanges .dshChanges__recordMore { box-sizing: border-box; width: 100%; height: auto; min-height: 28px; padding: 4px 10px; line-height: 20px; white-space: normal; }
+.dshChanges__record { margin-top: 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+.dshChanges__record > .dshChanges__metadata { box-sizing: border-box; min-height: 27px; padding: 3px 8px; row-gap: 3px; }
+.dshChanges .dshChanges__recordToggle { box-sizing: border-box; min-height: 20px; height: 20px; padding: 0 8px; line-height: 20px; }
+.dshChanges__recordLabel { display: inline-flex; align-items: center; min-height: 20px; padding: 0 8px; font-size: 12px; line-height: 20px; }
+.dshChanges__root { overflow-wrap: anywhere; font-size: 12px; color: var(--changes-muted); padding-bottom: 6px; }
+.dshChanges__coverage { flex: none; max-height: 160px; overflow: auto; padding: 6px 12px; overflow-wrap: anywhere; color: var(--changes-muted); font-size: 12px; }
+.dshChanges__coverage summary { cursor: pointer; }
+@container (max-width: 185px) { .dshChanges__row { flex-wrap: wrap; gap: 2px 8px; } .dshChanges__path { flex-basis: 100%; } }
+@media (pointer: coarse) { .dshChanges .dshChanges__file, .dshChanges .dshChanges__sourceButton, .dshChanges .dshChanges__collapse, .dshChanges .dshChanges__context { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .dshChanges button { transition: none; } }
+html[data-dsh-desktop-animation='off'] .dshChanges button { transition: none; }
+
+/* Commit history shares the changes toolbar and the native DSH controls. */
+.dshHistory {
+  --history-lane-0: var(--dsw-alias-link);
+  --history-lane-1: var(--changes-add);
+  --history-lane-2: var(--dsw-static-purple-500, #9970c9);
+  --history-lane-3: var(--dsw-alias-state-warn-label);
+  --history-lane-4: var(--changes-remove);
+  --history-lane-5: var(--dsw-static-blue-400, #60a5fa);
+}
+.dshHistory__list { position: relative; padding: 6px 8px 8px; overflow-anchor: none; }
+.dshHistory__commit { position: relative; min-height: 44px; padding-left: var(--history-graph-width); }
+.dshHistory__graph { position: absolute; top: 0; left: 0; pointer-events: none; }
+.dshHistory .dshHistory__row { display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 2px; height: auto; min-height: 44px; width: 100%; min-width: 0; padding: 5px 6px; text-align: left; }
+.dshHistory__commit[data-open='true'] > .dshHistory__row { background: var(--dsw-alias-bg-module-platform); }
+.dshHistory__titleLine { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dshHistory__subject { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; }
+.dshHistory__refs { display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; max-width: 42%; overflow: hidden; white-space: nowrap; }
+.dshHistory__refs > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dshHistory__byline { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--changes-muted); font-size: 11px; line-height: 16px; }
+.dshHistory__byline > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshHistory__byline time { flex: none; }
+.dshHistory .dshHistory__collapse { margin-left: auto; }
+.dshHistory__expanded { padding: 0 6px; overflow: hidden; overflow-anchor: none; }
+.dshHistory__reveal { padding: 6px 0 10px; }
+.dshHistory__detail {
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 94%, transparent);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 6%);
+  font-size: 12px;
+}
+.dshHistory__message { margin: 0; font: inherit; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.dshHistory__more { padding: 10px 0; text-align: center; }
+.dshHistory__expanded .dshChanges__placeholder { min-height: 96px; padding: 12px; }
+@container (max-width: 280px) {
+  .dshHistory__refs { max-width: 38%; }
+}

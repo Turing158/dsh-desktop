@@ -1,0 +1,126 @@
+/* Remote-control settings, dressed in the app's own control idiom. Every number
+ * below is copied from the DSH client's own stylesheets rather than invented:
+ *
+ *   - the row is the app's Setting-Cell (figma 501:30011, the locale row):
+ *     title + hint left, control right, 16px vertical padding and a .5px
+ *     `--dsw-alias-border-l2` hairline under the row;
+ *   - the selector pill is the shared settings selector: 36px tall, 18px
+ *     radius, `--dsw-alias-bg-module-platform` fill, and the app's 12x12
+ *     chevron path drawn back in as a background image (the same technique
+ *     `settings-models` uses for its `selectInput`), because `appearance:none`
+ *     strips the engine's own;
+ *   - the text input is `settings-models`' `.input`: 32px, .5px
+ *     `--dsw-alias-border-l4`, `--dsw-alias-bg-layer-1`, 8px radius, focus
+ *     recolours the border to the brand accent and draws no ring;
+ *   - the buttons are the app's primary/secondary 36px pill pair and the 28px
+ *     small ghost, disabled at opacity .4 and focused with the app's
+ *     `box-shadow: 0 0 0 2px var(--dsw-alias-border-l3)` ring.
+ *
+ * The functional settings remain present in both enhanced and original UI
+ * modes, so every token carries a light-mode literal fallback: in 原版 the
+ * palette is not injected and the literals keep the section legible. */
+.dshRemote { max-width: 640px; min-width: 0; color: var(--dsw-alias-label-primary, #252830); }
+.dshRemote__intro { margin: 0; padding: 2px 0 8px; color: var(--dsw-alias-label-tertiary, #8b9099); font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
+.dshRemote fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+/* Setting-Cell rows. Errors render inside the text column, under the hint, so
+   a failing row keeps one baseline instead of pushing its control around. */
+.dshRemote__row { display: flex; align-items: center; gap: 8px; padding: 16px 0; border-bottom: .5px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%)); }
+.dshRemote__rowText { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; padding-right: 48px; }
+.dshRemote__label { color: var(--dsw-alias-label-primary, #252830); font-size: 14px; line-height: 22px; }
+.dshRemote__hint { color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.dshRemote__error { margin: 0; color: var(--dsw-alias-state-error-primary, #d64545); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.dshRemote__pageError { margin: 12px 0 0; font-size: 13px; line-height: 22px; }
+.dshRemote__controls { display: inline-flex; flex: none; align-items: center; gap: 8px; }
+
+/* The app's text input (settings-models `.input`). */
+.dshRemote__input { box-sizing: border-box; width: 100%; min-width: 0; height: 32px; padding: 0 10px; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary, #252830); background: var(--dsw-alias-bg-layer-1, #fff); border: .5px solid var(--dsw-alias-border-l4, rgb(0 0 0 / 22%)); border-radius: 8px; }
+.dshRemote__input:focus { border-color: var(--dsw-alias-brand-primary, #4176e6); outline: none; }
+.dshRemote__input[aria-invalid='true'] { border-color: var(--dsw-alias-state-error-primary, #d64545); }
+.dshRemote__input:disabled { opacity: .4; }
+.dshRemote__inputPort { flex: none; width: 120px; }
+
+/* The selector pill. The chevron is the app's own 12x12 path; padding keeps
+   14px + 12px glyph + 8px breathing room, exactly like the shared selector. */
+.dshRemote__pill { box-sizing: border-box; appearance: none; flex: 0 1 auto; max-width: 220px; height: 36px; padding: 0 34px 0 14px; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary, #252830); background-color: var(--dsw-alias-bg-module-platform, #f2f3f5); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px 12px; border: none; border-radius: 18px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dshRemote__pill:hover:not(:disabled) { background-color: var(--dsw-alias-interactive-bg-hover, rgb(0 0 0 / 6%)); }
+.dshRemote__pill:disabled { opacity: .4; cursor: default; }
+
+/* The app's button pair: 36px primary/secondary pills, and the 28px small
+   ghost (the `addModelButton` idiom) that row-level commands wear. */
+.dshRemote__primary, .dshRemote__secondary { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 36px; padding: 0 14px; font: inherit; font-size: 14px; line-height: 22px; border: none; border-radius: 18px; cursor: pointer; }
+.dshRemote__primary { color: var(--dsw-alias-label-primary-foreground, #fff); background: var(--dsw-alias-button-primary-fill, #4176e6); }
+.dshRemote__primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover, #3154bd); }
+.dshRemote__secondary { color: var(--dsw-alias-label-primary, #252830); background: transparent; border: .5px solid var(--dsw-alias-border-l3, rgb(0 0 0 / 14%)); }
+.dshRemote__secondary:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgb(0 0 0 / 6%)); }
+.dshRemote__ghost { box-sizing: border-box; height: 28px; padding: 0 10px; font: inherit; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-primary, #252830); background: transparent; border: .5px solid var(--dsw-alias-border-l3, rgb(0 0 0 / 14%)); border-radius: 14px; cursor: pointer; }
+.dshRemote__ghost:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgb(0 0 0 / 6%)); }
+.dshRemote__ghostDanger { color: var(--dsw-alias-state-error-primary, #d64545); }
+.dshRemote__ghostDanger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover-danger, rgb(214 69 69 / 10%)); }
+.dshRemote button:disabled { opacity: .4; cursor: default; }
+.dshRemote button:focus-visible { box-shadow: 0 0 0 2px var(--dsw-alias-border-l3, rgb(0 0 0 / 14%)); outline: none; }
+
+/* The Host whitelist is a sub-block of the form, not a row: a section head and
+   notes, then the entry rows, then the add command. */
+.dshRemote__runtime { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; }
+.dshRemote__sectionHead { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; font-weight: 500; line-height: 18px; }
+.dshRemote__text { margin: 6px 0 0; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.dshRemote__autojoin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--dsw-alias-label-tertiary, #8b9099); font-size: 12px; line-height: 18px; }
+.dshRemote__hostRow { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+.dshRemote__hostRow .dshRemote__input { flex: 1 1 160px; }
+.dshRemote__hostError { margin: 4px 0 0; }
+.dshRemote__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 0; }
+
+/* The apply footer: the interruption warning carries the weight on the left,
+   the primary action sits right — the app's own action-row composition. */
+.dshRemote__apply { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 16px 0 8px; }
+.dshRemote__applyHint { flex: 1 1 240px; min-width: 0; margin: 0; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; line-height: 18px; }
+
+/* The inline enable confirmation, on the app's modal surface: layer-2 fill,
+   the prominent elevation, and a hairline where the shadow is too subtle. */
+.dshRemote__confirm { display: flex; flex-direction: column; gap: 12px; margin: 16px 0 0; padding: 16px; background: var(--dsw-alias-bg-layer-2, #fff); border: .5px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%)); border-radius: 16px; box-shadow: var(--dsw-elevation-prominent, 0 8px 24px rgb(0 0 0 / 12%)); }
+.dshRemote__confirmText { margin: 0; color: var(--dsw-alias-label-primary, #252830); font-size: 14px; line-height: 22px; }
+.dshRemote__confirmActions { display: flex; justify-content: flex-end; gap: 8px; }
+
+.dshRemote__notice { margin: 10px 0 0; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+
+/* Status, connection and help: plain sections under a hairline, headed by the
+   12px/500 secondary label the models settings uses, not bordered cards. */
+.dshRemote__section { margin: 0; padding: 16px 0; border-bottom: .5px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%)); }
+.dshRemote__disclosure { padding: 0; }
+.dshRemote__disclosure > summary { min-height: 44px; box-sizing: border-box; margin: 0; padding: 12px 0; color: var(--dsw-alias-label-primary, #252830); font-size: 14px; line-height: 22px; list-style: none; cursor: pointer; }
+.dshRemote__disclosure > summary::-webkit-details-marker { display: none; }
+.dshRemote__disclosure > summary::after { content: ''; flex: none; width: 6px; height: 6px; margin: 0 4px 0 auto; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 180ms ease; }
+.dshRemote__disclosure[open] > summary::after { transform: rotate(45deg); }
+.dshRemote__disclosure > summary:hover { color: var(--dsw-alias-brand-primary, #4176e6); }
+.dshRemote__disclosure > summary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4176e6); outline-offset: 2px; border-radius: 4px; }
+.dshRemote__disclosure > .dshRemote__sectionBody { padding: 0 0 16px; }
+html[data-dsh-desktop-animation='off'] .dshRemote__disclosure > summary::after { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-desktop-animation='on']) .dshRemote__disclosure > summary::after { transition: none; }
+}
+.dshRemote__kv { display: flex; gap: 12px; margin: 6px 0 0; font-size: 13px; line-height: 22px; }
+.dshRemote__kvKey { flex: none; color: var(--dsw-alias-label-secondary, #4a4f57); }
+.dshRemote__kvValue { min-width: 0; color: var(--dsw-alias-label-primary, #252830); overflow-wrap: anywhere; }
+
+/* The state tag reuses the terminal header's dot-and-word: one colour story
+   for "what is the service doing" across both surfaces. */
+.dshRemote__state { display: inline-flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-tertiary, #8b9099); font-size: 12px; font-weight: 400; line-height: 18px; }
+.dshRemote__dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-label-tertiary, #8b9099); }
+.dshRemote__state[data-dsh-remote-tone='ok'] .dshRemote__dot { background: var(--dsw-alias-state-success-primary, #2f9e63); }
+.dshRemote__state[data-dsh-remote-tone='busy'] .dshRemote__dot { background: var(--dsw-alias-state-warn-primary, #c8871f); }
+.dshRemote__state[data-dsh-remote-tone='bad'] .dshRemote__dot { background: var(--dsw-alias-state-error-primary, #d64545); }
+
+.dshRemote code { font-family: var(--ds-font-family-code, ui-monospace, Consolas, monospace); }
+.dshRemote__code { padding: 1px 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-primary, #252830); background: var(--dsw-alias-bg-module-platform, #f2f3f5); border-radius: 6px; overflow-wrap: anywhere; }
+.dshRemote__address { padding: 4px 8px; font-size: 13px; line-height: 22px; }
+.dshRemote__pre { margin: 8px 0 0; padding: 12px; font-size: 12px; line-height: 18px; font-family: var(--ds-font-family-code, ui-monospace, Consolas, monospace); color: var(--dsw-alias-label-primary, #252830); background: var(--dsw-alias-bg-module-platform, #f2f3f5); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.dshRemote__tag { flex: none; padding: 1px 8px; font-size: 12px; font-weight: 400; line-height: 18px; color: var(--dsw-alias-label-tertiary, #8b9099); border: .5px solid var(--dsw-alias-border-l3, rgb(0 0 0 / 14%)); border-radius: 10px; white-space: nowrap; }
+.dshRemote__qr { box-sizing: border-box; width: min(100%, 280px); margin: 10px 0 0; padding: 8px; background: #fff; border-radius: 8px; }
+.dshRemote__qr svg { display: block; width: 100%; height: auto; }
+
+@media (max-width: 600px) {
+  .dshRemote__row { flex-wrap: wrap; }
+  .dshRemote__rowText { padding-right: 0; }
+  .dshRemote__inputPort { width: 100%; }
+}

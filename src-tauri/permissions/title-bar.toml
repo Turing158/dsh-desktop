@@ -1,0 +1,158 @@
+# Permission sets for this app's own commands.
+#
+# ## Why this file must list the onboarding commands too
+#
+# Tauri's ACL gates every command — including the app's own — per origin, but only
+# once an app ACL manifest exists. That manifest (`__app-acl__`) is generated
+# exactly when `src-tauri/permissions/` contains at least one permission file.
+#
+# So adding this file is NOT additive. Before it, `has_app_acl_manifest` was false
+# and the runtime gate in `tauri/src/webview/mod.rs` short-circuited:
+#
+#     if (plugin_command.is_some() || has_app_acl_manifest || !is_local) && ...
+#
+# Local app commands were therefore allowed without being listed anywhere. With
+# this file present that condition is true for EVERY app command, so each one must
+# be granted explicitly or it is refused with
+# `"<command> not allowed. Command not found"`.
+#
+# That is exactly what happened to `probe_state` — and would have happened to
+# every other onboarding command. The `boot` set below restores the previous
+# behaviour explicitly instead of implicitly.
+#
+# `commands.allow` names the Rust command functions; the identifier's namespace is
+# the app's, so `allow-boot-probe` is referenced as `allow-boot-probe`.
+
+# ---------------------------------------------------------------------------
+# The onboarding / boot UI
+# ---------------------------------------------------------------------------
+
+[[permission]]
+identifier = "allow-boot-probe"
+description = """
+Read the runtime state for the boot page: which phase the startup sequence is in, \
+whether Node is present and new enough, and where dsh was found. Read-only — it \
+starts no process and writes no file.
+"""
+commands.allow = ["probe_state"]
+
+[[permission]]
+identifier = "allow-boot-install"
+description = """
+Re-run the automatic install of the dsh runtime from the failure screen, and \
+cancel an install that is already running. Both invoke the package manager, so \
+they are grouped and can be withheld separately from the read-only probe.
+"""
+commands.allow = ["retry_boot", "cancel_install", "install_node"]
+
+[[permission]]
+identifier = "allow-boot-start"
+description = """
+Hand an external URL to the system browser, for the install guidance links on the \
+failure screen.
+"""
+commands.allow = ["open_external"]
+
+# A permission SET is an entry in the `set` array — `[[set]]` with an explicit
+# `identifier`. (The single `[default]` table is the plugin's default set, which
+# an app does not use.) Individual permissions are `[[permission]]` entries.
+[[set]]
+identifier = "boot"
+description = """
+Everything the boot page needs: probe the runtime, re-run the install when it is \
+missing or failed, open links, drive the window from the title bar that is \
+injected into it, and write the install command to the clipboard when the user \
+asks for a copy. Granted to the `[local]` origin only — the remote DSH page gets \
+the title-bar permissions instead, so the page that renders untrusted content can \
+never install or launch anything.
+
+`allow-window-controls` is here because the boot bar is part of the boot page.
+The window is `decorations(false)`, so those commands are the ONLY way to minimize
+or close it; without them the install and error screens — the pages a user
+reaches when something has gone wrong — would be windows with no way out. It
+grants nothing that installs, launches, or reads a file.
+
+`allow-clipboard` gives the failure screen a copy button for the install command.
+It is the same write-only path the 编辑 menu uses; the read half is granted with
+it and is not used here.
+"""
+permissions = [
+  "allow-boot-probe",
+  "allow-boot-install",
+  "allow-boot-start",
+  "allow-window-controls",
+  "allow-clipboard",
+]
+
+# ---------------------------------------------------------------------------
+# The title bar
+# ---------------------------------------------------------------------------
+
+[[permission]]
+identifier = "allow-window-controls"
+description = """
+Window move, resize, minimize, maximize and close, for the custom title bar. \
+With native decorations removed these replace what the OS caption provided, so \
+the window stays resizable and snapping to screen edges continues to work. \
+Nothing here touches the filesystem, the network, or any other window.
+"""
+commands.allow = [
+  "window_start_drag",
+  "window_start_resize",
+  "window_minimize",
+  "window_toggle_maximize",
+  "window_is_maximized",
+  "window_close",
+]
+
+[[permission]]
+identifier = "allow-clipboard"
+description = """
+Clipboard text read and write, for the 编辑 menu. Read decides whether Paste is \
+available and supplies nothing else; write backs Copy. The WebView cannot do this \
+itself (navigator.clipboard.readText needs a permission prompt this window has no \
+UI to answer, and execCommand('paste') is unsupported), so it is done in Rust. \
+Limited to plain text — no images, files, or HTML.
+"""
+commands.allow = ["clipboard_read_text", "clipboard_write_text"]
+
+[[permission]]
+identifier = "allow-edit-shortcut"
+description = """
+The one command that injects input: it sends a Ctrl+C/V/X chord to the focused \
+element, used for Cut and Paste because a scripted edit is reverted by React's \
+controlled composer. It refuses unless the focused window belongs to this process, \
+so it cannot type into another application, and only c/v/x are accepted. Kept in \
+its own permission so a deployment wanting to forbid synthetic input can grant \
+`allow-clipboard` without it.
+"""
+commands.allow = ["clipboard_edit_shortcut"]
+
+[[permission]]
+identifier = "allow-folder-focus"
+description = """
+Make an Explorer folder window visible and foregrounded, called by the page after \
+a successful directory launch. The measured failure it fixes: for an \
+already-open folder the shell focuses the EXISTING frame instead of opening a new \
+one, and frames were observed stuck hidden (`WS_VISIBLE` unset — not minimized, \
+not on another desktop), so a successful launch read as a dead click. The command \
+matches Explorer folder windows by class and by the launched folder's NAME, and \
+only ever SHOWS and FOREGROUNDS one — it never hides, moves, closes, or resizes \
+anything, and it reaches no window that is not an Explorer folder window.
+"""
+commands.allow = ["focus_folder_window"]
+
+[[permission]]
+identifier = "allow-session-export"
+description = "Choose a native folder for one Session ZIP download. The destination stays in the host and is bound to the requesting Session and backend origin."
+commands.allow = ["prepare_session_export"]
+
+[[permission]]
+identifier = "allow-ui-snapshot"
+description = "Capture and restore this application's bounded UI snapshot. Native validation additionally requires the current backend origin and operation/window/document generations."
+commands.allow = ["submit_ui_snapshot", "request_ui_restore", "finish_ui_restore"]
+
+[[permission]]
+identifier = "allow-desktop-locale"
+description = "Cache the DSH presentation language for native chrome and startup pages."
+commands.allow = ["desktop_locale_changed"]

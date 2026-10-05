@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-terminal"
+description = "Local interactive terminals, dynamically granted only to the current DSH origin. Every request also checks backend, window, document, run and control identities."
+commands.allow = ["terminal_profiles", "terminal_open", "terminal_restart", "terminal_list", "terminal_attach", "terminal_control", "terminal_write", "terminal_resize", "terminal_ack", "terminal_detach", "terminal_close"]

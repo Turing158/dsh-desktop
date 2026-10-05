@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "title-bar",
+  "description": "Local boot title bar permissions. The running DSH page receives these permissions dynamically for its exact origin; no static remote wildcard is allowed.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-window-controls",
+    "allow-clipboard",
+    "allow-edit-shortcut",
+    "allow-folder-focus",
+    "core:app:allow-version"
+  ]
+}

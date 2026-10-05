@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the local boot UI, scoped to [local] only since the onboarding and error pages are served from the app's own protocol. `boot` covers the app's own probe/install/start commands: adding src-tauri/permissions/ created an app ACL manifest, which makes Tauri enforce the ACL for every app command — including these — so they must be granted explicitly rather than relying on the previous implicit allowance.",
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default", "boot", "allow-ui-snapshot"]
+}

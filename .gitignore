@@ -1,0 +1,15 @@
+# Rust
+**/target/
+/src-tauri/gen/
+
+# Node
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+
+# Local build output
+/dist/
+/pack/
+!/tools/offline-dsh/package-lock.json
+*.log
+plan/

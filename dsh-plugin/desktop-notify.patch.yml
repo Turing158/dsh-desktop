@@ -1,0 +1,143 @@
+# Desktop overlay for the DeepseekHarness desktop app.
+#
+# Applied with `dsh web --patch <this file>`. Desktop preferences are persisted
+# by the settings adapter in the active profile home. A terminal `dsh web` that
+# does not pass this overlay behaves exactly as before.
+#
+# `name` is relative to THIS FILE's directory, so both modules must sit beside
+# it. The dsh loader rewrites each relative path to an absolute file:// URL
+# before importing it.
+#
+# The same upstream HTTP service/frontend, with the current release's
+# specific-LAN-host schema and ready-address omissions adapted locally.
+# Patches use name as a match guard, so replace the provider seats by disabling
+# their rows and inserting adapters (only one webServer is ever active).
+- id: webserver
+  disabled: true
+
+- id: web-runtime
+  disabled: true
+
+# DSH 0.2 removed settings.register. Extend its provider for the desktop-only
+# namespaces; all upstream Config-backed forms keep their original provider.
+- id: settings
+  disabled: true
+
+# This Tauri shell launches the Web profile, whose browser tab is opt-in.
+# Enable the shipped iframe browser in the right sidebar.
+- id: ui-sidebar-browser
+  disabled: false
+
+# The desktop controller supplies the same inventory tab with persistent switches.
+- id: ui-settings-plugin-inventory
+  disabled: true
+
+# Independent UI/notification plugins are mounted below:
+#
+#   desktop-notify  reports questions, task completion and errors on stdout, which the
+#                   Rust host turns into Windows toasts. It has no imports of
+#                   its own because this overlay mounts it from the app's
+#                   install directory, where @deepseek-ai/* does not resolve.
+#
+#   desktop-ui      injects the appearance overlay (theme.css + dom.js) into the
+#                   served page via `webserver/index-inject` — the same seam the
+#                   shipped theme plugin uses. It requires the webserver, and
+#                   mounts after it.
+
+- insert:
+    - id: desktop-i18n
+      name: ./i18n/index.js
+
+    - id: desktop-settings
+      name: ./settings-compat.mjs
+
+    - id: desktop-webserver
+      name: ./lan-webserver.mjs
+      inject: [webStartup]
+      config:
+        host: !!js ctx.webStartup.host ?? '127.0.0.1'
+        port: !!js ctx.webStartup.port ?? 3080
+        compression: gzip
+        compressionLevel: 1
+        compressionThresholdBytes: 1024
+
+    - id: desktop-web-runtime
+      name: ./lan-web-runtime.mjs
+      inject: [webStartup]
+      config:
+        openBrowser: !!js ctx.webStartup.openBrowser
+        printUrl: true
+        surfaceContext: true
+        trustedHosts: !!js ctx.webStartup.trustedHosts
+
+    - id: desktop-notify
+      name: ./desktop-notify.mjs
+      config:
+        # Ask the user before they answer a question (including plan review).
+        notifyOnQuestion: true
+        # Completed work and terminal errors (including exhausted quota).
+        notifyOnCompleted: true
+        notifyOnError: true
+        # A deliberate stop is not news.
+        notifyOnAborted: false
+        # Toast body budget, in characters.
+        maxBodyChars: 200
+
+    # Appearance overlay. Set `css: false` or `dom: false` to disable one tier.
+    # `diag: true` mounts the launch-diagnostics route (POST /__dsh-desktop/diag,
+    # appended to ~/.dsh/desktop-diag.log), so a manual click that "does nothing"
+    # leaves a readable record: did the click reach the handler, was the launch
+    # asked for, and what did the route answer.
+    - id: desktop-ui
+      name: ./desktop-ui.mjs
+      inject: [webServer]
+      config:
+        css: true
+        dom: true
+        diag: true
+
+    # The 外观 settings section. The host half registers the settings namespace;
+    # the client half (`ui-client/client.js`) renders the section and is picked up
+    # by dsh-client-modules from this row's package root. `name` points at the
+    # directory, and the loader resolves its index.js.
+    - id: desktop-appearance
+      name: ./ui-client/index.js
+      inject: [settings]
+      config: {}
+
+    # The desktop title bar publishes its own chrome styles and makes the client
+    # discoverable. It remains usable when desktop-ui is disabled.
+    # Declared after the appearance plugin so both feature plugins mount in a
+    # predictable order; neither depends on the other.
+    - id: desktop-title-bar
+      name: ./title-bar/index.js
+      config: {}
+
+    # Sidebar and bottom terminals. The host registers durable dock geometry;
+    # the browser half supplies both surfaces over the shared native PTY service.
+    - id: desktop-sidebar-terminal
+      name: ./sidebar-terminal/index.js
+      inject: [settings]
+      config: {}
+
+    - id: desktop-ui-state
+      name: ./ui-state/index.js
+      config: {}
+
+    - id: desktop-sidebar-changes
+      name: ./sidebar-changes/index.js
+      inject: [tools, sessions, typert]
+      config: {}
+
+    - id: desktop-file-editor
+      name: ./file-editor/index.js
+      inject: [fs, sessions, typert]
+      config: {}
+
+    - id: desktop-remote-control
+      name: ./ui-remote/index.js
+      config: {}
+
+    # Always present so all optional UI entries can be enabled again.
+    - id: desktop-plugin-control
+      name: ./plugin-control/index.js

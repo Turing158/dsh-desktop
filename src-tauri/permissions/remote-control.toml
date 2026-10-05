@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-remote-control"
+description = "Desktop management of the current backend only; all calls verify window/document/backend identity."
+commands.allow = ["remote_status", "remote_lan_addresses", "remote_apply", "plugins_restart", "remote_connection_info", "remote_firewall_help"]

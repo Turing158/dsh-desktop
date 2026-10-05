@@ -1,0 +1,115 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DeepseekHarness",
+  "version": "0.1.0",
+  "identifier": "com.deepseek.harness.desktop",
+  "build": {
+    "frontendDist": "ui",
+    "beforeDevCommand": "node tools/build-terminal.mjs",
+    "beforeBuildCommand": "node tools/build-terminal.mjs"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "deepseekharness"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../dsh-plugin/desktop-notify.mjs": "dsh-plugin/desktop-notify.mjs",
+      "../dsh-plugin/desktop-ui.mjs": "dsh-plugin/desktop-ui.mjs",
+      "../dsh-plugin/desktop-notify.patch.yml": "dsh-plugin/desktop-notify.patch.yml",
+      "../dsh-plugin/ui-overlay/theme.css": "dsh-plugin/ui-overlay/theme.css",
+      "../dsh-plugin/ui-overlay/dom.js": "dsh-plugin/ui-overlay/dom.js",
+      "../dsh-plugin/ui-client/package.json": "dsh-plugin/ui-client/package.json",
+      "../dsh-plugin/ui-client/index.js": "dsh-plugin/ui-client/index.js",
+      "../dsh-plugin/ui-client/client.js": "dsh-plugin/ui-client/client.js",
+      "../dsh-plugin/title-bar/package.json": "dsh-plugin/title-bar/package.json",
+      "../dsh-plugin/title-bar/index.js": "dsh-plugin/title-bar/index.js",
+      "../dsh-plugin/title-bar/client.js": "dsh-plugin/title-bar/client.js",
+      "../dsh-plugin/title-bar/boot.js": "dsh-plugin/title-bar/boot.js",
+      "../dsh-plugin/sidebar-terminal/package.json": "dsh-plugin/sidebar-terminal/package.json",
+      "../dsh-plugin/sidebar-terminal/index.js": "dsh-plugin/sidebar-terminal/index.js",
+      "../dsh-plugin/sidebar-terminal/client.js": "dsh-plugin/sidebar-terminal/client.js",
+      "../dsh-plugin/ui-state/package.json": "dsh-plugin/ui-state/package.json",
+      "../dsh-plugin/ui-state/index.js": "dsh-plugin/ui-state/index.js",
+      "../dsh-plugin/ui-state/client.js": "dsh-plugin/ui-state/client.js",
+      "../dsh-plugin/ui-state/bridge.js": "dsh-plugin/ui-state/bridge.js",
+      "../dsh-plugin/ui-state/adapter.js": "dsh-plugin/ui-state/adapter.js",
+      "../dsh-plugin/sidebar-terminal/assets/terminal.js": "dsh-plugin/sidebar-terminal/assets/terminal.js",
+      "../dsh-plugin/sidebar-terminal/assets/terminal.css": "dsh-plugin/sidebar-terminal/assets/terminal.css",
+      "../dsh-plugin/sidebar-terminal/assets/LICENSES.txt": "dsh-plugin/sidebar-terminal/assets/LICENSES.txt",
+      "../dsh-plugin/ui-remote/package.json": "dsh-plugin/ui-remote/package.json",
+      "../dsh-plugin/ui-remote/index.js": "dsh-plugin/ui-remote/index.js",
+      "../dsh-plugin/ui-remote/client.js": "dsh-plugin/ui-remote/client.js",
+      "../dsh-plugin/ui-remote/style.css": "dsh-plugin/ui-remote/style.css",
+      "../dsh-plugin/ui-overlay/browser-compat.js": "dsh-plugin/ui-overlay/browser-compat.js",
+      "../dsh-plugin/ui-overlay/mobile.css": "dsh-plugin/ui-overlay/mobile.css",
+      "../dsh-plugin/ui-overlay/connection-note.js": "dsh-plugin/ui-overlay/connection-note.js",
+      "../dsh-plugin/runtime-import.mjs": "dsh-plugin/runtime-import.mjs",
+      "../dsh-plugin/settings-compat.mjs": "dsh-plugin/settings-compat.mjs",
+      "../dsh-plugin/lan-webserver.mjs": "dsh-plugin/lan-webserver.mjs",
+      "../dsh-plugin/lan-web-runtime.mjs": "dsh-plugin/lan-web-runtime.mjs",
+      "../dsh-plugin/sidebar-changes/package.json": "dsh-plugin/sidebar-changes/package.json",
+      "../dsh-plugin/file-editor/package.json": "dsh-plugin/file-editor/package.json",
+      "../dsh-plugin/file-editor/index.js": "dsh-plugin/file-editor/index.js",
+      "../dsh-plugin/file-editor/host.mjs": "dsh-plugin/file-editor/host.mjs",
+      "../dsh-plugin/file-editor/protocol.mjs": "dsh-plugin/file-editor/protocol.mjs",
+      "../dsh-plugin/file-editor/client.js": "dsh-plugin/file-editor/client.js",
+      "../dsh-plugin/file-editor/LICENSES.txt": "dsh-plugin/file-editor/LICENSES.txt",
+      "../dsh-plugin/sidebar-changes/index.js": "dsh-plugin/sidebar-changes/index.js",
+      "../dsh-plugin/sidebar-changes/client.js": "dsh-plugin/sidebar-changes/client.js",
+      "../dsh-plugin/sidebar-changes/host/api.mjs": "dsh-plugin/sidebar-changes/host/api.mjs",
+      "../dsh-plugin/sidebar-changes/host/git-provider.mjs": "dsh-plugin/sidebar-changes/host/git-provider.mjs",
+      "../dsh-plugin/sidebar-changes/host/git-history.mjs": "dsh-plugin/sidebar-changes/host/git-history.mjs",
+      "../dsh-plugin/sidebar-changes/host/paths.mjs": "dsh-plugin/sidebar-changes/host/paths.mjs",
+      "../dsh-plugin/sidebar-changes/host/session-recorder.mjs": "dsh-plugin/sidebar-changes/host/session-recorder.mjs",
+      "../dsh-plugin/sidebar-changes/host/snapshot-store.mjs": "dsh-plugin/sidebar-changes/host/snapshot-store.mjs",
+      "../dsh-plugin/sidebar-changes/host/session-aggregate.mjs": "dsh-plugin/sidebar-changes/host/session-aggregate.mjs",
+      "../dsh-plugin/sidebar-changes/shared/change-model.mjs": "dsh-plugin/sidebar-changes/shared/change-model.mjs",
+      "../dsh-plugin/plugin-control/catalog.json": "dsh-plugin/plugin-control/catalog.json",
+      "../dsh-plugin/plugin-control/core.json": "dsh-plugin/plugin-control/core.json",
+      "../dsh-plugin/plugin-control/model.mjs": "dsh-plugin/plugin-control/model.mjs",
+      "../dsh-plugin/plugin-control/profile-model.mjs": "dsh-plugin/plugin-control/profile-model.mjs",
+      "../dsh-plugin/plugin-control/profile-host.mjs": "dsh-plugin/plugin-control/profile-host.mjs",
+      "../dsh-plugin/plugin-control/marketplace.mjs": "dsh-plugin/plugin-control/marketplace.mjs",
+      "../dsh-plugin/plugin-control/prepare-boot.mjs": "dsh-plugin/plugin-control/prepare-boot.mjs",
+      "../dsh-plugin/plugin-control/protected-modules.json": "dsh-plugin/plugin-control/protected-modules.json",
+      "../dsh-plugin/plugin-control/hot-policy.json": "dsh-plugin/plugin-control/hot-policy.json",
+      "../dsh-plugin/plugin-control/protocol.mjs": "dsh-plugin/plugin-control/protocol.mjs",
+      "../dsh-plugin/plugin-control/index.js": "dsh-plugin/plugin-control/index.js",
+      "../dsh-plugin/plugin-control/package.json": "dsh-plugin/plugin-control/package.json",
+      "../dsh-plugin/plugin-control/client.js": "dsh-plugin/plugin-control/client.js",
+      "../dsh-plugin/i18n/package.json": "dsh-plugin/i18n/package.json",
+      "../dsh-plugin/i18n/index.js": "dsh-plugin/i18n/index.js",
+      "../dsh-plugin/i18n/client.js": "dsh-plugin/i18n/client.js",
+      "../dsh-plugin/i18n/runtime.js": "dsh-plugin/i18n/runtime.js",
+      "../dsh-plugin/i18n/en.json": "dsh-plugin/i18n/en.json",
+      "../dsh-plugin/i18n/api.mjs": "dsh-plugin/i18n/api.mjs"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

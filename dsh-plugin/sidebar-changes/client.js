@@ -1,0 +1,1282 @@
+(() => {
+  // dsh-plugin/i18n/api.mjs
+  function t(source, values) {
+    const runtime = globalThis.window?.__DSH_I18N__;
+    if (runtime) return runtime.t(source, values);
+    return typeof source === "string" ? source.replace(/\{(\w+)\}/g, (match, key) => values?.[key] ?? match) : source;
+  }
+  function useLocale(React) {
+    globalThis.window?.__DSH_I18N__?.use(React);
+  }
+
+  // dsh-plugin/sidebar-changes/shared/change-model.mjs
+  var SOURCES = ["session", "working", "staged"];
+  var VIEWS = [...SOURCES, "history"];
+  var LABELS = { get session() {
+    return t("\u5F53\u524D\u4F1A\u8BDD");
+  }, get working() {
+    return t("\u672A\u63D0\u4EA4");
+  }, get staged() {
+    return t("\u6682\u5B58\u533A");
+  }, get history() {
+    return t("\u63D0\u4EA4\u8BB0\u5F55");
+  } };
+  var LIMITS = { bytes: 1024 * 1024, lines: 4e4, cells: 4e6, files: 2e3, operations: 1e4, disk: 256 * 1024 * 1024, scanBytes: 32 * 1024 * 1024 };
+  var REASONS = {
+    get binary() {
+      return t("\u4E8C\u8FDB\u5236\u6587\u4EF6\u4E0D\u80FD\u9010\u884C\u5C55\u793A");
+    },
+    get encoding() {
+      return t("\u6587\u4EF6\u4E0D\u662F\u6709\u6548\u7684 UTF-8 \u6587\u672C");
+    },
+    get large() {
+      return t("\u6587\u4EF6\u8D85\u8FC7\u6587\u672C\u6BD4\u8F83\u9650\u5236");
+    },
+    get complexity() {
+      return t("\u5DEE\u5F02\u8BA1\u7B97\u8D85\u8FC7\u590D\u6742\u5EA6\u9650\u5236");
+    },
+    get baseline() {
+      return t("\u7F3A\u5C11\u9996\u6B21\u4FEE\u6539\u524D\u7684\u5B8C\u6574\u5185\u5BB9");
+    },
+    get interleaved() {
+      return t("\u5B58\u5728\u5916\u90E8\u6216\u5176\u4ED6\u4F1A\u8BDD\u7684\u4EA4\u9519\u4FEE\u6539\uFF0C\u7D2F\u8BA1\u8BB0\u5F55\u4E0D\u5B8C\u6574");
+    },
+    get observed() {
+      return t("\u6267\u884C\u671F\u95F4\u89C2\u5BDF\u5230\u7684\u53D8\u5316\uFF0C\u65E0\u6CD5\u786E\u8BA4\u4FEE\u6539\u4F5C\u8005");
+    },
+    get quota() {
+      return t("\u5FEB\u7167\u5B58\u50A8\u5DF2\u8FBE\u5230\u914D\u989D\uFF0C\u8BB0\u5F55\u4E0D\u5B8C\u6574");
+    },
+    get interrupted() {
+      return t("\u8C03\u7528\u672A\u5B8C\u6210\u6216\u8FDB\u7A0B\u4E2D\u65AD\uFF0C\u53EF\u80FD\u5B58\u5728\u672A\u8BB0\u5F55\u7684\u4FEE\u6539");
+    },
+    get storage() {
+      return t("\u5FEB\u7167\u8BFB\u5199\u5931\u8D25\uFF0C\u8BB0\u5F55\u4E0D\u5B8C\u6574");
+    },
+    get legacy() {
+      return t("\u6B64\u8C03\u7528\u6CA1\u6709\u63D0\u4F9B\u5B8C\u6574\u524D\u540E\u5185\u5BB9\uFF0C\u4EC5\u80FD\u4FDD\u7559\u89C2\u5BDF\u8BB0\u5F55");
+    },
+    get scan() {
+      return t("\u90E8\u5206\u8DEF\u5F84\u672A\u88AB\u626B\u63CF\u8986\u76D6");
+    },
+    get conflict() {
+      return t("\u6587\u4EF6\u5B58\u5728\u5408\u5E76\u51B2\u7A81");
+    },
+    get submodule() {
+      return t("Git \u5B50\u6A21\u5757\u53D8\u5316");
+    },
+    get symlink() {
+      return t("\u7B26\u53F7\u94FE\u63A5\u6216\u6587\u4EF6\u7C7B\u578B\u53D8\u5316");
+    },
+    get stale() {
+      return t("\u5185\u5BB9\u7248\u672C\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u8BD5");
+    },
+    get missing() {
+      return t("\u5DE5\u4F5C\u76EE\u5F55\u4E0D\u5B58\u5728\u6216\u4E0D\u53EF\u8BBF\u95EE");
+    },
+    get unsupported() {
+      return t("\u6267\u884C\u7AEF\u6587\u4EF6\u7CFB\u7EDF\u4E0D\u652F\u6301\u672C\u5730\u91C7\u96C6");
+    },
+    get "history-stale"() {
+      return t("\u63D0\u4EA4\u8BB0\u5F55\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u8BD5");
+    },
+    get "history-large"() {
+      return t("\u63D0\u4EA4\u6D88\u606F\u6216\u5386\u53F2\u6570\u636E\u8D85\u8FC7\u8BFB\u53D6\u9650\u5236");
+    },
+    get concurrent() {
+      return t("\u5B58\u5728\u91CD\u53E0\u6267\u884C\uFF0C\u6309\u5DF2\u8BB0\u5F55\u7247\u6BB5\u5C55\u793A");
+    },
+    get "legacy-scan"() {
+      return t("\u5386\u53F2\u8BB0\u5F55\u7684\u91C7\u96C6\u8303\u56F4\u4E0D\u5B8C\u6574");
+    },
+    get "scan-content"() {
+      return t("\u626B\u63CF\u5185\u5BB9\u9884\u7B97\u4E0D\u8DB3\uFF0C\u90E8\u5206\u6587\u4EF6\u53EA\u8BB0\u5F55\u72B6\u6001");
+    },
+    get excluded() {
+      return t("\u90E8\u5206\u8DEF\u5F84\u6309\u914D\u7F6E\u6392\u9664\uFF0C\u8986\u76D6\u8303\u56F4\u6709\u9650");
+    }
+  };
+  var codec = (name) => ({ mode: "strict", typeSymbol: "@dsh-desktop/sidebar-changes#" + name, create: () => ({ parse(value) {
+    const valid = name === "offset" ? Number.isSafeInteger(value) && value >= 0 : typeof value === "string" && value.length <= 512 && (name !== "source" || SOURCES.includes(value)) && (name !== "commitId" || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value));
+    if (!valid) throw Error("Invalid changes query parameter: " + name);
+    return value;
+  } }) });
+  var contribution = { package: "@dsh-desktop/sidebar-changes", descriptors: [
+    ["getCapabilities", []],
+    ["listChanges", ["source"]],
+    ["getFileDiff", ["source", "fileId", "revision", "offset"]],
+    ["getFileContext", ["source", "fileId", "revision", "offset"]],
+    ["subscribeChanges", ["sinceRevision"]],
+    ["listCommits", ["revision", "offset"]],
+    ["getCommitDetails", ["revision", "commitId"]],
+    ["listFileOperations", ["fileId", "revision", "recordKind", "offset"]],
+    ["getOperationDiff", ["fileId", "revision", "operationId", "offset"]]
+  ].map(([method, args]) => ({
+    id: "desktopChanges/" + method,
+    service: "desktopChanges",
+    namespace: "desktopChanges",
+    method,
+    invocation: { kind: "direct" },
+    ...method === "subscribeChanges" ? { mode: "stream" } : {},
+    parameters: [
+      { name: "scope", wire: "sessionId", source: "lookup", lookup: "desktopChangesScope", codec: codec("sessionId") },
+      ...args.map((name) => ({ name, wire: name, source: "json", codec: codec(name) }))
+    ],
+    cancellation: { parameter: "signal" },
+    result: { mode: "src-json" }
+  })) };
+
+  // dsh-plugin/sidebar-changes/client-state.mjs
+  var PREFIX = "dsh-resource://desktop-changes/";
+  function migrateFileIds(ids, entries) {
+    return [...new Set(ids.flatMap((id) => {
+      const exact = entries.find((entry) => entry.fileId === id);
+      if (exact) return [exact.fileId];
+      const matches = entries.filter((entry) => entry.aliases?.includes(id));
+      return matches.length === 1 ? [matches[0].fileId] : [];
+    }))];
+  }
+  function createViewStates(states, view) {
+    return {
+      get(key) {
+        const saved = states.get(key);
+        const { views, ...legacy } = saved || {};
+        return views?.[view] || (saved?.source === view ? legacy : { source: view, fileId: null, listScroll: 0, detailScroll: 0 });
+      },
+      set(key, value) {
+        const saved = states.get(key) || { source: view };
+        states.set(key, { ...saved, views: { ...saved.views, [view]: value } });
+      }
+    };
+  }
+  var isChanges = (tab) => tab?.kind === "desktop-changes" && tab.contentId?.startsWith(PREFIX);
+  function stores(ctx) {
+    const handle = ctx.slots.entriesOfSlot("rightbar.session")[0]?.store;
+    if (!handle?.create) return [];
+    return ctx.sessions.list.getSnapshot().ids.flatMap((sessionId) => {
+      const scope = ctx.sessions.scope(sessionId);
+      return scope ? [{ sessionId, store: ctx.slots.resolveStore(handle, { key: sessionId, ctx: scope }) }] : [];
+    });
+  }
+  function createStateProvider(ctx, states) {
+    return {
+      version: 1,
+      owns: (node) => Boolean(node?.closest?.("[data-dsh-changes]")),
+      ownsSidebar() {
+        const list = ctx.sessions.list.getSnapshot(), current = list.current ?? Object.values(list.byId || {}).find((row) => row.retainedBy?.mainView > 0)?.id;
+        const surface = stores(ctx).find((value) => value.sessionId === current);
+        const tabs = Object.values(surface?.store.getSnapshot().bySession?.[current]?.layout.tabs || {});
+        return tabs.some(isChanges) && tabs.every((tab) => isChanges(tab) || tab.kind === "guide");
+      },
+      capture() {
+        const sides = [];
+        for (const { sessionId, store } of stores(ctx)) {
+          const layout = store.getSnapshot().bySession?.[sessionId]?.layout;
+          if (!layout) continue;
+          const tabs = Object.values(layout.tabs).filter(isChanges);
+          if (!tabs.length) continue;
+          sides.push({
+            sessionId,
+            expanded: Boolean(layout.expanded),
+            tabs: tabs.map((tab) => ({ address: tab.contentId, state: states.get(sessionId + "\0" + tab.contentId) || { source: "session", fileId: null, listScroll: 0, detailScroll: 0 } })),
+            active: tabs.find((tab) => layout.nodes[layout.activePaneId]?.activeTabId === tab.id)?.contentId || null
+          });
+        }
+        return sides.length ? { sides } : null;
+      },
+      async restore(saved) {
+        for (const side of saved.sides) {
+          const store = stores(ctx).find((value) => value.sessionId === side.sessionId)?.store;
+          if (!store) throw Error("snapshot-session-missing");
+          const tabs = () => Object.values(store.getSnapshot().bySession?.[side.sessionId]?.layout.tabs || {});
+          for (const tab of side.tabs) {
+            if (!tab.address.startsWith(PREFIX) || !VIEWS.includes(tab.state.source)) throw Error("snapshot-panel-unsupported");
+            states.set(side.sessionId + "\0" + tab.address, tab.state);
+            if (!tabs().some((value) => value.contentId === tab.address)) store.actions.openContent(side.sessionId, { kind: "desktop-changes", contentId: tab.address, title: "\u66F4\u6539", revealIfOpened: false }, () => {
+            });
+          }
+          const active = tabs().find((tab) => tab.contentId === side.active);
+          if (active) store.actions.focusTab(side.sessionId, active.id);
+          store.actions.setExpanded(side.sessionId, side.expanded);
+        }
+        document.dispatchEvent(new Event("dsh-desktop:changes-restore"));
+      }
+    };
+  }
+
+  // dsh-plugin/sidebar-changes/shared/commit-graph.mjs
+  function layoutCommits(entries) {
+    let lanes = [], nextColor = 0;
+    return entries.map((entry) => {
+      const before = lanes.map((lane) => ({ ...lane }));
+      let column = lanes.findIndex((lane) => lane.id === entry.id);
+      const incoming = column !== -1;
+      if (!incoming) {
+        column = lanes.length;
+        lanes.push({ id: entry.id, color: nextColor++ % 6 });
+      }
+      const color = lanes[column].color;
+      lanes.splice(column, 1);
+      const parents = [...new Set(entry.parents)];
+      parents.forEach((id, index) => {
+        if (!lanes.some((lane) => lane.id === id)) lanes.splice(Math.min(column + index, lanes.length), 0, { id, color: index === 0 ? color : nextColor++ % 6 });
+      });
+      const after = lanes.map((lane) => ({ ...lane }));
+      return {
+        id: entry.id,
+        column,
+        color,
+        incoming,
+        passing: before.flatMap((lane, from) => lane.id === entry.id ? [] : [{ from, to: after.findIndex((value) => value.id === lane.id), color: lane.color }]),
+        parents: parents.map((id) => {
+          const to = after.findIndex((lane) => lane.id === id);
+          return { id, to, color: after[to].color };
+        }),
+        columns: Math.max(1, before.length, after.length, column + 1),
+        frontier: after
+      };
+    });
+  }
+
+  // dsh-plugin/sidebar-changes/history-disclosure.mjs
+  function createHistoryDisclosure(React) {
+    return function HistoryDisclosure({ open, id, animate = true, children }) {
+      const outer = React.useRef(null), inner = React.useRef(null);
+      const [mounted, setMounted] = React.useState(open);
+      React.useLayoutEffect(() => {
+        if (open && !mounted) {
+          setMounted(true);
+          return;
+        }
+        if (!open && !mounted) {
+          outer.current.style.height = "0px";
+          outer.current.style.opacity = "0";
+          return;
+        }
+        const node = outer.current, body = inner.current;
+        const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+        let motion = null, target = -1, disposed = false;
+        const enabled = () => {
+          const root = document.documentElement, setting = root.getAttribute("data-dsh-desktop-animation");
+          return animate && root.getAttribute("data-dsh-ui") !== "vanilla" && setting !== "off" && (setting === "on" || !reduced.matches);
+        };
+        const finish = () => {
+          if (!disposed && !open) setMounted(false);
+        };
+        const update = () => {
+          const next = open && body ? body.getBoundingClientRect().height : 0;
+          if (next === target && (enabled() || !motion)) return;
+          const height = node.getBoundingClientRect().height, opacity = getComputedStyle(node).opacity;
+          motion?.cancel();
+          motion = null;
+          target = next;
+          node.style.height = next + "px";
+          node.style.opacity = open ? "1" : "0";
+          if (!enabled() || Math.abs(height - next) < 0.5) {
+            finish();
+            return;
+          }
+          motion = node.animate(
+            [{ height: height + "px", opacity }, { height: next + "px", opacity: open ? 1 : 0 }],
+            { duration: open ? 220 : 160, easing: "cubic-bezier(.2, .75, .25, 1)" }
+          );
+          motion.onfinish = () => {
+            motion = null;
+            finish();
+          };
+        };
+        const size = new ResizeObserver(update);
+        if (body) size.observe(body);
+        const preferences = new MutationObserver(update);
+        preferences.observe(document.documentElement, { attributes: true, attributeFilter: ["data-dsh-ui", "data-dsh-desktop-animation"] });
+        reduced.addEventListener("change", update);
+        update();
+        return () => {
+          disposed = true;
+          const height = node.getBoundingClientRect().height, opacity = getComputedStyle(node).opacity;
+          motion?.cancel();
+          node.style.height = height + "px";
+          node.style.opacity = opacity;
+          size.disconnect();
+          preferences.disconnect();
+          reduced.removeEventListener("change", update);
+        };
+      }, [open, mounted, animate]);
+      return React.createElement(
+        "div",
+        {
+          ref: outer,
+          id,
+          className: "dshHistory__expanded",
+          "aria-hidden": !open,
+          inert: open ? void 0 : "",
+          style: { height: 0, opacity: 0 }
+        },
+        mounted && React.createElement("div", { ref: inner, className: "dshHistory__reveal" }, children)
+      );
+    };
+  }
+
+  // dsh-plugin/sidebar-changes/history-view.mjs
+  function createHistoryView(React, primitives, shared) {
+    const h = React.createElement;
+    const HistoryDisclosure = createHistoryDisclosure(React);
+    const { Button, Tag, Tooltip, IconChevronUpOutlineRegular: CollapseIcon } = primitives;
+    const { SourceMenu, Placeholder, StatusTag, call, message } = shared;
+    const date = (value, full = false) => {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("zh-CN", full ? { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "short" } : { month: "2-digit", day: "2-digit" });
+    };
+    const commitInfo = (entry) => [
+      t("\u63D0\u4EA4\uFF1A{0}", [entry.id]),
+      t("\u4F5C\u8005\uFF1A{0}{1}", [entry.author, entry.authorEmail ? ` <${entry.authorEmail}>` : ""]),
+      t("\u63D0\u4EA4\u8005\uFF1A{0}{1}", [entry.committer || "\u2014", entry.committerEmail ? ` <${entry.committerEmail}>` : ""]),
+      t("\u63D0\u4EA4\u65F6\u95F4\uFF1A{0}", [date(entry.commitDate, true)])
+    ].join("\n");
+    function Refs({ refs }) {
+      return h(
+        "span",
+        { className: "dshHistory__refs", title: refs.map((ref) => ref.name).join(" \xB7 ") },
+        refs.map((ref) => h(Tag, { key: ref.kind + ref.name, tone: ref.kind === "head" ? "solid" : ref.current ? "info" : "neutral" }, ref.name))
+      );
+    }
+    function Graph({ row, columns, boundary }) {
+      const width = Math.min(96, columns * 14 + 6), step = columns === 1 ? 14 : (width - 14) / (columns - 1), x = (column) => 7 + column * step;
+      const color = (index) => `var(--history-lane-${index})`;
+      const children = [];
+      const line = (key, column, y1, y2, lane) => h("line", { key, x1: x(column), x2: x(column), y1, y2, stroke: color(lane) });
+      for (const edge of row.passing) {
+        children.push(
+          line("in-" + edge.from, edge.from, 0, 18, edge.color),
+          h("path", { key: "pass-" + edge.from, d: `M ${x(edge.from)} 18 C ${x(edge.from)} 26 ${x(edge.to)} 26 ${x(edge.to)} 34`, stroke: color(edge.color) }),
+          line("out-" + edge.from, edge.to, 34, "100%", edge.color)
+        );
+      }
+      if (row.incoming) children.push(line("node-in", row.column, 0, 18, row.color));
+      for (const edge of row.parents) children.push(
+        h("path", { key: "parent-" + edge.id, d: `M ${x(row.column)} 18 C ${x(row.column)} 26 ${x(edge.to)} 26 ${x(edge.to)} 34`, stroke: color(edge.color) }),
+        line("parent-line-" + edge.id, edge.to, 34, "100%", edge.color)
+      );
+      children.push(h("circle", { key: "node", cx: x(row.column), cy: 18, r: boundary ? 4 : 3.5, fill: boundary ? "var(--dsw-alias-bg-base)" : color(row.color), stroke: color(row.color) }));
+      return h("svg", { className: "dshHistory__graph", width, height: "100%", fill: "none", strokeWidth: 1.5, "aria-hidden": true }, children);
+    }
+    function Details({ ctx, sessionId, revision, entry, signal, onReady, reload, busy }) {
+      useLocale(React);
+      const [data, setData] = React.useState(null), [error, setError] = React.useState(null);
+      const ready = React.useRef(onReady);
+      ready.current = onReady;
+      React.useEffect(() => {
+        const own = new AbortController(), active = AbortSignal.any([own.signal, signal]);
+        call(ctx, "getCommitDetails", sessionId, revision, entry.id, active).then((value) => {
+          if (!active.aborted) setData(value);
+        }).catch((error2) => {
+          if (!active.aborted) setError(message(error2));
+        });
+        return () => own.abort();
+      }, [sessionId, revision, entry.id]);
+      React.useLayoutEffect(() => {
+        if (data || error) ready.current(entry.id);
+      }, [data, error]);
+      return h(
+        "div",
+        { className: "dshHistory__detail", "aria-busy": !data && !error },
+        error ? h(Placeholder, { error: true, retry: reload, busy }, error) : !data ? h("div", { className: "dshChanges__loading", role: "status" }, t("\u6B63\u5728\u52A0\u8F7D\u63D0\u4EA4\u2026")) : h("pre", { className: "dshHistory__message" }, data.message || t("\uFF08\u65E0\u63D0\u4EA4\u6D88\u606F\uFF09"))
+      );
+    }
+    return function HistoryView({ ctx, tab, sessionId, states, onSourceChange }) {
+      useLocale(React);
+      const stateKey = sessionId + "\0" + tab.contentId, saved = states.get(stateKey) || {};
+      const [data, setData] = React.useState(null), [capabilities, setCapabilities] = React.useState(null), [error, setError] = React.useState(null);
+      const [expanded, setExpanded] = React.useState(saved.commitIds || []), [loading, setLoading] = React.useState(true), [paging, setPaging] = React.useState(false);
+      const [refresh, setRefresh] = React.useState(0), [attempt, setAttempt] = React.useState(0);
+      const viewport = React.useRef(), sentinel = React.useRef(), request = React.useRef(), current = React.useRef(null), busy = React.useRef(false);
+      const position = React.useRef(saved), opened = React.useRef(expanded), force = React.useRef(false), restoring = React.useRef(true), ready = React.useRef(/* @__PURE__ */ new Set());
+      opened.current = expanded;
+      const update = (patch) => {
+        position.current = { ...position.current, ...patch, source: "history" };
+        states.set(stateKey, position.current);
+      };
+      const assign = (value) => {
+        current.current = value;
+        setData(value);
+      };
+      const restoreScroll = (id) => {
+        if (id) ready.current.add(id);
+        const node = viewport.current;
+        if (!node || !restoring.current) return;
+        const anchor = [...node.querySelectorAll("[data-commit-id]")].find((row) => row.dataset.commitId === position.current.anchorId);
+        node.scrollTop = anchor ? anchor.offsetTop - (position.current.anchorOffset || 0) : position.current.listScroll || 0;
+        if (opened.current.every((id2) => ready.current.has(id2) || !current.current?.entries.some((row) => row.id === id2))) restoring.current = false;
+      };
+      const saveScroll = () => {
+        const node = viewport.current;
+        if (!node || restoring.current || !tab.visible) return;
+        const anchor = [...node.querySelectorAll("[data-commit-id]")].find((row) => row.offsetTop + row.offsetHeight > node.scrollTop);
+        update({ listScroll: node.scrollTop, anchorId: anchor?.dataset.commitId, anchorOffset: anchor ? anchor.offsetTop - node.scrollTop : 0 });
+      };
+      React.useEffect(() => {
+        update({ commitIds: expanded });
+      }, [expanded]);
+      React.useLayoutEffect(() => {
+        if (data) restoreScroll();
+      }, [data, expanded]);
+      React.useLayoutEffect(() => {
+        if (!tab.visible) {
+          restoring.current = true;
+          ready.current.clear();
+        }
+      }, [tab.visible]);
+      React.useEffect(() => {
+        const restore = () => {
+          position.current = states.get(stateKey) || {};
+          restoring.current = true;
+          ready.current.clear();
+          setExpanded(position.current.commitIds || []);
+          assign(null);
+          setRefresh((n) => n + 1);
+        };
+        document.addEventListener("dsh-desktop:changes-restore", restore);
+        return () => document.removeEventListener("dsh-desktop:changes-restore", restore);
+      }, [stateKey]);
+      React.useEffect(() => {
+        if (!tab.visible) return;
+        const own = new AbortController(), signal = AbortSignal.any([own.signal, tab.signal]);
+        request.current = signal;
+        setPaging(false);
+        async function load() {
+          if (busy.current || document.hidden || signal.aborted) return;
+          busy.current = true;
+          setLoading(true);
+          setError(null);
+          try {
+            const cap = await call(ctx, "getCapabilities", sessionId, signal);
+            if (signal.aborted) return;
+            setCapabilities(cap);
+            if (cap.gitAvailability.status !== "available") {
+              onSourceChange("session");
+              return;
+            }
+            let next = await call(ctx, "listCommits", sessionId, "", 0, signal);
+            if (signal.aborted) return;
+            const old = current.current;
+            if (old?.revision === next.revision && old.snapshotId === next.snapshotId && !force.current) return;
+            const target = Math.max(50, old?.entries.length || position.current.loadedCount || 50);
+            while (next.nextOffset !== null && next.entries.length < target) {
+              const page = await call(ctx, "listCommits", sessionId, next.revision, next.nextOffset, signal);
+              next = { ...page, entries: [...next.entries, ...page.entries] };
+            }
+            if (signal.aborted || next.sessionId !== sessionId || next.workspaceRoot !== cap.workspaceRoot) return;
+            restoring.current = true;
+            ready.current.clear();
+            assign(next);
+            update({ loadedCount: next.entries.length });
+            setExpanded((ids) => ids.filter((id) => next.entries.some((row) => row.id === id)));
+            if (force.current) {
+              force.current = false;
+              setAttempt((n) => n + 1);
+            }
+          } catch (error2) {
+            if (!signal.aborted) setError(message(error2));
+          } finally {
+            if (!signal.aborted) {
+              busy.current = false;
+              setLoading(false);
+            }
+          }
+        }
+        load();
+        const focus = () => {
+          if (!document.hidden) load();
+        };
+        window.addEventListener("focus", focus);
+        document.addEventListener("visibilitychange", focus);
+        const timer = setInterval(focus, 5e3);
+        return () => {
+          own.abort();
+          busy.current = false;
+          clearInterval(timer);
+          window.removeEventListener("focus", focus);
+          document.removeEventListener("visibilitychange", focus);
+        };
+      }, [sessionId, tab.visible, refresh]);
+      const reload = () => {
+        force.current = true;
+        setRefresh((n) => n + 1);
+      };
+      async function more() {
+        const old = current.current, signal = request.current;
+        if (busy.current || !old || old.nextOffset === null || !signal || signal.aborted) return;
+        busy.current = true;
+        setPaging(true);
+        setError(null);
+        try {
+          const next = await call(ctx, "listCommits", sessionId, old.revision, old.nextOffset, signal);
+          if (signal.aborted || current.current !== old) return;
+          const value = { ...next, entries: [...old.entries, ...next.entries] };
+          assign(value);
+          update({ loadedCount: value.entries.length });
+        } catch (error2) {
+          if (!signal.aborted) setError(message(error2));
+        } finally {
+          if (!signal.aborted) {
+            busy.current = false;
+            setPaging(false);
+          }
+        }
+      }
+      React.useEffect(() => {
+        if (!tab.visible || !sentinel.current || data?.nextOffset === null || loading || paging || error) return;
+        const observer = new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) more();
+        }, { root: viewport.current, rootMargin: "160px" });
+        observer.observe(sentinel.current);
+        return () => observer.disconnect();
+      }, [data, tab.visible, loading, paging, error]);
+      const graph = React.useMemo(() => layoutCommits(data?.entries || []), [data]);
+      const columns = graph.reduce((max, row) => Math.max(max, row.columns), 1), graphWidth = Math.min(96, columns * 14 + 6), panelId = React.useId();
+      return h(
+        "section",
+        { className: "dshChanges dshHistory", "aria-label": t("\u66F4\u6539"), "data-dsh-changes": true, "data-source": "history" },
+        h(
+          "header",
+          { className: "dshChanges__toolbar" },
+          h(
+            "div",
+            { className: "dshChanges__scope" },
+            h(SourceMenu, { source: "history", capabilities, onChange: onSourceChange, visible: tab.visible }),
+            data?.shallow && h(StatusTag, { label: t("\u6D45\u514B\u9686\u53EA\u5305\u542B\u5DF2\u83B7\u53D6\u7684\u5386\u53F2\uFF0C\u8FB9\u754C\u4E4B\u5916\u7684\u63D0\u4EA4\u6682\u4E0D\u53EF\u89C1") }, t("\u6D45\u514B\u9686"))
+          ),
+          expanded.length > 0 && h(Tooltip, { label: t("\u5168\u90E8\u6298\u53E0"), portal: true, side: "bottom" }, h(Button, { className: "dshChanges__collapse dshHistory__collapse", size: "sm", "aria-label": t("\u5168\u90E8\u6298\u53E0"), onClick: () => {
+            restoring.current = false;
+            setExpanded([]);
+          } }, h(CollapseIcon, { size: 14 })))
+        ),
+        error && h(Placeholder, { error: true, retry: reload, busy: loading }, error),
+        !data && loading && !error && h(Placeholder, null, t("\u6B63\u5728\u52A0\u8F7D\u63D0\u4EA4\u8BB0\u5F55\u2026")),
+        data && h(
+          "div",
+          {
+            className: "dshChanges__list dshHistory__list",
+            ref: viewport,
+            onScroll: saveScroll,
+            onWheel: () => {
+              restoring.current = false;
+            },
+            onPointerDown: () => {
+              restoring.current = false;
+            }
+          },
+          !data.entries.length && h(Placeholder, null, t("\u6682\u65E0\u63D0\u4EA4\u8BB0\u5F55")),
+          data.entries.map((entry, index) => {
+            const open = expanded.includes(entry.id), id = panelId + entry.id;
+            return h(
+              "article",
+              { key: entry.id, className: "dshHistory__commit", "data-commit-id": entry.id, "data-open": open, style: { "--history-graph-width": graphWidth + "px" } },
+              h(Graph, { row: graph[index], columns, boundary: entry.boundary }),
+              h(
+                Tooltip,
+                { label: commitInfo(entry), portal: true, side: "bottom", delayMs: 600, maxWidth: 420, disabled: !tab.visible },
+                h(
+                  Button,
+                  {
+                    className: "dshHistory__row",
+                    size: "sm",
+                    "aria-expanded": open,
+                    "aria-controls": id,
+                    "aria-label": t("\u63D0\u4EA4\uFF1A") + (entry.subject || entry.id),
+                    "aria-description": commitInfo(entry),
+                    onClick: () => {
+                      restoring.current = false;
+                      setExpanded((ids) => ids.includes(entry.id) ? ids.filter((id2) => id2 !== entry.id) : [...ids, entry.id]);
+                    }
+                  },
+                  h("span", { className: "dshHistory__titleLine" }, h("span", { className: "dshHistory__subject" }, entry.subject || t("\uFF08\u65E0\u63D0\u4EA4\u6807\u9898\uFF09")), h(Refs, { refs: entry.refs })),
+                  h(
+                    "span",
+                    { className: "dshHistory__byline" },
+                    h("span", null, entry.author),
+                    h("time", { dateTime: entry.commitDate }, date(entry.commitDate)),
+                    entry.parents.length > 1 && h("span", null, t("\u5408\u5E76")),
+                    entry.boundary && h("span", null, t("\u5386\u53F2\u8FB9\u754C"))
+                  )
+                )
+              ),
+              h(HistoryDisclosure, { id, open: open && tab.visible, animate: !restoring.current }, h(Details, { key: entry.id + data.revision + data.snapshotId + attempt, ctx, sessionId, revision: data.revision, entry, signal: tab.signal, onReady: restoreScroll, reload, busy: loading }))
+            );
+          }),
+          data.nextOffset !== null && h("div", { ref: sentinel, className: "dshHistory__more" }, h(Button, { size: "sm", onClick: more, disabled: loading || paging || Boolean(error) }, paging ? t("\u6B63\u5728\u52A0\u8F7D\u2026") : t("\u52A0\u8F7D\u66F4\u591A\u63D0\u4EA4")))
+        )
+      );
+    };
+  }
+
+  // dsh-plugin/sidebar-changes/session-details.mjs
+  function createSessionDetails(React, { Button, Tag }, { call, message, Placeholder, DiffRows, stats }) {
+    const h = React.createElement;
+    function RecordDiff({ ctx, sessionId, fileId, revision, record, signal }) {
+      const [data, setData] = React.useState(null), [error, setError] = React.useState(null), [pending, setPending] = React.useState(false);
+      const active = React.useRef(), inFlight = React.useRef(false);
+      async function load(offset = 0) {
+        const current = active.current;
+        if (!current || current.aborted || inFlight.current) return;
+        inFlight.current = true;
+        setPending(true);
+        setError(null);
+        try {
+          const value = await call(ctx, "getOperationDiff", sessionId, fileId, revision, record.id, offset, current);
+          if (!current.aborted) setData((old) => ({ ...value, rows: offset ? [...old.rows, ...value.rows] : value.rows }));
+        } catch (error2) {
+          if (!current.aborted) setError(message(error2));
+        } finally {
+          if (!current.aborted) {
+            inFlight.current = false;
+            setPending(false);
+          }
+        }
+      }
+      React.useEffect(() => {
+        const own = new AbortController();
+        active.current = AbortSignal.any([own.signal, signal]);
+        inFlight.current = false;
+        load();
+        return () => own.abort();
+      }, []);
+      return h(
+        "div",
+        { className: "dshChanges__recordDiff" },
+        error && h(Placeholder, { error: true, retry: () => load(data?.nextOffset || 0), busy: pending }, error),
+        !data && !error && h("div", { role: "status" }, t("\u6B63\u5728\u52A0\u8F7D\u5DEE\u5F02\u2026")),
+        data?.reason && h(Placeholder, null, message({ message: data.reason })),
+        data && h(DiffRows, { rows: data.rows }),
+        data && (data.beforeNewline === false || data.afterNewline === false) && h(Tag, { tone: "quiet" }, t("\u6587\u4EF6\u672B\u5C3E\u65E0\u6362\u884C")),
+        data && !data.rows.length && !data.reason && h("div", null, t("\u65E0\u6587\u672C\u884C\u53D8\u5316")),
+        data?.nextOffset != null && h(Button, {
+          size: "sm",
+          className: "dshChanges__recordMore",
+          disabled: pending,
+          onClick: () => load(data.nextOffset)
+        }, pending ? t("\u6B63\u5728\u52A0\u8F7D\u2026") : t("\u52A0\u8F7D\u66F4\u591A\u7247\u6BB5\u884C"))
+      );
+    }
+    function Records({ ctx, sessionId, fileId, revision, recordKind, signal }) {
+      useLocale(React);
+      const [data, setData] = React.useState(null), [error, setError] = React.useState(null), [pending, setPending] = React.useState(false);
+      const [opened, setOpened] = React.useState([]), active = React.useRef(), inFlight = React.useRef(false);
+      async function load(offset = 0) {
+        const current = active.current;
+        if (!current || current.aborted || inFlight.current) return;
+        inFlight.current = true;
+        setPending(true);
+        setError(null);
+        try {
+          const value = await call(ctx, "listFileOperations", sessionId, fileId, revision, recordKind, offset, current);
+          if (!current.aborted) setData((old) => ({ ...value, records: offset ? [...old.records, ...value.records] : value.records }));
+        } catch (error2) {
+          if (!current.aborted) setError(message(error2));
+        } finally {
+          if (!current.aborted) {
+            inFlight.current = false;
+            setPending(false);
+          }
+        }
+      }
+      React.useEffect(() => {
+        const own = new AbortController();
+        active.current = AbortSignal.any([own.signal, signal]);
+        inFlight.current = false;
+        load();
+        return () => own.abort();
+      }, []);
+      return h(
+        "div",
+        { className: "dshChanges__records", "data-record-kind": recordKind },
+        error && h(Placeholder, { error: true, retry: () => load(data?.nextOffset || 0), busy: pending }, error),
+        !data && !error && h("div", { role: "status" }, t("\u6B63\u5728\u52A0\u8F7D\u8BB0\u5F55\u2026")),
+        data?.records.map((record) => {
+          const open = recordKind === "segments" || !record.noTextChange && opened.includes(record.id);
+          const label = `${recordKind === "segments" ? t("\u8FDE\u7EED\u7247\u6BB5") : t("\u64CD\u4F5C")} ${record.index}`;
+          return h(
+            "div",
+            { key: record.id, className: "dshChanges__record" },
+            h(
+              "div",
+              { className: "dshChanges__metadata" },
+              recordKind === "segments" || record.noTextChange ? h("span", { className: "dshChanges__recordLabel" }, label) : h(Button, {
+                size: "sm",
+                className: "dshChanges__recordToggle",
+                "aria-expanded": open,
+                onClick: () => setOpened((old) => open ? old.filter((id) => id !== record.id) : [...old, record.id])
+              }, label),
+              stats(record.stats),
+              record.status === "added" && h(Tag, { tone: "success" }, t("\u65B0\u589E")),
+              record.status === "deleted" && h(Tag, { tone: "danger" }, t("\u5220\u9664")),
+              record.noTextChange && h(Tag, { tone: "quiet" }, t("\u65E0\u6587\u672C\u884C\u53D8\u5316")),
+              record.evidenceOnly && h(Tag, { tone: "quiet" }, t("\u91CD\u53E0\u91C7\u96C6")),
+              record.finalStatus === "error" && h(Tag, { tone: "warning" }, t("\u8C03\u7528\u5931\u8D25\uFF0C\u4FDD\u7559\u5DF2\u5199\u5165\u5185\u5BB9"))
+            ),
+            open && h(RecordDiff, { ctx, sessionId, fileId, revision, record, signal })
+          );
+        }),
+        data?.nextOffset != null && h(Button, {
+          size: "sm",
+          className: "dshChanges__recordMore",
+          disabled: pending,
+          onClick: () => load(data.nextOffset)
+        }, pending ? t("\u6B63\u5728\u52A0\u8F7D\u2026") : t("\u52A0\u8F7D\u66F4\u591A\u8BB0\u5F55\uFF08{0}/{1}\uFF09", [data.records.length, data.total]))
+      );
+    }
+    return function SessionDetails({ ctx, sessionId, entry, revision, signal }) {
+      useLocale(React);
+      const [history, setHistory] = React.useState(false);
+      const props = { ctx, sessionId, fileId: entry.fileId, revision, signal };
+      return h(
+        React.Fragment,
+        null,
+        entry.continuity === "broken" && h(Records, { ...props, key: "segments-" + revision, recordKind: "segments" }),
+        h(
+          Button,
+          { size: "sm", className: "dshChanges__historyButton", "aria-expanded": history, onClick: () => setHistory((value) => !value) },
+          history ? t("\u6536\u8D77\u64CD\u4F5C\u5386\u53F2") : t("\u67E5\u770B\u64CD\u4F5C\u5386\u53F2\uFF08{0}\uFF09", [entry.operationCount])
+        ),
+        history && h(Records, { ...props, key: "operations-" + revision, recordKind: "operations" })
+      );
+    };
+  }
+
+  // dsh-plugin/sidebar-changes/client-entry.mjs
+  var ID = "@dsh-desktop/sidebar-changes";
+  var KIND = "desktop-changes";
+  var PREFIX2 = "dsh-resource://desktop-changes/";
+  var STATUS = { get added() {
+    return t("\u65B0\u589E");
+  }, get deleted() {
+    return t("\u5220\u9664");
+  }, get renamed() {
+    return t("\u91CD\u547D\u540D");
+  }, get modified() {
+    return t("\u4FEE\u6539");
+  }, get restored() {
+    return t("\u5DF2\u6062\u590D\u539F\u72B6");
+  }, get conflict() {
+    return t("\u5408\u5E76\u51B2\u7A81");
+  }, get submodule() {
+    return t("\u5B50\u6A21\u5757");
+  }, get symlink() {
+    return t("\u7B26\u53F7\u94FE\u63A5");
+  } };
+  window.__ModuleLoader__.load({ id: ID, factory(require2) {
+    const React = require2("react"), h = React.createElement;
+    const primitives = require2("@deepseek-ai/dsh-client-ui-primitives");
+    const {
+      Button,
+      Menu,
+      Tag,
+      Tooltip,
+      PathLabel,
+      FileTypeIcon,
+      IconChevronDownOutlineRegular: ChevronDown,
+      IconChevronRightOutlineRegular: ChevronRight,
+      IconChevronUpOutlineRegular: ChevronUp,
+      IconCompareSplitOutlineRegular: ChangesIcon,
+      IconWarningOutlineRegular: WarningIcon
+    } = primitives;
+    function FilePath({ path }) {
+      return h("span", { className: "dshChanges__path" }, h(PathLabel, { path }));
+    }
+    const stats = (value) => h("span", { className: "dshChanges__stats" }, h("span", { className: "dshChanges__added" }, "+" + (value?.added ?? "\u2014")), " ", h("span", { className: "dshChanges__removed" }, "-" + (value?.removed ?? "\u2014")));
+    const message = (error) => REASONS[error?.message] || error?.message || t("\u8BFB\u53D6\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5");
+    function Placeholder({ children, error = false, retry, busy = false }) {
+      return h(
+        "div",
+        { className: "dshChanges__placeholder", role: error ? "alert" : "status" },
+        h("span", { className: "dshChanges__placeholderIcon", "aria-hidden": true }, h(error ? WarningIcon : ChangesIcon, { size: 24 })),
+        h("span", null, children),
+        retry && h(Button, { size: "sm", variant: "outline", onClick: retry, disabled: busy }, busy ? t("\u6B63\u5728\u91CD\u8BD5\u2026") : t("\u91CD\u8BD5"))
+      );
+    }
+    function StatusTag({ children, label, tone = "neutral" }) {
+      return h(
+        Tooltip,
+        { label: label || children, portal: true, side: "bottom", maxWidth: 320 },
+        h("span", { className: "dshChanges__tag", tabIndex: 0 }, h(Tag, { tone }, children))
+      );
+    }
+    function SourceMenu({ source, capabilities, onChange, visible }) {
+      const [open, setOpen] = React.useState(false);
+      const trigger = React.useRef(), menuClass = "dshChanges__menu-" + React.useId();
+      React.useEffect(() => {
+        if (!visible) setOpen(false);
+      }, [visible]);
+      React.useEffect(() => {
+        if (!open || !visible) return;
+        const frame = requestAnimationFrame(() => {
+          if (document.activeElement === trigger.current) document.getElementsByClassName(menuClass)[0]?.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
+        });
+        return () => cancelAnimationFrame(frame);
+      }, [open, visible]);
+      return h(Menu, {
+        open: open && visible,
+        portal: true,
+        compact: true,
+        autoFocus: true,
+        selectedId: source,
+        className: "dshChanges__source",
+        listClassName: "dshChanges__sourceMenu " + menuClass,
+        onClose: () => setOpen(false),
+        onSelect: (value) => {
+          setOpen(false);
+          onChange(value);
+        },
+        items: VIEWS.map((value) => ({ id: value, label: LABELS[value], disabled: value !== "session" && capabilities?.gitAvailability.status !== "available" || value === "history" && !capabilities?.supportedViews?.includes("history") })),
+        anchor: h(
+          Button,
+          {
+            ref: trigger,
+            size: "sm",
+            className: "dshChanges__sourceButton",
+            "aria-label": t("\u66F4\u6539\u8303\u56F4"),
+            "aria-haspopup": "menu",
+            "aria-expanded": open && visible,
+            onClick: () => setOpen((value) => !value),
+            onKeyDown: (event) => {
+              if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+                event.preventDefault();
+                setOpen(true);
+              }
+            }
+          },
+          LABELS[source],
+          h(ChevronDown, { size: 12 })
+        )
+      });
+    }
+    async function call(ctx, method, ...args) {
+      const result = await ctx.remote.desktopChanges[method](...args);
+      if (!result.ok) throw result.error;
+      return result.value;
+    }
+    function DiffRows({ rows }) {
+      return h("div", { className: "dshChanges__code", role: "table", "aria-label": t("\u6587\u4EF6\u5DEE\u5F02") }, rows.map((row, i) => h(
+        "div",
+        { role: "row", key: i, className: "dshChanges__line", "data-kind": row.kind },
+        h("span", { role: "cell", className: "dshChanges__number" }, row.old),
+        h("span", { role: "cell", className: "dshChanges__number" }, row.next),
+        h("span", { role: "cell", className: "dshChanges__sign" }, row.kind),
+        h("code", { role: "cell" }, row.text || " ")
+      )));
+    }
+    function Details({ ctx, sessionId, source, entry, revision, signal, onReady, reload, retryBusy }) {
+      useLocale(React);
+      const [data, setData] = React.useState(null), [error, setError] = React.useState(null), [expanded, setExpanded] = React.useState({}), [pending, setPending] = React.useState(false);
+      const controller = React.useRef(), requests = React.useRef(/* @__PURE__ */ new Set()), ready = React.useRef(onReady);
+      ready.current = onReady;
+      React.useEffect(() => {
+        const own = new AbortController(), active = AbortSignal.any([signal, own.signal]);
+        controller.current = active;
+        requests.current = /* @__PURE__ */ new Set();
+        setData(null);
+        setError(null);
+        setExpanded({});
+        setPending(false);
+        call(ctx, "getFileDiff", sessionId, source, entry.fileId, revision, 0, active).then((value) => {
+          if (!active.aborted) setData(value);
+        }).catch((error2) => {
+          if (!active.aborted) setError(message(error2));
+        });
+        return () => own.abort();
+      }, [sessionId, source, entry.fileId, revision]);
+      React.useLayoutEffect(() => {
+        if (data || error) ready.current(entry.fileId);
+      }, [Boolean(data), error]);
+      async function more() {
+        const active = controller.current;
+        if (pending || active.aborted) return;
+        setPending(true);
+        setError(null);
+        try {
+          const value = await call(ctx, "getFileDiff", sessionId, source, entry.fileId, revision, data.nextOffset, active);
+          if (!active.aborted) setData((old) => ({ ...value, operations: old.operations, rows: [...old.rows, ...value.rows] }));
+        } catch (error2) {
+          if (!active.aborted) setError(message(error2));
+        } finally {
+          if (!active.aborted) setPending(false);
+        }
+      }
+      async function context(gap) {
+        const active = controller.current, current = expanded[gap.offset], inFlight = requests.current;
+        if (inFlight.has(gap.offset) || active.aborted) return;
+        inFlight.add(gap.offset);
+        setError(null);
+        setExpanded((old) => ({ ...old, [gap.offset]: { ...old[gap.offset], pending: true } }));
+        try {
+          const value = await call(ctx, "getFileContext", sessionId, source, entry.fileId, revision, current?.nextOffset ?? gap.offset, active);
+          if (!active.aborted) setExpanded((old) => ({ ...old, [gap.offset]: { ...value, rows: [...old[gap.offset]?.rows || [], ...value.rows] } }));
+        } catch (error2) {
+          if (!active.aborted) setError(message(error2));
+        } finally {
+          inFlight.delete(gap.offset);
+          if (!active.aborted) setExpanded((old) => ({ ...old, [gap.offset]: { ...old[gap.offset], pending: false } }));
+        }
+      }
+      const rendered = [], group = [];
+      const flush = () => {
+        if (group.length) {
+          rendered.push(h(DiffRows, { key: "lines-" + rendered.length, rows: group.splice(0) }));
+        }
+      };
+      for (const row of data?.rows || []) {
+        if (row.kind !== "gap") {
+          group.push(row);
+          continue;
+        }
+        flush();
+        const opened = expanded[row.offset];
+        if (opened?.rows) rendered.push(h(DiffRows, { key: "context-" + row.offset, rows: opened.rows }));
+        if (!opened || opened.nextOffset !== null) rendered.push(h(Button, { key: "gap-" + row.offset, size: "sm", className: "dshChanges__context", disabled: opened?.pending, onClick: () => context(row) }, opened?.pending ? t("\u6B63\u5728\u52A0\u8F7D\u2026") : t("\u5C55\u5F00 {0} \u884C\u4E0A\u4E0B\u6587", [row.length - (opened?.rows?.length || 0)])));
+      }
+      flush();
+      return h(
+        "div",
+        { className: "dshChanges__detail" },
+        error && h(Placeholder, { error: true, retry: reload, busy: retryBusy }, error),
+        !data && !error && h("div", { className: "dshChanges__loading", role: "status" }, t("\u6B63\u5728\u52A0\u8F7D\u5DEE\u5F02\u2026")),
+        data && h(
+          React.Fragment,
+          null,
+          data.previousPath && h("div", { className: "dshChanges__metadata" }, h(StatusTag, { label: `${data.previousPath} \u2192 ${data.path}` }, t("\u91CD\u547D\u540D"))),
+          data.reason && h(Placeholder, null, REASONS[data.reason] || data.reason),
+          rendered,
+          (data.beforeNewline === false || data.afterNewline === false) && h("div", { className: "dshChanges__metadata" }, h(Tag, { tone: "quiet" }, t("\u6587\u4EF6\u672B\u5C3E\u65E0\u6362\u884C"))),
+          data.totalRows === 0 && !data.reason && h(Placeholder, null, t("\u65E0\u6587\u672C\u884C\u53D8\u5316")),
+          data.nextOffset !== null && h(Button, { size: "sm", className: "dshChanges__context", onClick: more, disabled: pending }, pending ? t("\u6B63\u5728\u52A0\u8F7D\u2026") : t("\u52A0\u8F7D\u66F4\u591A\u5DEE\u5F02")),
+          source === "session" && entry.operationCount > 0 && h(SessionDetails, { ctx, sessionId, entry, revision, signal })
+        )
+      );
+    }
+    const SessionDetails = createSessionDetails(React, primitives, { call, message, Placeholder, DiffRows, stats });
+    const HistoryView = createHistoryView(React, primitives, { SourceMenu, Placeholder, StatusTag, call, message });
+    function Panel(props) {
+      useLocale(React);
+      const { states, sessionId, tab } = props, key = sessionId + "\0" + tab.contentId;
+      const [source, setSource] = React.useState(() => states.get(key)?.source || "session");
+      const viewStates = React.useMemo(() => createViewStates(states, source), [states, source]);
+      const onSourceChange = (value) => {
+        states.set(key, { ...states.get(key), source: value });
+        setSource(value);
+      };
+      React.useEffect(() => {
+        const restore = () => setSource(states.get(key)?.source || "session");
+        document.addEventListener("dsh-desktop:changes-restore", restore);
+        return () => document.removeEventListener("dsh-desktop:changes-restore", restore);
+      }, [key]);
+      return h(source === "history" ? HistoryView : ChangesPanel, { ...props, key: source, source, states: viewStates, onSourceChange });
+    }
+    function ChangesPanel({ ctx, tab, sessionId, states, source, onSourceChange }) {
+      useLocale(React);
+      const stateKey = sessionId + "\0" + tab.contentId;
+      const saved = states.get(stateKey) || { source: "session", fileId: null, listScroll: 0, detailScroll: 0 };
+      const openedFiles = (value) => value.fileIds || (value.fileId ? [value.fileId] : []);
+      const [expanded, setExpanded] = React.useState(() => openedFiles(saved));
+      const [showRestored, setShowRestored] = React.useState(Boolean(saved.showRestored));
+      const [capabilities, setCapabilities] = React.useState(null), [data, setData] = React.useState(null), [error, setError] = React.useState(null);
+      const [refresh, setRefresh] = React.useState(0), [loading, setLoading] = React.useState(true);
+      const [detailAttempt, setDetailAttempt] = React.useState(0), retryDetails = React.useRef(false);
+      const list = React.useRef(), position = React.useRef(saved), root = React.useRef(null);
+      const restoring = React.useRef(true), readyFiles = React.useRef(/* @__PURE__ */ new Set());
+      const fetching = React.useRef(false);
+      const update = (patch) => {
+        position.current = { ...position.current, ...patch };
+        states.set(stateKey, position.current);
+      };
+      React.useEffect(() => {
+        update({ source, fileIds: expanded, fileId: expanded.at(-1) || null });
+      }, [source, expanded]);
+      const restoreScroll = (fileId) => {
+        if (fileId) readyFiles.current.add(fileId);
+        if (!restoring.current || !list.current) return;
+        list.current.scrollTop = position.current.listScroll || 0;
+        if (expanded.every((id) => readyFiles.current.has(id))) restoring.current = false;
+      };
+      React.useLayoutEffect(() => {
+        if (!tab.visible) {
+          restoring.current = true;
+          readyFiles.current.clear();
+        }
+      }, [tab.visible]);
+      React.useEffect(() => {
+        const restore = () => {
+          const value = states.get(stateKey);
+          if (!value) return;
+          position.current = value;
+          restoring.current = true;
+          readyFiles.current.clear();
+          setData(null);
+          setExpanded(openedFiles(value));
+          setRefresh((n) => n + 1);
+        };
+        document.addEventListener("dsh-desktop:changes-restore", restore);
+        return () => document.removeEventListener("dsh-desktop:changes-restore", restore);
+      }, [stateKey]);
+      React.useEffect(() => {
+        if (!tab.visible) return;
+        const own = new AbortController(), signal = AbortSignal.any([own.signal, tab.signal]);
+        fetching.current = true;
+        setLoading(true);
+        setError(null);
+        call(ctx, "getCapabilities", sessionId, signal).then(async (cap) => {
+          if (signal.aborted) return;
+          if (source !== "session" && root.current && root.current !== cap.workspaceRoot) {
+            setData(null);
+            setExpanded([]);
+            update({ listScroll: 0, detailScroll: 0 });
+          }
+          root.current = cap.workspaceRoot;
+          setCapabilities(cap);
+          if (source !== "session" && cap.gitAvailability.status !== "available") {
+            onSourceChange("session");
+            return;
+          }
+          const value = await call(ctx, "listChanges", sessionId, source, signal);
+          if (signal.aborted || value.sessionId !== sessionId || value.source !== source || value.workspaceRoot !== root.current) return;
+          setData(value);
+          if (retryDetails.current) {
+            retryDetails.current = false;
+            setDetailAttempt((attempt) => attempt + 1);
+          }
+          setExpanded((current) => migrateFileIds(current, [...value.entries, ...value.restoredEntries || []]));
+        }).catch((error2) => {
+          if (!signal.aborted) setError(message(error2));
+        }).finally(() => {
+          if (!signal.aborted) {
+            fetching.current = false;
+            setLoading(false);
+          }
+        });
+        return () => {
+          own.abort();
+          fetching.current = false;
+        };
+      }, [sessionId, source, refresh, tab.visible]);
+      React.useEffect(() => {
+        if (!tab.visible) return;
+        const own = new AbortController();
+        let debounce;
+        const invalidate = () => {
+          clearTimeout(debounce);
+          debounce = setTimeout(() => setRefresh((n) => n + 1), 250);
+        };
+        const focus = () => {
+          if (!document.hidden && !fetching.current) invalidate();
+        };
+        window.addEventListener("focus", focus);
+        document.addEventListener("visibilitychange", focus);
+        const timer = setInterval(focus, source === "session" ? 3e4 : 5e3);
+        if (source === "session") (async () => {
+          try {
+            const stream = ctx.remote.desktopChanges.subscribeChanges(sessionId, "", AbortSignal.any([own.signal, tab.signal]));
+            let first = true;
+            for await (const value of stream) {
+              if (own.signal.aborted) break;
+              if (!first) invalidate();
+              first = false;
+            }
+          } catch {
+          }
+        })();
+        return () => {
+          own.abort();
+          clearTimeout(debounce);
+          clearInterval(timer);
+          window.removeEventListener("focus", focus);
+          document.removeEventListener("visibilitychange", focus);
+        };
+      }, [sessionId, source, tab.visible]);
+      React.useLayoutEffect(() => {
+        if (data) restoreScroll();
+      }, [Boolean(data), expanded]);
+      const changeSource = (value) => {
+        if (value === source) return;
+        update({ source, fileIds: expanded, fileId: expanded.at(-1) || null });
+        onSourceChange(value);
+      };
+      const reload = () => {
+        retryDetails.current = true;
+        setRefresh((n) => n + 1);
+      };
+      const toggle = (id) => {
+        restoring.current = false;
+        setExpanded((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+      };
+      const totals = data?.entries.reduce((total, entry) => ({
+        added: total.added === null || entry.stats.added === null ? null : total.added + entry.stats.added,
+        removed: total.removed === null || entry.stats.removed === null ? null : total.removed + entry.stats.removed
+      }), { added: 0, removed: 0 });
+      const git = capabilities?.gitAvailability;
+      const noGit = git && git.status !== "available";
+      const panelId = React.useId();
+      const entries = [...data?.entries || [], ...showRestored ? data?.restoredEntries || [] : []];
+      const summary = source === "session" && data?.totals ? h(
+        React.Fragment,
+        null,
+        data.totals.session.files > 0 && h("span", { title: t("\u5DF2\u786E\u8BA4\u7684\u4F1A\u8BDD\u51C0\u53D8\u5316") }, stats(data.totals.session)),
+        data.totals.observed.files > 0 && h("span", { title: t("\u5305\u542B\u6267\u884C\u671F\u95F4\u89C2\u5BDF\u5230\u7684\u53D8\u5316") }, stats(data.totals.observed)),
+        data.totals.unavailable > 0 && h("span", null, t("{0} \u4E2A\u5F85\u5B8C\u6574\u6BD4\u8F83", [data.totals.unavailable]))
+      ) : stats(totals);
+      return h(
+        "section",
+        { className: "dshChanges", "aria-label": t("\u66F4\u6539"), "data-dsh-changes": true, "data-source": source },
+        h(
+          "header",
+          { className: "dshChanges__toolbar" },
+          h(
+            "div",
+            { className: "dshChanges__scope" },
+            h(SourceMenu, { source, capabilities, onChange: changeSource, visible: tab.visible }),
+            noGit && h(StatusTag, { label: git.reason }, git.status === "none" ? t("\u975E Git \u4ED3\u5E93") : git.status === "missing" ? t("Git \u672A\u5B89\u88C5") : t("Git \u4E0D\u53EF\u7528"))
+          ),
+          Boolean(data?.entries.length) && h(
+            "div",
+            { className: "dshChanges__summary", "aria-label": t("{0} \u4E2A\u6587\u4EF6", [data.entries.length]) },
+            h(Tag, { tone: "neutral" }, data.entries.length),
+            summary
+          ),
+          expanded.length > 0 && h(
+            Tooltip,
+            { label: t("\u5168\u90E8\u6298\u53E0"), portal: true, side: "bottom" },
+            h(Button, { size: "sm", className: "dshChanges__collapse", "aria-label": t("\u5168\u90E8\u6298\u53E0"), onClick: () => {
+              restoring.current = false;
+              setExpanded([]);
+            } }, h(ChevronUp, { size: 14 }))
+          )
+        ),
+        data?.coverageEvents?.length > 0 && h(
+          "details",
+          { className: "dshChanges__coverage" },
+          h("summary", null, t("\u67E5\u770B\u91C7\u96C6\u8303\u56F4")),
+          data.coverageEvents.map((event, index) => h(
+            "div",
+            { key: index },
+            `${REASONS[event.reason] || event.reason} \xB7 ${event.root} \xB7 ${(event.paths || [event.path || "."]).join("\u3001")}`
+          ))
+        ),
+        source === "session" && data?.pendingCount > 0 && h(
+          "div",
+          { className: "dshChanges__metadata" },
+          h(Tag, { tone: "quiet" }, t("\u6B63\u5728\u91C7\u96C6"))
+        ),
+        error && h(Placeholder, { error: true, retry: reload, busy: loading }, error),
+        loading && !data && !error && h(Placeholder, null, t("\u6B63\u5728\u52A0\u8F7D\u66F4\u6539\u2026")),
+        data && h(
+          "div",
+          {
+            className: "dshChanges__list",
+            ref: list,
+            onWheel: () => {
+              restoring.current = false;
+            },
+            onPointerDown: () => {
+              restoring.current = false;
+            },
+            onScroll: (event) => {
+              if (tab.visible && !restoring.current) update({ listScroll: event.currentTarget.scrollTop });
+            }
+          },
+          !data.entries.length && h(Placeholder, null, source === "session" ? data.gaps.length ? t("\u6682\u672A\u627E\u5230\u53EF\u5C55\u793A\u7684\u66F4\u6539\uFF0C\u91C7\u96C6\u8303\u56F4\u5B58\u5728\u7F3A\u53E3") : data.restoredEntries?.length ? t("\u5DF2\u8BB0\u5F55\u7684\u6587\u4EF6\u5747\u5DF2\u6062\u590D\u539F\u72B6") : t("\u5C1A\u65E0\u5DF2\u8BB0\u5F55\u7684\u6587\u4EF6\u66F4\u6539") : source === "staged" ? t("\u6682\u65E0\u6682\u5B58\u7684\u66F4\u6539") : t("\u6CA1\u6709\u672A\u63D0\u4EA4\u7684\u66F4\u6539")),
+          data.restoredEntries?.length > 0 && h(Button, {
+            size: "sm",
+            className: "dshChanges__historyButton",
+            "aria-expanded": showRestored,
+            onClick: () => {
+              setShowRestored((value) => !value);
+              update({ showRestored: !showRestored });
+            }
+          }, t("{0}\u5DF2\u6062\u590D\u539F\u72B6\uFF08{1}\uFF09", [showRestored ? t("\u6536\u8D77") : t("\u67E5\u770B"), data.restoredEntries.length])),
+          entries.map((entry, index) => {
+            const open = expanded.includes(entry.fileId), detailId = panelId + "-" + entry.fileId;
+            return h(
+              "article",
+              { key: entry.fileId, className: "dshChanges__item", "data-open": open },
+              data.roots?.length > 1 && entry.root !== entries[index - 1]?.root && h("div", { className: "dshChanges__metadata dshChanges__root" }, entry.root),
+              h(
+                Tooltip,
+                { label: entry.path, portal: true, side: "bottom", delayMs: 600, focusDelayMs: 400, maxWidth: 420 },
+                h(
+                  Button,
+                  {
+                    size: "sm",
+                    className: "dshChanges__file",
+                    onClick: () => toggle(entry.fileId),
+                    "aria-expanded": open,
+                    "aria-controls": detailId,
+                    "aria-label": t("{0}\uFF0C{1}\uFF0C\u65B0\u589E {2} \u884C\uFF0C\u5220\u9664 {3} \u884C", [entry.path, STATUS[entry.status], entry.stats.added ?? t("\u672A\u77E5"), entry.stats.removed ?? t("\u672A\u77E5")])
+                  },
+                  h("span", { className: "dshChanges__chevron", "aria-hidden": true }, h(open ? ChevronDown : ChevronRight, { size: 12 })),
+                  h(FileTypeIcon, { path: entry.path, size: 16, className: "dshChanges__fileIcon" }),
+                  h("span", { className: "dshChanges__row" }, h(FilePath, { path: entry.path }), stats(entry.stats))
+                )
+              ),
+              (entry.reason || !["added", "modified"].includes(entry.status)) && h(
+                "div",
+                { className: "dshChanges__fileTags" },
+                !["added", "modified"].includes(entry.status) && h(Tag, { tone: entry.status === "deleted" ? "danger" : "neutral" }, STATUS[entry.status]),
+                entry.reason && h(StatusTag, { tone: "warning", label: REASONS[entry.reason] || entry.reason }, entry.continuity === "broken" ? t("\u5206\u6BB5\u6BD4\u8F83") : t("\u5185\u5BB9\u53D7\u9650"))
+              ),
+              h("div", { id: detailId, "aria-hidden": !open }, open && tab.visible && h(Details, { key: entry.fileId + source + detailAttempt, ctx, sessionId, source, entry, revision: data.revision, signal: tab.signal, onReady: restoreScroll, reload, retryBusy: loading }))
+            );
+          })
+        )
+      );
+    }
+    function installUI(ctx) {
+      const states = /* @__PURE__ */ new Map(), addresses = /* @__PURE__ */ new WeakMap();
+      function Body(props) {
+        useLocale(React);
+        const tab = props.useTabInfo().tab;
+        React.useLayoutEffect(() => {
+          if (tab.contentId !== "sidebar://" + KIND) return;
+          if (!addresses.has(tab.signal)) addresses.set(tab.signal, PREFIX2 + encodeURIComponent(tab.id) + "-" + crypto.randomUUID());
+          tab.actions.openResource(addresses.get(tab.signal), { replaceTab: true, revealIfOpened: false });
+        }, [tab.contentId, tab.signal]);
+        return tab.contentId.startsWith(PREFIX2) ? h(Panel, { key: props.sessionId + tab.contentId, ctx, tab, sessionId: props.sessionId, states }) : h(Placeholder, null, t("\u6B63\u5728\u6253\u5F00\u66F4\u6539\u2026"));
+      }
+      const offBody = ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: ID, inject: (sessionId) => ({ sessionId }) }, Body));
+      let offType, mode;
+      const sync = () => {
+        const next = document.documentElement.getAttribute("data-dsh-ui") !== "vanilla";
+        if (next === mode) return;
+        mode = next;
+        offType?.();
+        offType = ctx.sidebarRightTabs.register({
+          id: ID,
+          kind: KIND,
+          patterns: [PREFIX2 + "**"],
+          canOpen: (address) => address.startsWith(PREFIX2),
+          title: () => t("\u66F4\u6539"),
+          ...mode ? { guide: [{ order: 30, title: () => t("\u66F4\u6539"), description: () => t("\u67E5\u770B\u6587\u4EF6\u4FEE\u6539\u524D\u540E\u7684\u5DEE\u5F02"), icon: (props) => h(ChangesIcon, { size: props.size || 22 }) }] } : {}
+        });
+      };
+      sync();
+      document.addEventListener("dsh-desktop:ui-mode", sync);
+      const observer = new MutationObserver(sync);
+      observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-dsh-ui"] });
+      const provider = createStateProvider(ctx, states);
+      const offState = window.__DSH_UI_STATE__?.registerProvider("desktop-changes", provider);
+      return () => {
+        observer.disconnect();
+        document.removeEventListener("dsh-desktop:ui-mode", sync);
+        offType?.();
+        offBody();
+        offState?.();
+        states.clear();
+      };
+    }
+    return { inject: ["slots", "sidebarRightTabs", "sessions", "remote"], async apply(ctx) {
+      const offRemote = await ctx.remote.$mount(contribution);
+      const fiber = ctx.inject(["remote.desktopChanges"], installUI);
+      return async () => {
+        await fiber.dispose();
+        await offRemote();
+      };
+    } };
+  } });
+})();

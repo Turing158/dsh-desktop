@@ -1,0 +1,11 @@
+# Permission sets for this app's own commands.
+#
+# Adding a file here is what creates the app ACL manifest — with it present,
+# EVERY app command must be granted explicitly or it is refused (see the header
+# of `title-bar.toml` for the full story). This file exists so the deep-link
+# commands are covered by that contract with their own, narrow grant.
+
+[[permission]]
+identifier = "allow-deep-link"
+description = "Report the outcome of activating a deep link, so the queued link can be cleared. Granted at runtime only to the current DSH origin, next to the ui-snapshot and terminal grants; the boot and failure pages can never call it. `opened` confirms the session was selected; `missing` reports the link named a session that no longer exists (deleted or archived)."
+commands.allow = ["report_deep_link"]

@@ -1,0 +1,78 @@
+[package]
+name = "deepseek-harness-desktop"
+version = "0.1.0"
+description = "DeepseekHarness desktop shell with Windows notifications"
+edition = "2021"
+rust-version = "1.77"
+
+[features]
+offline = []
+single = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json = "1"
+
+[dependencies]
+# `tray-icon` enables `tauri::tray` and `tauri::menu` — the notification-area
+# icon the window hides to when it is "closed". Everything else in the app
+# needs no optional Tauri features.
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+# `deep-link` forwards a second launch's argv to the deep-link plugin before our
+# own callback runs, so a link clicked while the app is running reaches the
+# already-running process. See `deep_link`.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+if-addrs = "0.15"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
+# ResizeDirection, for `Window::start_resize_dragging`. Tauri uses this crate
+# internally but does not re-export the enum publicly (`use tauri_runtime as
+# runtime` is private), so naming it requires depending on it directly. Pinned to
+# the same minor line Tauri resolves, so there is exactly one copy in the graph.
+tauri-runtime = "2.11"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  # CreateJobObjectW is gated behind Win32_Security because of its
+  # SECURITY_ATTRIBUTES parameter, which we pass as null.
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_System_Console",
+  "Win32_System_Pipes",
+  "Win32_System_IO",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_ToolHelp",
+  # RtlGetVersion, for the real Windows build number.
+  "Win32_System_SystemInformation",
+  # SystemUsesLightTheme: the taskbar's own light/dark mode, which is a
+  # different setting from the app theme the window reports.
+  "Win32_System_Registry",
+  # DwmSetWindowAttribute: recolors the native title bar to match the app.
+  "Win32_Graphics_Dwm",
+  # The 编辑 menu: clipboard read/write and a synthesized paste keystroke.
+  # `CF_UNICODETEXT` lives in Win32_System_Ole but is gated on Win32_System_Com.
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_Com",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

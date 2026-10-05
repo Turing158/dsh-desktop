@@ -1,0 +1,5 @@
+{
+  "valid": ["192.168.1.20", "192.168.1.20:3080", "desktop.local", "DESKTOP.local:3080", "desktop.local:80", "desktop.local:443", "localhost:65535", "xn--bcher-kva.local"],
+  "invalid": ["", " desktop.local", "desktop.local ", "desktop.local\t", "desktop.local:", "desktop.local:080", "desktop.local:0443", "desktop.local:65536", "desktop.local:-1", "http://desktop.local", "desktop.local/path", "desktop.local?x=1", "desktop.local#x", "user@desktop.local", "192.168.001.20", "127.1", "0x7f.0.0.1", "2130706433", "%64esktop.local", "桌面.local"],
+  "policyInvalid": ["*", "*.local", "192.168.0.0/16", "0.0.0.0", "0.0.0.0:3080", "[::1]", "[fd00::1]:3080", "::1"]
+}
