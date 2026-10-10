@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-desktop-update"
+description = "Read the desktop GitHub release and open its release page. Granted only to the current backend origin, with native caller and URL validation."
+commands.allow = ["check_desktop_update", "open_desktop_release"]

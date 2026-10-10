@@ -6,6 +6,9 @@ import vm from 'node:vm'
 const source = readFileSync(new URL('./title-bar/client.js', import.meta.url), 'utf8')
 const flush = () => new Promise(setImmediate)
 const tags = { latest: '0.1.7-rc.2', next: '0.2.0-rc.1' }
+const desktopRelease = { current: '0.1.0', release: { version: '0.2.0', name: 'Desktop v0.2.0', notes: '## Changes\n- Fixes',
+  publishedAt: '2026-10-05T14:59:05Z', prerelease: false, updateAvailable: true,
+  url: 'https://github.com/Turing158/dsh-desktop/releases/tag/v0.2.0' } }
 
 function deferred() {
   let resolve, reject
@@ -16,9 +19,10 @@ function deferred() {
 // Render the actual title-bar bundle with stateful hooks; only the external UI
 // primitives and native IPC are stubs. Tests click its real handlers and await
 // controlled native responses, including repeated clicks before a rerender.
-function fixture({ check, install, host = true } = {}) {
+function fixture({ check = async () => ({ current: tags.latest, ...tags }), install,
+  checkDesktop = async () => desktopRelease, openRelease, host = true } = {}) {
   let factory, slot, cursor = 0
-  const hooks = [], calls = []
+  const hooks = [], calls = [], focused = []
   const React = {
     Fragment: 'Fragment',
     createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
@@ -38,6 +42,7 @@ function fixture({ check, install, host = true } = {}) {
   const sandbox = {
     document: {
       body: {}, addEventListener() {},
+      getElementById: id => ({ focus: () => focused.push(id) }),
       documentElement: { getAttribute: () => null, style: { setProperty() {} } },
     },
     getSelection: () => null,
@@ -46,6 +51,8 @@ function fixture({ check, install, host = true } = {}) {
       calls.push({ command, args })
       if (command === 'check_dsh_update') return check?.()
       if (command === 'install_dsh_update') return install?.(args.channel)
+      if (command === 'check_desktop_update') return checkDesktop()
+      if (command === 'open_desktop_release') return openRelease?.(args.url)
       return ''
     } } } : undefined,
   }
@@ -82,29 +89,41 @@ function fixture({ check, install, host = true } = {}) {
   function openMore() { menu().props.anchor.props.onClick() }
   function selectUpdate() { menu().props.onSelect('dsh-update') }
   function openDialog() { if (!menu().props.open) openMore(); selectUpdate() }
+  function closeDialog() { render().find(node => node.type === 'Modal').props.onClose() }
+  const tab = id => render().find(node => node.props.id === 'dsh-update-tab-' + id)
+  function selectTab(id) { tab(id).props.onClick() }
+  const status = () => render().find(node => node.props.role === 'status')?.props.children[0]
   const updateCalls = () => calls.filter(call => /dsh_update$/.test(call.command))
-  return { render, menu, item, button, openMore, selectUpdate, openDialog, updateCalls }
+  const desktopCalls = () => calls.filter(call => call.command === 'check_desktop_update')
+  return { render, menu, item, button, openMore, selectUpdate, openDialog, closeDialog, updateCalls, desktopCalls, calls, tab, selectTab, status, focused }
 }
 
-test('checking disables the menu item and suppresses duplicate clicks', async () => {
-  const pending = deferred()
-  const f = fixture({ check: () => pending.promise })
-  assert.equal(f.item().label, '检测dsh更新')
+test('one click opens the dialog and starts both checks without duplicate requests', async () => {
+  const pending = deferred(), desktop = deferred()
+  const f = fixture({ check: () => pending.promise, checkDesktop: () => desktop.promise })
+  assert.equal(f.item().label, '检测更新...')
   f.openMore()
   const select = f.menu().props.onSelect
   select('dsh-update'); select('dsh-update')
   assert.equal(f.updateCalls().length, 1)
-  assert.equal(f.item().disabled, true)
-  assert.match(f.item().label, /正在检测/)
-  f.selectUpdate()
-  assert.equal(f.updateCalls().length, 1)
+  assert.equal(f.desktopCalls().length, 1)
+  assert.equal(f.menu().props.open, false)
+  assert.ok(f.render().some(node => node.type === 'Modal' && node.props.title === '检测更新'))
+  assert.equal(f.tab('desktop').props['aria-selected'], true)
+  assert.equal(f.status(), '正在检测软件更新…')
+  assert.equal(f.button('重新检测').props.disabled, true)
+  f.selectTab('dsh')
+  assert.equal(f.status(), '正在检测 dsh 更新…')
+  desktop.resolve(desktopRelease); await flush()
+  assert.equal(f.status(), '正在检测 dsh 更新…', 'desktop completion does not clear the dsh spinner')
+  f.selectTab('desktop')
+  assert.equal(f.status(), '发现新版本')
   pending.resolve({ current: '0.1.5-rc.2', ...tags })
   await flush()
-  assert.equal(f.item().disabled, false)
-  assert.equal(f.item().label, 'dsh 可更新')
-  f.openDialog()
-  assert.ok(f.render().some(node => node.type === 'Modal' && node.props.title === 'dsh 更新'))
-  assert.equal(f.updateCalls().length, 1, 'opening the result does not run another check')
+  f.selectTab('dsh')
+  assert.equal(f.status(), 'dsh 可更新')
+  assert.equal(f.item().label, '检测更新...')
+  assert.equal(f.updateCalls().length, 1, 'switching tabs does not run another check')
 })
 
 for (const [current, latest, next, label, stableDisabled, previewDisabled] of [
@@ -117,8 +136,8 @@ for (const [current, latest, next, label, stableDisabled, previewDisabled] of [
   test(`version comparison: ${current} / ${latest} / ${next}`, async () => {
     const f = fixture({ check: async () => ({ current, latest, next }), install: async () => latest })
     f.openMore(); f.selectUpdate(); await flush()
-    assert.equal(f.item().label, label)
-    f.openDialog()
+    f.selectTab('dsh')
+    assert.equal(f.status(), label)
     assert.equal(f.button('最新稳定版').props.disabled, stableDisabled)
     assert.equal(f.button('最新预览版')?.props.disabled, previewDisabled)
     assert.equal(f.render().some(node => node.type === 'dt' && node.props.children.includes('最新预览版')), latest !== next)
@@ -129,7 +148,7 @@ for (const [current, latest, next, label, stableDisabled, previewDisabled] of [
       f.button('最新稳定版').props.onClick(); await flush()
       assert.equal(f.updateCalls().length, 2)
       assert.equal(f.updateCalls()[1].args.channel, 'latest')
-      assert.equal(f.item().label, 'dsh 已是最新版')
+      assert.equal(f.status(), 'dsh 已是最新版')
       assert.equal(f.button('最新稳定版').props.disabled, true)
       assert.equal(f.button('最新预览版'), undefined)
     }
@@ -140,7 +159,7 @@ for (const channel of ['latest', 'next']) {
   test(`${channel} installation is exclusive and updates the displayed version`, async () => {
     const pending = deferred()
     const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), install: () => pending.promise })
-    f.openMore(); f.selectUpdate(); await flush(); f.openDialog()
+    f.openDialog(); await flush(); f.selectTab('dsh')
     const selected = f.button(channel === 'latest' ? '最新稳定版' : '最新预览版')
     const other = f.button(channel === 'latest' ? '最新预览版' : '最新稳定版')
     selected.props.onClick(); selected.props.onClick(); other.props.onClick()
@@ -154,6 +173,7 @@ for (const channel of ['latest', 'next']) {
     // Dismiss and reopen while installing: status is retained and no new call.
     f.render().find(node => node.type === 'Modal').props.onClose()
     f.openDialog()
+    f.selectTab('dsh')
     assert.equal(f.button('最新稳定版').props.disabled, true)
     pending.resolve(tags[channel]); await flush()
     assert.equal(f.button('最新稳定版').props.disabled, channel === 'latest')
@@ -169,14 +189,14 @@ test('a failed check stays clickable, shows its error, and can be retried', asyn
     return { current: tags.latest, ...tags }
   } })
   f.openMore(); f.selectUpdate(); await flush()
-  assert.equal(f.item().disabled, false)
-  assert.equal(f.item().label, 'dsh 检测失败')
-  f.openDialog()
+  assert.equal(Boolean(f.item().disabled), false)
+  f.selectTab('dsh')
+  assert.equal(f.status(), 'dsh 检测失败')
   assert.equal(f.button('最新稳定版').props.disabled, true)
   assert.equal(f.button('最新预览版').props.disabled, true)
   assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('registry unavailable')))
   f.button('重新检测').props.onClick(); await flush()
-  assert.equal(f.item().label, 'dsh 已是最新版')
+  assert.equal(f.status(), 'dsh 已是最新版')
   assert.equal(f.button('最新预览版').props.disabled, false)
 })
 
@@ -186,10 +206,10 @@ test('failed installation releases both buttons and preserves the last verified 
     if (++attempts === 1) throw Error('npm EACCES')
     return tags.latest
   } })
-  f.openMore(); f.selectUpdate(); await flush(); f.openDialog()
+  f.openDialog(); await flush(); f.selectTab('dsh')
   f.button('最新稳定版').props.onClick(); await flush()
-  assert.equal(f.item().label, 'dsh 更新失败')
-  assert.equal(f.item().disabled, false)
+  assert.equal(f.status(), 'dsh 更新失败')
+  assert.equal(Boolean(f.item().disabled), false)
   assert.equal(f.button('最新稳定版').props.disabled, false)
   assert.equal(f.button('最新预览版').props.disabled, false)
   assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('npm EACCES')))
@@ -201,4 +221,89 @@ test('ordinary browsers do not offer a desktop package update', async () => {
   const f = fixture({ host: false })
   f.openMore()
   assert.equal(f.item(), undefined)
+})
+
+test('each reopen refreshes both results, and pending checks survive closing', async () => {
+  const desktop = deferred(), dsh = deferred()
+  const f = fixture({ checkDesktop: () => desktop.promise, check: () => dsh.promise })
+  f.openDialog(); f.closeDialog(); f.openDialog()
+  assert.equal(f.desktopCalls().length, 1)
+  assert.equal(f.updateCalls().length, 1)
+  desktop.resolve(desktopRelease); dsh.resolve({ current: tags.latest, ...tags }); await flush()
+  f.closeDialog(); f.openDialog()
+  assert.equal(f.desktopCalls().length, 2)
+  assert.equal(f.updateCalls().length, 2)
+  await flush()
+})
+
+test('a failed desktop check leaves dsh usable and retries only the selected component', async () => {
+  let attempts = 0
+  const f = fixture({ checkDesktop: async () => {
+    if (++attempts === 1) throw Error('GitHub unavailable')
+    return desktopRelease
+  } })
+  f.openDialog(); await flush()
+  assert.equal(f.status(), '软件更新检测失败')
+  assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('GitHub unavailable')))
+  f.selectTab('dsh')
+  assert.equal(f.status(), 'dsh 已是最新版')
+  assert.equal(f.button('最新预览版').props.disabled, false)
+  f.selectTab('desktop')
+  const retry = f.button('重新检测').props.onClick
+  retry(); retry(); await flush()
+  assert.equal(f.desktopCalls().length, 2)
+  assert.equal(f.updateCalls().length, 1)
+  assert.equal(f.status(), '发现新版本')
+})
+
+test('desktop release details, empty results and current versions render distinct states', async () => {
+  for (const [release, status, button] of [
+    [desktopRelease.release, '发现新版本', '前往下载'],
+    [{ ...desktopRelease.release, updateAvailable: false }, '当前已是最新版本', '查看发布页'],
+    [null, '暂无已发布版本', null],
+  ]) {
+    const f = fixture({ checkDesktop: async () => ({ current: '0.1.0', release }) })
+    f.openDialog(); await flush()
+    assert.equal(f.status(), status)
+    if (button) assert.equal(f.button(button).props.disabled, false)
+    else assert.equal(f.button('前往下载'), undefined)
+    assert.ok(f.render().some(node => node.type === 'code' && node.props.children.includes('0.1.0')))
+    if (release) assert.ok(f.render().some(node => node.props.children.includes(release.notes)))
+  }
+})
+
+test('release opening is explicit, exclusive and recovers from errors without losing check results', async () => {
+  const pending = deferred()
+  const f = fixture({ openRelease: () => pending.promise })
+  f.openDialog(); await flush()
+  assert.equal(f.calls.some(call => call.command === 'open_desktop_release'), false)
+  const open = f.button('前往下载').props.onClick
+  open(); open()
+  const calls = f.calls.filter(call => call.command === 'open_desktop_release')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].args.url, desktopRelease.release.url)
+  assert.equal(f.button('正在打开…').props.disabled, true)
+  pending.reject(Error('browser unavailable')); await flush()
+  assert.equal(f.status(), '发现新版本')
+  assert.equal(f.button('前往下载').props.disabled, false)
+  assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('browser unavailable')))
+})
+
+test('tabs support arrow and Home/End navigation with associated panels', async () => {
+  const f = fixture()
+  f.openDialog(); await flush()
+  for (const [key, next] of [['ArrowRight', 'dsh'], ['Home', 'desktop'], ['End', 'dsh'], ['ArrowLeft', 'desktop']]) {
+    const active = f.tab('desktop').props['aria-selected'] ? 'desktop' : 'dsh'
+    let prevented = false
+    f.tab(active).props.onKeyDown({ key, preventDefault() { prevented = true } })
+    assert.equal(prevented, true)
+    assert.equal(f.tab(next).props['aria-selected'], true)
+    assert.equal(f.tab(next).props.tabIndex, 0)
+    assert.equal(f.focused.at(-1), f.tab(next).props.id)
+    const panel = f.render().find(node => node.props.id === f.tab(next).props['aria-controls'])
+    assert.equal(panel.props.hidden, false)
+    assert.equal(panel.props['aria-labelledby'], f.tab(next).props.id)
+  }
+  assert.equal(f.desktopCalls().length, 1)
+  assert.equal(f.updateCalls().length, 1)
 })

@@ -132,6 +132,8 @@ DeepseekHarness Desktop 就是围绕这些日常操作做的增强。它启动 d
 
 进入界面后，按 dsh 的正常流程配置模型服务、API 信息和工作目录，创建或打开会话即可使用。桌面增强会随本应用加载，无需另外安装通知 Hook。
 
+系统通知会在首次启动时自动创建当前用户的 `DeepseekHarness Desktop` 开始菜单快捷方式，单文件版也无需先安装。后续启动只检查通知身份、EXE 路径和图标；快捷方式正确时不会重写，缺失、损坏或 EXE 移动后才修复。通知仍遵循 Windows 的通知开关和勿扰设置。
+
 ### 3. 使用常用增强
 
 - 在 **设置 → 外观** 调整主题、字号、背景、材质和标题栏。
@@ -198,6 +200,16 @@ npm run build          # 构建桌面程序与 NSIS 安装包
 ```
 
 开发和正式构建已通过 Tauri 钩子自动执行前端资源构建。`tools/` 中另有真实 dsh、终端、远程访问和页面恢复等集成检查脚本，应按变更范围选用；普通单元测试通过不等于所有版本的实机兼容性都已验证。
+
+Windows 原生通知可单独验证（会发送一条测试通知，临时开始菜单快捷方式与测试通知会自动清理）：
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml --features single live_windows_notification -- --ignored --nocapture --test-threads=1
+```
+
+关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/single/deepseek-harness-desktop.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
+
+设置环境变量 `DSH_DESKTOP_DEBUG` 为日志文件路径后启动 EXE，可查看通知注册、提交与失败记录。`[notify/registration] unchanged` 表示复用了已有注册，`[notify/submitted]` 表示系统接受了提交；是否显示横幅仍由 Windows 决定。
 
 ### 生成分发包
 

@@ -1,22 +1,69 @@
 //! Delivering notifications to Windows.
 //!
-//! Kept behind a small trait so the transport can change (the Tauri plugin today,
-//! a direct WinRT call later) without touching the call sites that decide *when*
-//! to notify.
+//! Windows uses a registered shortcut and direct WinRT calls, so portable and
+//! single-file builds have an identity and actual submission errors reach us.
+//! The event sources remain independent of the native transport.
+
+#[cfg(windows)]
+mod windows;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+#[cfg(not(windows))]
 use tauri_plugin_notification::NotificationExt;
+
+#[cfg(windows)]
+struct NativeNotifications(Result<windows::NotificationService, String>);
+
+pub fn initialize(app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        match windows::register(&app.config().identifier) {
+            Ok(registration) => crate::debug_log(&format!(
+                "[notify/registration] {} {}",
+                if registration.changed {
+                    "updated"
+                } else {
+                    "unchanged"
+                },
+                registration.shortcut.display(),
+            )),
+            Err(error) => {
+                crate::debug_log(&format!("[notify/registration-failed] {error}"));
+                if let Ok(mut state) = app.state::<crate::state::Shared>().lock() {
+                    state.push_log(format!("通知注册失败：{error}"));
+                }
+            }
+        }
+        let state = app.state::<crate::state::Shared>().inner().clone();
+        app.manage(NativeNotifications(windows::NotificationService::start(
+            app.config().identifier.clone(),
+            move |event| match event {
+                windows::DeliveryEvent::Failed(error) => {
+                    crate::debug_log(&format!("[notify/failed] {error}"));
+                    if let Ok(mut state) = state.lock() {
+                        state.push_log(format!("通知发送失败：{error}"));
+                    }
+                }
+                windows::DeliveryEvent::Dismissed => crate::debug_log("[notify/dismissed]"),
+                windows::DeliveryEvent::Activated => crate::debug_log("[notify/activated]"),
+            },
+        )));
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+}
 
 /// Something that can raise an OS notification.
 pub trait Notifier: Send + Sync {
-    /// Show one notification. Implementations must not panic on failure.
+    /// Submit one notification. Success does not guarantee a visible banner:
+    /// Windows notification settings and Do Not Disturb still apply.
     fn notify(&self, title: &str, body: &str) -> Result<(), String>;
 }
 
-/// The production notifier, backed by `tauri-plugin-notification`.
+/// The production notifier, using WinRT on Windows.
 pub struct ToastNotifier {
     app: AppHandle,
 }
@@ -43,13 +90,25 @@ impl Notifier for ToastNotifier {
         };
         let title = crate::locale::text(&self.app, title, english);
         let body = truncate(body, MAX_BODY_CHARS);
-        self.app
-            .notification()
-            .builder()
-            .title(title)
-            .body(body)
-            .show()
-            .map_err(|error| error.to_string())
+        #[cfg(windows)]
+        {
+            let notifications = self.app.state::<NativeNotifications>();
+            notifications
+                .0
+                .as_ref()
+                .map_err(Clone::clone)?
+                .submit(&title, &body)
+        }
+        #[cfg(not(windows))]
+        {
+            self.app
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show()
+                .map_err(|error| error.to_string())
+        }
     }
 }
 

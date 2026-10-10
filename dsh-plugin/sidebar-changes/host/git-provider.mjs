@@ -3,15 +3,16 @@ import path from 'node:path'
 import { LIMITS, diffText, unknownDiff } from '../shared/change-model.mjs'
 import { hash, relative, readEndpoint, decode, absent, rootPath } from './paths.mjs'
 
-export function git(cwd, args, signal, input) {
+export function git(cwd, args, signal, input, environment = {}) {
   return new Promise((resolve, reject) => {
     const child = execFile('git', ['--no-pager', '--literal-pathspecs', '-c', 'core.quotepath=false', ...args], {
       cwd, windowsHide: true, shell: false, encoding: 'buffer', timeout: 15000, maxBuffer: 8 * 1024 * 1024,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1' }, signal,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_NO_LAZY_FETCH: '1', ...environment }, signal,
     }, (error, stdout, stderr) => {
       if (error) { error.gitMessage = stderr?.toString('utf8') || ''; reject(error) }
       else resolve(stdout)
     })
+    child.stdin?.on('error', () => {})
     child.stdin?.end(input)
   })
 }
@@ -54,14 +55,15 @@ async function base(repo, signal) {
     return (await git(repo, ['hash-object', '-t', 'tree', '--stdin'], signal, '')).toString().trim()
   }
 }
-export async function listGit(root, source, signal) {
+export async function listGit(root, source, signal, environment = {}) {
+  const query = (cwd, args, cancellation) => git(cwd, args, cancellation, undefined, environment)
   root = await rootPath(root)
   const available = await availability(root, signal)
   if (available.status !== 'available') throw Error(available.reason)
   const repo = available.root, head = await base(repo, signal)
   const args = ['diff', '--raw', '-z', '--no-abbrev', '--no-ext-diff', '--no-textconv', '--find-renames', ...(source === 'staged' ? ['--cached'] : []), head, '--']
-  const raw = await git(repo, args, signal), candidates = rawEntries(raw)
-  const unmerged = await git(repo, ['ls-files', '--unmerged', '-z'], signal)
+  const raw = await query(repo, args, signal), candidates = rawEntries(raw)
+  const unmerged = await query(repo, ['ls-files', '--unmerged', '-z'], signal)
   const conflicts = new Set(unmerged.toString('utf8').split('\0').filter(Boolean).map(record => record.slice(record.indexOf('\t') + 1)))
   for (const file of conflicts) {
     const item = candidates.find(item => item.path === file)
@@ -69,7 +71,7 @@ export async function listGit(root, source, signal) {
     else candidates.push({ path: file, beforePath: file, beforeMode: '000000', afterMode: '000000', beforeOid: '0', afterOid: '0', status: 'U' })
   }
   const untrackedArgs = ['ls-files', '--others', '--exclude-standard', '-z']
-  const untracked = source === 'working' ? await git(repo, untrackedArgs, signal) : Buffer.alloc(0)
+  const untracked = source === 'working' ? await query(repo, untrackedArgs, signal) : Buffer.alloc(0)
   for (const file of untracked.toString('utf8').split('\0').filter(Boolean)) candidates.push({ path: file, beforePath: file, beforeMode: '000000', afterMode: '100644', beforeOid: '0', afterOid: '0', status: 'A' })
   const unique = new Map()
   for (const item of candidates) if (!unique.has(item.path) || item.status === 'U') unique.set(item.path, item)
@@ -90,7 +92,7 @@ export async function listGit(root, source, signal) {
     let status = !before.exists ? 'added' : !after.exists ? 'deleted' : item.status === 'R' ? 'renamed' : 'modified'
     const reason = item.status === 'U' ? 'conflict' : before.reason || after.reason
     if (reason === 'conflict' || reason === 'submodule' || reason === 'symlink') status = reason
-    if (!reason && before.exists === after.exists && before.mode === after.mode && status !== 'renamed' && before.text.replace(/\r\n/g, '\n') === after.text.replace(/\r\n/g, '\n')) continue
+    if (!reason && before.exists === after.exists && before.mode === after.mode && status !== 'renamed' && before.hash === after.hash) continue
     const diff = reason ? unknownDiff(reason) : diffText(before.text, after.text)
     bytes += Buffer.byteLength(before.text || '') + Buffer.byteLength(after.text || '')
     if (bytes > LIMITS.scanBytes) throw Error('large')
@@ -101,8 +103,8 @@ export async function listGit(root, source, signal) {
   }
   // Refuse a changing index/HEAD/file inventory. Details subsequently use these
   // immutable endpoints, rather than rereading a newer index or working file.
-  if (head !== await base(repo, signal) || !raw.equals(await git(repo, args, signal)) || source === 'working' && !untracked.equals(await git(repo, untrackedArgs, signal))) throw Error('stale')
-  if (!unmerged.equals(await git(repo, ['ls-files', '--unmerged', '-z'], signal))) throw Error('stale')
+  if (head !== await base(repo, signal) || !raw.equals(await query(repo, args, signal)) || source === 'working' && !untracked.equals(await query(repo, untrackedArgs, signal))) throw Error('stale')
+  if (!unmerged.equals(await query(repo, ['ls-files', '--unmerged', '-z'], signal))) throw Error('stale')
   if (source === 'working') for (const entry of entries) {
     if (entry.reason === 'conflict') continue
     const latest = await readEndpoint(root, entry.path)

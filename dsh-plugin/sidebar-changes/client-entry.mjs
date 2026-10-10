@@ -3,6 +3,7 @@ import { contribution, LABELS, VIEWS, REASONS } from './shared/change-model.mjs'
 import { createStateProvider, createViewStates, migrateFileIds } from './client-state.mjs'
 import { createHistoryView } from './history-view.mjs'
 import { createSessionDetails } from './session-details.mjs'
+import { createGitActions } from './git-actions.mjs'
 
 const ID = '@dsh-desktop/sidebar-changes', KIND = 'desktop-changes', PREFIX = 'dsh-resource://desktop-changes/'
 const STATUS = { get added() { return t('新增') }, get deleted() { return t('删除') }, get renamed() { return t('重命名') }, get modified() { return t('修改') }, get restored() { return t('已恢复原状') }, get conflict() { return t('合并冲突') }, get submodule() { return t('子模块') }, get symlink() { return t('符号链接') } }
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         source === 'session' && entry.operationCount > 0 && h(SessionDetails, { ctx, sessionId, entry, revision, signal })))
   }
   const SessionDetails = createSessionDetails(React, primitives, { call, message, Placeholder, DiffRows, stats })
+  const GitActions = createGitActions(React, primitives)
   const HistoryView = createHistoryView(React, primitives, { SourceMenu, Placeholder, StatusTag, call, message })
   function Panel(props) {
       useLocale(React)
@@ -171,7 +173,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         if (source !== 'session' && cap.gitAvailability.status !== 'available') { onSourceChange('session'); return }
         const value = await call(ctx, 'listChanges', sessionId, source, signal)
         if (signal.aborted || value.sessionId !== sessionId || value.source !== source || value.workspaceRoot !== root.current) return
-        setData(value)
+        setData({ ...value, endpointId: cap.endpointId })
         if (retryDetails.current) { retryDetails.current = false; setDetailAttempt(attempt => attempt + 1) }
         setExpanded(current => migrateFileIds(current, [...value.entries, ...(value.restoredEntries || [])]))
       }).catch(error => { if (!signal.aborted) setError(message(error)) }).finally(() => { if (!signal.aborted) { fetching.current = false; setLoading(false) } })
@@ -183,6 +185,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       const invalidate = () => { clearTimeout(debounce); debounce = setTimeout(() => setRefresh(n => n + 1), 250) }
       const focus = () => { if (!document.hidden && !fetching.current) invalidate() }
       window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus)
+      window.addEventListener('dsh-desktop:git-changed', invalidate)
       const timer = setInterval(focus, source === 'session' ? 30000 : 5000)
       if (source === 'session') (async () => {
         try {
@@ -191,7 +194,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
           for await (const value of stream) { if (own.signal.aborted) break; if (!first) invalidate(); first = false }
         } catch { /* Focus and low-frequency refresh remain available after transport interruption. */ }
       })()
-      return () => { own.abort(); clearTimeout(debounce); clearInterval(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
+      return () => { own.abort(); clearTimeout(debounce); clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('dsh-desktop:git-changed', invalidate); document.removeEventListener('visibilitychange', focus) }
     }, [sessionId, source, tab.visible])
     React.useLayoutEffect(() => { if (data) restoreScroll() }, [Boolean(data), expanded])
     const changeSource = value => {
@@ -219,10 +222,12 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         h('div', { className: 'dshChanges__scope' },
           h(SourceMenu, { source, capabilities, onChange: changeSource, visible: tab.visible }),
           noGit && h(StatusTag, { label: git.reason }, git.status === 'none' ? t('非 Git 仓库') : git.status === 'missing' ? t('Git 未安装') : t('Git 不可用'))),
-        Boolean(data?.entries.length) && h('div', { className: 'dshChanges__summary', 'aria-label': t("{0} 个文件", [data.entries.length]) },
-          h(Tag, { tone: 'neutral' }, data.entries.length), summary),
-        expanded.length > 0 && h(Tooltip, { label: t('全部折叠'), portal: true, side: 'bottom' },
-          h(Button, { size: 'sm', className: 'dshChanges__collapse', 'aria-label': t('全部折叠'), onClick: () => { restoring.current = false; setExpanded([]) } }, h(ChevronUp, { size: 14 })))),
+        h('div', { className: 'dshChanges__toolbarActions' },
+          Boolean(data?.entries.length) && h('div', { className: 'dshChanges__summary', 'aria-label': t("{0} 个文件", [data.entries.length]) },
+            h(Tag, { tone: 'neutral' }, data.entries.length), summary),
+          h(GitActions, { ctx, sessionId, capabilities, source, data, visible: tab.visible, onStaged: () => changeSource('staged') }),
+          expanded.length > 0 && h(Tooltip, { label: t('全部折叠'), portal: true, side: 'bottom' },
+            h(Button, { size: 'sm', className: 'dshChanges__collapse', 'aria-label': t('全部折叠'), onClick: () => { restoring.current = false; setExpanded([]) } }, h(ChevronUp, { size: 14 }))))),
       data?.coverageEvents?.length > 0 && h('details', { className: 'dshChanges__coverage' },
         h('summary', null, t('查看采集范围')),
         data.coverageEvents.map((event, index) => h('div', { key: index },

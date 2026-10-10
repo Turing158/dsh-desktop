@@ -26,6 +26,8 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
+semver = "1"
 base64 = "0.22"
 sha2 = "0.10"
 if-addrs = "0.15"
@@ -41,6 +43,9 @@ tauri-runtime = "2.11"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38.2"
 windows = { version = "0.61", features = [
+  "Data_Xml_Dom",
+  "Foundation",
+  "UI_Notifications",
   "Win32_Foundation",
   # CreateJobObjectW is gated behind Win32_Security because of its
   # SECURITY_ATTRIBUTES parameter, which we pass as null.
@@ -65,8 +70,12 @@ windows = { version = "0.61", features = [
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_WinRT",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
   "Win32_UI_WindowsAndMessaging",
 ] }
 

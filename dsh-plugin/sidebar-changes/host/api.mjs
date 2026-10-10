@@ -3,15 +3,29 @@ import path from 'node:path'
 import { rootPath, identity } from './paths.mjs'
 import { availability, listGit } from './git-provider.mjs'
 import { GitHistory } from './git-history.mjs'
+import { GitActions } from './git-actions.mjs'
+import { GitContexts, CONTEXT_PREFIX } from './git-context.mjs'
 import { endpointDiff } from './session-aggregate.mjs'
 import { SOURCES, VIEWS, BASES, REASONS, contextBlocks } from '../shared/change-model.mjs'
 
 export class ChangesApi {
-  constructor(store) { this.store = store; this.cache = new Map(); this.active = 0; this.endpointId = randomUUID(); this.history = new GitHistory() }
+  constructor(store, generator) {
+    this.store = store; this.cache = new Map(); this.active = 0; this.endpointId = randomUUID(); this.history = new GitHistory()
+    this.gitContexts = new GitContexts(this.endpointId, generator)
+    this.gitActions = new GitActions((scope, source, signal) => source === 'session' ? store.list(scope, true) : listGit(scope.root, source, signal), this.gitContexts)
+  }
+  runGitAction(scope, action, source, revision, message, committedId, signal) {
+    return this.gitActions[revision.startsWith(CONTEXT_PREFIX) || action === 'pushOnly' ? 'tracked' : 'run'](scope, action, source, revision, message, committedId, signal)
+  }
+  getGitContext(scope, source, signal) { return this.gitContexts.read(scope, source, signal) }
+  listGitBranches(scope, signal) { return this.gitContexts.branches(scope, signal) }
+  switchGitBranch(scope, branch, contextRevision, signal) { return this.gitActions.switchBranch(scope, branch, contextRevision, signal) }
+  generateCommitMessage(scope, source, contextRevision, signal) { return this.gitContexts.generate(scope, source, contextRevision, signal) }
+  getGitOperation(scope, contextRevision) { return this.gitActions.status(scope, contextRevision) }
   listCommits(scope, revision, offset, signal) { return this.history.list(scope, revision, offset, signal) }
   getCommitDetails(scope, revision, commitId, signal) { return this.history.details(scope, revision, commitId, signal) }
   async getCapabilities(scope, signal) {
-    return { workspaceRoot: scope.root, endpointId: this.endpointId, supportedViews: VIEWS, gitAvailability: await availability(scope.root, signal),
+    return { workspaceRoot: scope.root, endpointId: this.endpointId, supportedViews: VIEWS, gitAvailability: await availability(scope.root, signal), gitContextVersion: 1,
       supportedSources: SOURCES, recordingCoverage: '从开始采集起跨轮累计。文件工具保存前后内容；其他工具及其受管后台任务保存本地观察差异。扫描有时间和内容预算；原生终端、未受管后台进程及远程文件系统不能保证覆盖。观察记录不能证明修改作者。' }
   }
   key(scope, source) { return JSON.stringify([scope.sessionId, identity(scope.root), source]) }

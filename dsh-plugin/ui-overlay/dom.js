@@ -520,10 +520,11 @@
         decoratePluginStatuses()
       })
     })
-    var options = { childList: true, subtree: true }
+    // A fullscreen toggle can change positioning without mounting any nodes.
+    // Re-evaluate its chrome offset in the mutation microtask, before paint.
+    var options = { childList: true, subtree: true, attributes: true, attributeFilter: ['data-sidebar-right-panel'] }
     if (isRemotePage()) {
-      options.attributes = true
-      options.attributeFilter = ['data-sidebar-right-open', 'hidden', 'aria-selected']
+      options.attributeFilter.push('data-sidebar-right-open', 'hidden', 'aria-selected')
       window.addEventListener('resize', syncRemotePanelChrome)
     }
     observer.observe(document.body, options)
@@ -575,8 +576,8 @@
    *
    * WHY A ROLE SELECTOR. The alternative is `getComputedStyle` on every element
    * in the document, which measured ~1–2.4 ms over ~740 nodes — affordable twice
-   * a second, but not on every mutation frame while the agent is streaming. Every
-   * full-screen layer this app renders carries its role as part of its
+   * a second, but not on every mutation frame while the agent is streaming. Most
+   * full-screen layers this app renders carry their role as part of their
    * accessibility contract (the same reason `theme.css` keys menus on
    * `[role="menu"]`), so this set is both tiny and stable across builds:
    *
@@ -584,13 +585,14 @@
    *   role="dialog"        the image lightbox backdrop
    *   aria-modal="true"    the same, stated the other way
    *   role="status"        the drag-and-drop mask
+   *   data-sidebar-right-panel  the sidebar, fixed in older frontend versions
    *
    * It is a PRE-filter, not the test: the real question is the computed inset
    * (see {@link isFullSurfaceLayer}). A backstop sweep of the whole document runs
    * on the periodic pass, so a future layer without a role is still caught within
    * two seconds rather than never.
    */
-  var LAYER_CANDIDATES = '[role="presentation"], [role="dialog"], [aria-modal="true"], [role="status"]'
+  var LAYER_CANDIDATES = '[role="presentation"], [role="dialog"], [aria-modal="true"], [role="status"], [data-sidebar-right-panel]'
 
   /**
    * Whether an element is a full-surface layer, judged by its INSET.

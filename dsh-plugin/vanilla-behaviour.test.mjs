@@ -464,9 +464,10 @@ function createSandbox(document) {
     MutationObserver: class {
       constructor(callback) {
         this.callback = callback
+        this.observations = []
         observers.push(this)
       }
-      observe() {}
+      observe(target, options = {}) { this.observations.push({ target, options }) }
       disconnect() {}
     },
     KeyboardEvent: class {
@@ -532,6 +533,19 @@ function createSandbox(document) {
     for (const observer of observers.slice()) observer.callback([])
     const pending = frames.splice(0)
     for (const fn of pending) fn(0)
+  }
+
+  // Deliver only subscribed attribute records, without advancing a paint or
+  // periodic pass. This catches changes missed by a child-list-only observer.
+  sandbox.deliverAttribute = (target, attributeName) => {
+    const record = { type: 'attributes', target, attributeName }
+    for (const observer of observers.slice()) {
+      if (observer.observations.some(({ target: root, options }) => options.attributes
+        && (root === target || options.subtree && root.contains(target))
+        && (!options.attributeFilter || options.attributeFilter.includes(attributeName)))) {
+        observer.callback([record])
+      }
+    }
   }
 
   /**
@@ -1334,12 +1348,39 @@ test('a role-less full-surface layer is still caught, by the sweep', () => {
 
 // ── the tag is retired when a layer stops being full-surface ────────────────
 
-test('the right panel retires its layer tag when it docks back from fullscreen', () => {
+for (const mode of ['desktop', 'vanilla']) {
+  test(`sidebar mode changes apply chrome only to viewport-fixed panels before paint (${mode})`, () => {
+    const { document, frame } = createPage()
+    document.documentElement.setAttribute('data-dsh-ui', mode)
+    const panel = new FakeElement('div', 'P3OORG_panel')
+    panel.setAttribute('data-sidebar-right-panel', 'push')
+    panel.setAttribute('data-position', 'absolute')
+    panel.setAttribute('data-inset', '0')
+    frame.append(panel)
+    const sandbox = runOverlay(document)
+
+    // Current frontends remain absolute in fullscreen; older ones become fixed.
+    // Both must settle correctly on the attribute mutation, without a timer.
+    for (const position of ['absolute', 'fixed']) {
+      panel.setAttribute('data-position', position)
+      panel.setAttribute('data-sidebar-right-panel', 'fullscreen')
+      sandbox.deliverAttribute(panel, 'data-sidebar-right-panel')
+      assert.equal(panel.getAttribute('data-dsh-chrome'), position === 'fixed' ? 'layer' : null)
+
+      panel.setAttribute('data-position', 'absolute')
+      panel.setAttribute('data-sidebar-right-panel', 'push')
+      sandbox.deliverAttribute(panel, 'data-sidebar-right-panel')
+      assert.equal(panel.getAttribute('data-dsh-chrome'), null, 'docking must retire the viewport offset before paint')
+    }
+  })
+}
+
+test('the legacy right panel retires its layer tag when it docks back from fullscreen', () => {
   const { document, frame } = createPage()
   runOverlay(document)
 
-  // The right sidebar's panel in its FULLSCREEN shape — one element, fixed,
-  // inset 0 — modelled the way the app writes it (`dsh-client-ui-sidebar-right`:
+  // Older right sidebars used this FULLSCREEN shape — one element, fixed,
+  // inset 0 — modelled the way those frontends wrote it (`dsh-client-ui-sidebar-right`:
   // `data-sidebar-right-panel` flips between "fullscreen" and "push" on the SAME
   // node; only the position/inset change underneath it).
   const panel = new FakeElement('div', 'P3OORG_panel')
@@ -1348,8 +1389,7 @@ test('the right panel retires its layer tag when it docks back from fullscreen',
   panel.setAttribute('data-inset', '0')
   frame.append(panel)
 
-  // A later pass sees the fullscreen shape and tags it — the sweep's job, since
-  // the panel declares no ARIA role for the cheap candidate scan.
+  // A later pass still catches the fullscreen shape as a backstop.
   runOverlay(document)
   assert.equal(
     panel.getAttribute('data-dsh-chrome'),

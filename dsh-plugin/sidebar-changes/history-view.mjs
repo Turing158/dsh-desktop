@@ -127,8 +127,9 @@ export function createHistoryView(React, primitives, shared) {
       load()
       const focus = () => { if (!document.hidden) load() }
       window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus)
+      window.addEventListener('dsh-desktop:git-changed', focus)
       const timer = setInterval(focus, 5000)
-      return () => { own.abort(); busy.current = false; clearInterval(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
+      return () => { own.abort(); busy.current = false; clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('dsh-desktop:git-changed', focus); document.removeEventListener('visibilitychange', focus) }
     }, [sessionId, tab.visible, refresh])
     const reload = () => { force.current = true; setRefresh(n => n + 1) }
     async function more() {
@@ -153,7 +154,8 @@ export function createHistoryView(React, primitives, shared) {
       h('header', { className: 'dshChanges__toolbar' },
         h('div', { className: 'dshChanges__scope' }, h(SourceMenu, { source: 'history', capabilities, onChange: onSourceChange, visible: tab.visible }),
           data?.shallow && h(StatusTag, { label: t('浅克隆只包含已获取的历史，边界之外的提交暂不可见') }, t('浅克隆'))),
-        expanded.length > 0 && h(Tooltip, { label: t('全部折叠'), portal: true, side: 'bottom' }, h(Button, { className: 'dshChanges__collapse dshHistory__collapse', size: 'sm', 'aria-label': t('全部折叠'), onClick: () => { restoring.current = false; setExpanded([]) } }, h(CollapseIcon, { size: 14 })))),
+        expanded.length > 0 && h('div', { className: 'dshChanges__toolbarActions' },
+          h(Tooltip, { label: t('全部折叠'), portal: true, side: 'bottom' }, h(Button, { className: 'dshChanges__collapse dshHistory__collapse', size: 'sm', 'aria-label': t('全部折叠'), onClick: () => { restoring.current = false; setExpanded([]) } }, h(CollapseIcon, { size: 14 }))))),
       error && h(Placeholder, { error: true, retry: reload, busy: loading }, error),
       !data && loading && !error && h(Placeholder, null, t('正在加载提交记录…')),
       data && h('div', { className: 'dshChanges__list dshHistory__list', ref: viewport, onScroll: saveScroll,

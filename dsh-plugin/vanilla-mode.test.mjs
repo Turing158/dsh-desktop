@@ -1276,20 +1276,11 @@ test('the layer offset is tagged as chrome, so it survives 原版', () => {
   )
 })
 
-test('the fullscreen right panel is offset by attribute and by scope, not only by tag', () => {
+test('viewport layers inside the app use a scoped titlebar offset', () => {
   const css = read('css')
 
-  // THE REPORTED BUG. The right sidebar's fullscreen opening is the app's own rule
-  // `.P3OORG_panel[data-sidebar-right-panel=fullscreen] { position:fixed; inset:0 }`
-  // — specificity (0,2,0). The original layer offset, `html body [data-dsh-chrome='layer']`,
-  // is (0,1,2), and class/attribute count is compared BEFORE type count, so the
-  // app's `top: 0` outvoted the offset: the fullscreen panel kept the bar's strip
-  // and its tab strip — the row with the 全屏 button — sat under the bar, unseen
-  // and unclickable.
-  //
-  // Both replacements therefore scope under `#root`: the id outranks any number of
-  // class-level selectors, and the panel (like every in-root layer) really is a
-  // `#root` descendant, so the scope matches without weakening anything.
+  // Native layer selectors can combine a class and an attribute. An id scope
+  // wins over those rules even when their inset declaration is loaded later.
   const scopedLayer = css.indexOf("html body #root [data-dsh-chrome='layer']")
   assert.ok(scopedLayer > 0, 'the layer offset must exist one scope deeper, under #root')
   const scopedLayerRule = css.slice(scopedLayer, css.indexOf('}', scopedLayer))
@@ -1298,25 +1289,8 @@ test('the fullscreen right panel is offset by attribute and by scope, not only b
     'the scoped layer rule must move the top edge like the original',
   )
 
-  // The panel is ALSO keyed on the app's own attribute, not only on the tag. The
-  // tag needs a pass to arrive — the cheap candidate scan keys on ARIA roles and
-  // the panel declares none — so a tag-keyed fix would land up to WATCH_MS after
-  // the click, as a visible jump. The attribute is written by React in the same
-  // commit as the switch, so the offset applies in the same frame.
-  const panelAt = css.indexOf("html body #root [data-sidebar-right-panel='fullscreen']")
-  assert.ok(panelAt > 0, 'the fullscreen panel must be offset by its own attribute')
-  const panelRule = css.slice(panelAt, css.indexOf('}', panelAt))
-  assert.ok(
-    /top:\s*var\(--dsh-desktop-titlebar-height/.test(panelRule),
-    'the panel rule must move the top edge',
-  )
-  assert.ok(!/padding/.test(panelRule), 'and must not use padding, like the layer rule')
-  assert.ok(!/!important/.test(panelRule), 'the id scope already wins; no !important')
-  assert.ok(!panelRule.includes('data-dsh-ui'), 'the panel rule must hold in 原版, where the bar also exists')
-
-  // And the offset must be the ONLY thing this rule moves: `right`/`bottom`/`left`
-  // stay with the app's own `inset: 0`, so the panel still spans its container.
-  assert.ok(!/inset/.test(panelRule), 'the panel rule must not restate the inset')
+  assert.ok(!/padding|!important/.test(scopedLayerRule))
+  assert.ok(!scopedLayerRule.includes('data-dsh-ui'), 'window chrome also applies in 原版')
 })
 
 test('the dialog layer is identified by inset, not by parent or size', () => {

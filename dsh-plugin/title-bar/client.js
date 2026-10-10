@@ -989,7 +989,7 @@ var React = require('react')
       return t('dsh 可更新')
     }
 
-    function moreItems(mode, update) {
+    function moreItems(mode) {
       var vanilla = mode === 'vanilla'
       return [
         {
@@ -998,7 +998,7 @@ var React = require('react')
           icon: h(vanilla ? IconStyles : IconRestore),
         },
         { id: 'settings', label: t('设置'), icon: h(IconSettings) },
-        { id: 'dsh-update', label: updateLabel(update), icon: h(IconRestore), disabled: update.busy === 'check' },
+        { id: 'dsh-update', label: t('检测更新...'), icon: h(IconRestore) },
         { id: 'about', label: t('关于'), icon: h(IconQuestion) },
       ]
     }
@@ -1321,18 +1321,12 @@ var React = require('react')
       )
     }
 
-    function DshUpdateDialog(props) {
-      useLocale(React)
+    function DshUpdateFooter(props) {
       var update = props.update
       var versions = update.versions
       var sameVersion = versions && versions.latest === versions.next
       var blocked = Boolean(update.busy) || !versions
-      return h(Modal, {
-        open: true,
-        onClose: props.onClose,
-        title: t('dsh 更新'),
-        closeLabel: t('关闭'),
-        footer: h(React.Fragment, null,
+      return h(React.Fragment, null,
           h(Button, {
             variant: 'primary',
             disabled: blocked || versions.current === versions.latest,
@@ -1343,8 +1337,14 @@ var React = require('react')
             disabled: blocked || versions.current === versions.next,
             onClick: function () { props.onInstall('next') },
           }, t('最新预览版')),
-        ),
-      }, h('div', { className: 'dshTb__dialogField dshTb__update', 'aria-busy': Boolean(update.busy) },
+      )
+    }
+
+    function DshUpdatePanel(props) {
+      var update = props.update
+      var versions = update.versions
+      var sameVersion = versions && versions.latest === versions.next
+      return h('div', { className: 'dshTb__dialogField dshTb__update', 'aria-busy': Boolean(update.busy) },
         h('div', { className: 'dshTb__updateHeader' },
           h('div', { role: 'status', 'aria-live': 'polite' }, updateLabel(update)),
           h(Button, { variant: 'outline', className: 'dshTb__recheck', disabled: Boolean(update.busy), onClick: props.onCheck }, t('重新检测')),
@@ -1364,7 +1364,95 @@ var React = require('react')
           : null,
         update.message ? h('p', { className: 'dshTb__aboutText', role: 'status' }, update.message) : null,
         update.error ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, update.error) : null,
-      ))
+      )
+    }
+
+    function desktopUpdateLabel(update) {
+      if (update.busy === 'check') return t('正在检测软件更新…')
+      if (update.error) return t('软件更新检测失败')
+      if (!update.result) return t('检测软件更新')
+      if (!update.result.release) return t('暂无已发布版本')
+      return update.result.release.updateAvailable ? t('发现新版本') : t('当前已是最新版本')
+    }
+
+    function DesktopUpdatePanel(props) {
+      var update = props.update
+      var result = update.result
+      var release = result && result.release
+      var date = release && release.publishedAt ? new Date(release.publishedAt) : null
+      var published = date && !Number.isNaN(date.getTime())
+        ? date.toLocaleDateString(window.__DSH_I18N__?.locale || 'zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }) : null
+      return h('div', { className: 'dshTb__dialogField dshTb__desktopUpdate', 'aria-busy': update.busy === 'check' },
+        h('div', { className: 'dshTb__desktopStatus' },
+          h('div', { className: 'dshTb__aboutMark', 'aria-hidden': 'true' }, h(Logo)),
+          h('div', { className: 'dshTb__desktopStatusText' },
+            h('strong', { role: 'status', 'aria-live': 'polite' }, desktopUpdateLabel(update)),
+            h('span', null, 'DeepseekHarness Desktop'),
+          ),
+        ),
+        h('dl', { className: 'dshTb__versions dshTb__desktopVersions' },
+          h('dt', null, t('当前版本')),
+          h('dd', null, h('code', { className: 'dshTb__versionTag' }, result ? result.current : props.version || '—')),
+          h('dt', null, t('最新版本')),
+          h('dd', null, release ? h(React.Fragment, null,
+            h('code', { className: 'dshTb__versionTag' }, release.version),
+            release.prerelease ? h('span', { className: 'dshTb__recommendation' }, t('预览版')) : null,
+          ) : '—'),
+          published ? h(React.Fragment, null, h('dt', null, t('发布时间')), h('dd', null, published)) : null,
+        ),
+        update.error ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, t(update.error)) : null,
+        update.openError ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, t(update.openError)) : null,
+        release ? h('section', { className: 'dshTb__releaseNotes', 'aria-label': t('更新说明') },
+          h('div', { className: 'dshTb__releaseHeading' }, h('h3', null, t('更新说明')), h('span', null, release.name)),
+          h('div', { className: 'dshTb__releaseBody', tabIndex: 0 },
+            release.notes && primitives.MarkdownText ? h(primitives.MarkdownText, {
+              text: release.notes, variant: 'compact', labels: { code: { copyLabel: t('复制'), copiedLabel: t('已复制') }, footnotes: t('脚注') },
+            }) : h('p', { className: 'dshTb__releasePlain' }, release.notes || t('此版本未提供更新说明。')),
+          ),
+        ) : h('p', { className: 'dshTb__aboutText' }, update.busy === 'check'
+          ? t('正在获取最新发布信息…') : t('软件版本信息来自 GitHub Releases。')),
+      )
+    }
+
+    function UpdateDialog(props) {
+      useLocale(React)
+      var desktop = props.tab === 'desktop'
+      var release = props.desktopUpdate.result && props.desktopUpdate.result.release
+      var tabs = [
+        { id: 'desktop', label: t('软件更新'), busy: props.desktopUpdate.busy === 'check', available: !props.desktopUpdate.error && release && release.updateAvailable },
+        { id: 'dsh', label: t('dsh 更新'), busy: Boolean(props.update.busy), available: !props.update.error && props.update.versions && props.update.versions.current !== props.update.versions.latest && props.update.versions.current !== props.update.versions.next },
+      ]
+      function onTabKey(event) {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+        event.preventDefault()
+        var next = event.key === 'Home' ? 'desktop' : event.key === 'End' ? 'dsh' : desktop ? 'dsh' : 'desktop'
+        props.onTab(next)
+        document.getElementById('dsh-update-tab-' + next)?.focus()
+      }
+      return h(Modal, {
+        open: true, onClose: props.onClose, title: t('检测更新'), closeLabel: t('关闭窗口'),
+        className: 'dshTb__updateDialog', contentClassName: 'dshTb__updateContent',
+        footer: desktop ? h(React.Fragment, null,
+          h('span', { className: 'dshTb__updateSource' }, 'GitHub Releases'),
+          h(Button, { variant: 'outline', disabled: Boolean(props.desktopUpdate.busy), onClick: props.onCheckDesktop }, t('重新检测')),
+          release ? h(Button, { variant: release.updateAvailable ? 'primary' : 'outline', disabled: Boolean(props.desktopUpdate.busy), onClick: props.onOpenRelease },
+            props.desktopUpdate.busy === 'open' ? t('正在打开…') : release.updateAvailable ? t('前往下载') : t('查看发布页')) : null,
+        ) : h(DshUpdateFooter, { update: props.update, onInstall: props.onInstall }),
+      },
+        h('div', { className: 'dshTb__updateTabs', role: 'tablist', 'aria-label': t('更新组件') }, tabs.map(function (tab) {
+          return h('button', {
+            key: tab.id, type: 'button', role: 'tab', id: 'dsh-update-tab-' + tab.id,
+            'aria-controls': 'dsh-update-panel-' + tab.id, 'aria-selected': props.tab === tab.id,
+            tabIndex: props.tab === tab.id ? 0 : -1, 'data-modal-autofocus': props.tab === tab.id ? '' : undefined,
+            className: 'dshTb__updateTab', onClick: function () { props.onTab(tab.id) }, onKeyDown: onTabKey,
+          }, tab.label, tab.busy ? h('span', { className: 'dshTb__updateSpinner', role: 'img', 'aria-label': t('检测中') })
+            : tab.available ? h('span', { className: 'dshTb__updateDot', role: 'img', 'aria-label': t('有可用更新') }) : null)
+        })),
+        h('div', { role: 'tabpanel', id: 'dsh-update-panel-desktop', 'aria-labelledby': 'dsh-update-tab-desktop', hidden: !desktop, tabIndex: 0 },
+          desktop ? h(DesktopUpdatePanel, { update: props.desktopUpdate, version: props.version }) : null),
+        h('div', { role: 'tabpanel', id: 'dsh-update-panel-dsh', 'aria-labelledby': 'dsh-update-tab-dsh', hidden: desktop, tabIndex: 0 },
+          desktop ? null : h(DshUpdatePanel, { update: props.update, onCheck: props.onCheck })),
+      )
     }
 
     /** Browser-only drawer dismissal and the selected Session's loading state. */
@@ -1548,6 +1636,14 @@ var React = require('react')
       var setUpdateOpen = updateOpenState[1]
       // Block repeated clicks before React has committed the disabled state.
       var updatePending = React.useRef(false)
+      var desktopUpdateState = React.useState({ busy: null, result: null, error: null })
+      var desktopUpdate = desktopUpdateState[0]
+      var setDesktopUpdate = desktopUpdateState[1]
+      var desktopUpdatePending = React.useRef(false)
+      var updateTabState = React.useState('desktop')
+      var updateTab = updateTabState[0]
+      var setUpdateTab = updateTabState[1]
+      var updateVisible = React.useRef(false)
 
       // ---- the theme switch (remote page) ----------------------------------
 
@@ -1610,6 +1706,38 @@ var React = require('react')
         }
       }
 
+      async function checkDesktopUpdate() {
+        if (desktopUpdatePending.current) return
+        desktopUpdatePending.current = true
+        setDesktopUpdate(function (previous) { return { busy: 'check', result: previous.result, error: null } })
+        try {
+          if (!hasHost()) throw new Error(t('请在当前桌面应用中检测软件更新。'))
+          var result = await invokeHost('check_desktop_update')
+          if (!result || !result.current || !Object.prototype.hasOwnProperty.call(result, 'release')) throw new Error(t('未能读取软件版本，请重新检测。'))
+          setAppVersion(result.current)
+          setDesktopUpdate({ busy: null, result: result, error: null })
+        } catch (error) {
+          setDesktopUpdate({ busy: null, result: null, error: String((error && error.message) || error) })
+        } finally {
+          desktopUpdatePending.current = false
+        }
+      }
+
+      async function openDesktopRelease() {
+        var release = desktopUpdate.result && desktopUpdate.result.release
+        if (!release || desktopUpdatePending.current) return
+        desktopUpdatePending.current = true
+        setDesktopUpdate(Object.assign({}, desktopUpdate, { busy: 'open', openError: null }))
+        try {
+          await invokeHost('open_desktop_release', { url: release.url })
+        } catch (error) {
+          setDesktopUpdate(function (previous) { return Object.assign({}, previous, { openError: String((error && error.message) || error) }) })
+        } finally {
+          desktopUpdatePending.current = false
+          setDesktopUpdate(function (previous) { return Object.assign({}, previous, { busy: null }) })
+        }
+      }
+
       async function checkDshUpdate() {
         if (updatePending.current) return
         updatePending.current = true
@@ -1667,11 +1795,11 @@ var React = require('react')
             return Boolean(node && (node.matches?.('.dshTb__dialogField, .dshTb__about') || node.querySelector?.('.dshTb__dialogField, .dshTb__about')))
           },
           capture: function () {
-            if (renamePending || updatePending.current) throw new Error('snapshot-input-busy')
+            if (renamePending || updatePending.current || desktopUpdatePending.current) throw new Error('snapshot-input-busy')
             setOpenMenu(null)
             if (!rename && !confirm && !aboutOpen && !dshUpdate.attempted) return null
             return { rename: rename, value: renameValue, confirm: confirm, about: aboutOpen,
-              update: dshUpdate, updateOpen: updateOpen,
+              update: dshUpdate, updateOpen: updateOpen, desktopUpdate: desktopUpdate, updateTab: updateTab,
               sessionId: currentSessionId(ctx.sessions.list.getSnapshot()) || null }
           },
           restore: function (saved) {
@@ -1680,10 +1808,13 @@ var React = require('react')
             setRename(saved.rename); setRenameValue(saved.value); setRenameError(null)
             setConfirm(saved.confirm); setAboutOpen(saved.about)
             if (saved.update) setDshUpdate(saved.update)
+            if (saved.desktopUpdate) setDesktopUpdate(saved.desktopUpdate)
+            setUpdateTab(saved.updateTab === 'dsh' ? 'dsh' : 'desktop')
+            updateVisible.current = Boolean(saved.updateOpen)
             setUpdateOpen(Boolean(saved.updateOpen))
           },
         })
-      }, [rename, renameValue, renamePending, confirm, aboutOpen, dshUpdate, updateOpen])
+      }, [rename, renameValue, renamePending, confirm, aboutOpen, dshUpdate, updateOpen, desktopUpdate, updateTab])
 
       /**
        * The app's own version, for the 关于 dialog.
@@ -1740,7 +1871,7 @@ var React = require('react')
       // The version is read once, when the dialog first opens — see the state
       // declaration for why a failed read degrades to omitting the row.
       React.useEffect(function () {
-        if (!aboutOpen || appVersion !== null) return
+        if ((!aboutOpen && !updateOpen) || appVersion !== null) return
         var api = globalThis.__TAURI__
         if (!api || !api.app || typeof api.app.getVersion !== 'function') {
           setAppVersion('')
@@ -1754,7 +1885,7 @@ var React = require('react')
             setAppVersion('')
           },
         )
-      }, [aboutOpen, appVersion])
+      }, [aboutOpen, updateOpen, appVersion])
 
       /**
        * Tell the injected boot bar that the real one is on screen.
@@ -2193,15 +2324,16 @@ var React = require('react')
       function onSelect(id) {
         var which = openMenu
         if (which === 'more' && id === 'dsh-update') {
-          if (dshUpdate.busy === 'check' || (updatePending.current && !dshUpdate.busy)) return
-          if (!dshUpdate.attempted) {
-            // Leave the menu open so the disabled checking row is visible.
-            checkDshUpdate()
-          } else {
-            setOpenMenu(null)
-            setRename(null); setConfirm(null); setAboutOpen(false)
-            setUpdateOpen(true)
-          }
+          setOpenMenu(null)
+          if (updateVisible.current) return
+          updateVisible.current = true
+          setRename(null); setConfirm(null); setAboutOpen(false)
+          setUpdateTab('desktop')
+          setUpdateOpen(true)
+          // Start both immediately. Each operation owns its own pending guard,
+          // so a slow/failing check never delays the other tab or a dsh install.
+          checkDesktopUpdate()
+          checkDshUpdate()
           return
         }
         setOpenMenu(null)
@@ -2399,10 +2531,14 @@ var React = require('react')
           onClose: function () { setAboutOpen(false) },
         })
       } else if (updateOpen) {
-        dialog = h(DshUpdateDialog, {
+        dialog = h(UpdateDialog, {
           update: dshUpdate,
-          onClose: function () { setUpdateOpen(false) },
+          desktopUpdate: desktopUpdate, version: appVersion,
+          tab: updateTab, onTab: setUpdateTab,
+          onClose: function () { updateVisible.current = false; setUpdateOpen(false) },
           onCheck: checkDshUpdate,
+          onCheckDesktop: checkDesktopUpdate,
+          onOpenRelease: openDesktopRelease,
           onInstall: installDshUpdate,
         })
       }
@@ -2502,7 +2638,7 @@ var React = require('react')
                 titlebarMode === TITLEBAR_SIMPLE
                   ? null
                   : menuFor('project', t('项目'), projectItems(workspace !== undefined, canReveal)),
-                menuFor('more', t('更多'), moreItems(uiMode, dshUpdate)),
+                menuFor('more', t('更多'), moreItems(uiMode)),
               ),
           h('div', { className: 'dshTb__spacer' }),
           remote ? themeButton() : null,

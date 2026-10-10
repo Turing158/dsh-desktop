@@ -1105,8 +1105,8 @@ test('the title bar’s open actions post to the app’s own launcher route', ()
   // It must NOT go through the host bridge: the launcher is the app's, and a
   // second path would need a permission this app deliberately does not grant.
   assert.ok(
-    !/invokeHost\('open_/.test(client),
-    'the bar must not add a host command for this; the app already owns a launcher',
+    !/invokeHost\('open_/.test(client.slice(client.indexOf('function openWithApp('), client.indexOf('function openInExplorer('))),
+    'workspace launch actions must use the app launcher; release-page links use a separate host command',
   )
 
   // The folder icon comes from the app's primitives module, like every other icon
@@ -1200,8 +1200,8 @@ test('the real bar’s 关于 opens a dialog built on the app’s primitives', (
     'the version must come from the shell’s own API',
   )
   assert.ok(
-    /if \(!aboutOpen \|\| appVersion !== null\) return/.test(client),
-    'the read must happen once, when the dialog first opens',
+    /if \(\(!aboutOpen && !updateOpen\) \|\| appVersion !== null\) return/.test(client),
+    'the shared version read must happen once, when About or Updates first opens',
   )
   assert.ok(
     /setAppVersion\(''\)/.test(client),

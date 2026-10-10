@@ -15,6 +15,28 @@ export const REASONS = {
   get 'history-stale'() { return t('提交记录已过期，请重试') }, get 'history-large'() { return t('提交消息或历史数据超过读取限制') },
   get concurrent() { return t('存在重叠执行，按已记录片段展示') }, get 'legacy-scan'() { return t('历史记录的采集范围不完整') },
   get 'scan-content'() { return t('扫描内容预算不足，部分文件只记录状态') }, get excluded() { return t('部分路径按配置排除，覆盖范围有限') },
+  get 'git-busy'() { return t('当前仓库正在执行 Git 操作，请稍候。') },
+  get 'git-invalid-action'() { return t('此 Git 操作不可用，请刷新后重试。') },
+  get 'git-message'() { return t('请填写提交说明，最多 65536 个字符。') },
+  get 'git-unavailable'() { return t('当前 Git 仓库不可用，请检查工作目录。') },
+  get 'git-empty-stage'() { return t('当前视图没有可暂存的更改。') },
+  get 'git-empty-index'() { return t('暂存区没有可提交的更改。') },
+  get 'git-conflict'() { return t('请先解决合并冲突并暂存，再提交。') },
+  get 'git-other-root'() { return t('更改包含其他工作目录的文件，请切换到“未提交”后重试。') },
+  get 'git-outside-index'() { return t('暂存区包含当前工作目录之外的更改，请切换到仓库根目录后提交。') },
+  get 'git-detached'() { return t('当前处于分离 HEAD 状态，请先选择本地分支。') },
+  get 'git-no-remote'() { return t('没有可用的推送远程仓库，请先配置 Git 远程仓库。') },
+  get 'git-head-changed'() { return t('当前分支或提交已改变，请检查仓库后重新推送。') },
+  get 'git-timeout'() { return t('Git 操作超时，请检查仓库状态后重试。') },
+  get 'git-failed'() { return t('Git 操作失败，请查看错误信息后重试。') },
+  get 'git-no-head'() { return t('尚无提交，请先创建首次提交。') },
+  get 'git-up-to-date'() { return t('没有待推送的提交。') },
+  get 'git-branch-in-use'() { return t('分支正被其他工作树使用。') },
+  get 'git-generation-unavailable'() { return t('执行端未配置可用模型，请填写提交信息。') },
+  get 'git-generation-failed'() { return t('提交信息生成失败，请填写后重试。') },
+  get 'git-generation-large'() { return t('更改超过生成限制，请填写提交信息。') },
+  get 'git-result-unknown'() { return t('操作结果尚未确认，请重新检查状态。') },
+  get 'git-upgrade-required'() { return t('请更新执行端后使用提交弹窗。') },
 }
 export const unknownDiff = reason => ({ rows: [], stats: { added: null, removed: null }, reason, beforeNewline: null, afterNewline: null })
 const lines = text => { const value = text.replace(/\r\n/g, '\n'); return value === '' ? [] : value.replace(/\n$/, '').split('\n') }
@@ -68,7 +90,10 @@ export function contextBlocks(rows, context = 3) {
 // starts with a session lookup. No caller-supplied workspace root crosses the wire.
 const codec = name => ({ mode: 'strict', typeSymbol: '@dsh-desktop/sidebar-changes#' + name, create: () => ({ parse(value) {
   const valid = name === 'offset' ? Number.isSafeInteger(value) && value >= 0
-    : typeof value === 'string' && value.length <= 512 && (name !== 'source' || SOURCES.includes(value)) && (name !== 'commitId' || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value))
+    : typeof value === 'string' && value.length <= (name === 'message' ? 65536 : 512) && !value.includes('\0') && (name !== 'source' || SOURCES.includes(value))
+      && (name !== 'action' || ['stage', 'commit', 'push', 'pushOnly'].includes(value))
+      && (name !== 'branch' || value.length > 0 && !value.startsWith('-') && !/[\s~^:?*\[\\]/.test(value))
+      && (!['commitId', 'committedId'].includes(name) || name === 'committedId' && value === '' || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value))
   if (!valid) throw Error('Invalid changes query parameter: ' + name)
   return value
 } }) })
@@ -78,9 +103,12 @@ export const contribution = { package: '@dsh-desktop/sidebar-changes', descripto
   ['listCommits', ['revision', 'offset']], ['getCommitDetails', ['revision', 'commitId']],
   ['listFileOperations', ['fileId', 'revision', 'recordKind', 'offset']],
   ['getOperationDiff', ['fileId', 'revision', 'operationId', 'offset']],
+  ['runGitAction', ['action', 'source', 'revision', 'message', 'committedId']],
+  ['getGitContext', ['source']], ['listGitBranches', []], ['switchGitBranch', ['branch', 'contextRevision']],
+  ['generateCommitMessage', ['source', 'contextRevision']], ['getGitOperation', ['contextRevision']],
 ].map(([method, args]) => ({
   id: 'desktopChanges/' + method, service: 'desktopChanges', namespace: 'desktopChanges', method,
-  invocation: { kind: 'direct' }, ...(method === 'subscribeChanges' ? { mode: 'stream' } : {}),
+  invocation: { kind: 'direct' }, ...(['subscribeChanges', 'runGitAction'].includes(method) ? { mode: 'stream' } : {}),
   parameters: [{ name: 'scope', wire: 'sessionId', source: 'lookup', lookup: 'desktopChangesScope', codec: codec('sessionId') },
     ...args.map(name => ({ name, wire: name, source: 'json', codec: codec(name) }))],
   cancellation: { parameter: 'signal' }, result: { mode: 'src-json' },

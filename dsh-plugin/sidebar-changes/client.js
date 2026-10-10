@@ -94,10 +94,76 @@
     },
     get excluded() {
       return t("\u90E8\u5206\u8DEF\u5F84\u6309\u914D\u7F6E\u6392\u9664\uFF0C\u8986\u76D6\u8303\u56F4\u6709\u9650");
+    },
+    get "git-busy"() {
+      return t("\u5F53\u524D\u4ED3\u5E93\u6B63\u5728\u6267\u884C Git \u64CD\u4F5C\uFF0C\u8BF7\u7A0D\u5019\u3002");
+    },
+    get "git-invalid-action"() {
+      return t("\u6B64 Git \u64CD\u4F5C\u4E0D\u53EF\u7528\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
+    },
+    get "git-message"() {
+      return t("\u8BF7\u586B\u5199\u63D0\u4EA4\u8BF4\u660E\uFF0C\u6700\u591A 65536 \u4E2A\u5B57\u7B26\u3002");
+    },
+    get "git-unavailable"() {
+      return t("\u5F53\u524D Git \u4ED3\u5E93\u4E0D\u53EF\u7528\uFF0C\u8BF7\u68C0\u67E5\u5DE5\u4F5C\u76EE\u5F55\u3002");
+    },
+    get "git-empty-stage"() {
+      return t("\u5F53\u524D\u89C6\u56FE\u6CA1\u6709\u53EF\u6682\u5B58\u7684\u66F4\u6539\u3002");
+    },
+    get "git-empty-index"() {
+      return t("\u6682\u5B58\u533A\u6CA1\u6709\u53EF\u63D0\u4EA4\u7684\u66F4\u6539\u3002");
+    },
+    get "git-conflict"() {
+      return t("\u8BF7\u5148\u89E3\u51B3\u5408\u5E76\u51B2\u7A81\u5E76\u6682\u5B58\uFF0C\u518D\u63D0\u4EA4\u3002");
+    },
+    get "git-other-root"() {
+      return t("\u66F4\u6539\u5305\u542B\u5176\u4ED6\u5DE5\u4F5C\u76EE\u5F55\u7684\u6587\u4EF6\uFF0C\u8BF7\u5207\u6362\u5230\u201C\u672A\u63D0\u4EA4\u201D\u540E\u91CD\u8BD5\u3002");
+    },
+    get "git-outside-index"() {
+      return t("\u6682\u5B58\u533A\u5305\u542B\u5F53\u524D\u5DE5\u4F5C\u76EE\u5F55\u4E4B\u5916\u7684\u66F4\u6539\uFF0C\u8BF7\u5207\u6362\u5230\u4ED3\u5E93\u6839\u76EE\u5F55\u540E\u63D0\u4EA4\u3002");
+    },
+    get "git-detached"() {
+      return t("\u5F53\u524D\u5904\u4E8E\u5206\u79BB HEAD \u72B6\u6001\uFF0C\u8BF7\u5148\u9009\u62E9\u672C\u5730\u5206\u652F\u3002");
+    },
+    get "git-no-remote"() {
+      return t("\u6CA1\u6709\u53EF\u7528\u7684\u63A8\u9001\u8FDC\u7A0B\u4ED3\u5E93\uFF0C\u8BF7\u5148\u914D\u7F6E Git \u8FDC\u7A0B\u4ED3\u5E93\u3002");
+    },
+    get "git-head-changed"() {
+      return t("\u5F53\u524D\u5206\u652F\u6216\u63D0\u4EA4\u5DF2\u6539\u53D8\uFF0C\u8BF7\u68C0\u67E5\u4ED3\u5E93\u540E\u91CD\u65B0\u63A8\u9001\u3002");
+    },
+    get "git-timeout"() {
+      return t("Git \u64CD\u4F5C\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u4ED3\u5E93\u72B6\u6001\u540E\u91CD\u8BD5\u3002");
+    },
+    get "git-failed"() {
+      return t("Git \u64CD\u4F5C\u5931\u8D25\uFF0C\u8BF7\u67E5\u770B\u9519\u8BEF\u4FE1\u606F\u540E\u91CD\u8BD5\u3002");
+    },
+    get "git-no-head"() {
+      return t("\u5C1A\u65E0\u63D0\u4EA4\uFF0C\u8BF7\u5148\u521B\u5EFA\u9996\u6B21\u63D0\u4EA4\u3002");
+    },
+    get "git-up-to-date"() {
+      return t("\u6CA1\u6709\u5F85\u63A8\u9001\u7684\u63D0\u4EA4\u3002");
+    },
+    get "git-branch-in-use"() {
+      return t("\u5206\u652F\u6B63\u88AB\u5176\u4ED6\u5DE5\u4F5C\u6811\u4F7F\u7528\u3002");
+    },
+    get "git-generation-unavailable"() {
+      return t("\u6267\u884C\u7AEF\u672A\u914D\u7F6E\u53EF\u7528\u6A21\u578B\uFF0C\u8BF7\u586B\u5199\u63D0\u4EA4\u4FE1\u606F\u3002");
+    },
+    get "git-generation-failed"() {
+      return t("\u63D0\u4EA4\u4FE1\u606F\u751F\u6210\u5931\u8D25\uFF0C\u8BF7\u586B\u5199\u540E\u91CD\u8BD5\u3002");
+    },
+    get "git-generation-large"() {
+      return t("\u66F4\u6539\u8D85\u8FC7\u751F\u6210\u9650\u5236\uFF0C\u8BF7\u586B\u5199\u63D0\u4EA4\u4FE1\u606F\u3002");
+    },
+    get "git-result-unknown"() {
+      return t("\u64CD\u4F5C\u7ED3\u679C\u5C1A\u672A\u786E\u8BA4\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u72B6\u6001\u3002");
+    },
+    get "git-upgrade-required"() {
+      return t("\u8BF7\u66F4\u65B0\u6267\u884C\u7AEF\u540E\u4F7F\u7528\u63D0\u4EA4\u5F39\u7A97\u3002");
     }
   };
   var codec = (name) => ({ mode: "strict", typeSymbol: "@dsh-desktop/sidebar-changes#" + name, create: () => ({ parse(value) {
-    const valid = name === "offset" ? Number.isSafeInteger(value) && value >= 0 : typeof value === "string" && value.length <= 512 && (name !== "source" || SOURCES.includes(value)) && (name !== "commitId" || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value));
+    const valid = name === "offset" ? Number.isSafeInteger(value) && value >= 0 : typeof value === "string" && value.length <= (name === "message" ? 65536 : 512) && !value.includes("\0") && (name !== "source" || SOURCES.includes(value)) && (name !== "action" || ["stage", "commit", "push", "pushOnly"].includes(value)) && (name !== "branch" || value.length > 0 && !value.startsWith("-") && !/[\s~^:?*\[\\]/.test(value)) && (!["commitId", "committedId"].includes(name) || name === "committedId" && value === "" || /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value));
     if (!valid) throw Error("Invalid changes query parameter: " + name);
     return value;
   } }) });
@@ -110,14 +176,20 @@
     ["listCommits", ["revision", "offset"]],
     ["getCommitDetails", ["revision", "commitId"]],
     ["listFileOperations", ["fileId", "revision", "recordKind", "offset"]],
-    ["getOperationDiff", ["fileId", "revision", "operationId", "offset"]]
+    ["getOperationDiff", ["fileId", "revision", "operationId", "offset"]],
+    ["runGitAction", ["action", "source", "revision", "message", "committedId"]],
+    ["getGitContext", ["source"]],
+    ["listGitBranches", []],
+    ["switchGitBranch", ["branch", "contextRevision"]],
+    ["generateCommitMessage", ["source", "contextRevision"]],
+    ["getGitOperation", ["contextRevision"]]
   ].map(([method, args]) => ({
     id: "desktopChanges/" + method,
     service: "desktopChanges",
     namespace: "desktopChanges",
     method,
     invocation: { kind: "direct" },
-    ...method === "subscribeChanges" ? { mode: "stream" } : {},
+    ...["subscribeChanges", "runGitAction"].includes(method) ? { mode: "stream" } : {},
     parameters: [
       { name: "scope", wire: "sessionId", source: "lookup", lookup: "desktopChangesScope", codec: codec("sessionId") },
       ...args.map((name) => ({ name, wire: name, source: "json", codec: codec(name) }))
@@ -490,12 +562,14 @@
         };
         window.addEventListener("focus", focus);
         document.addEventListener("visibilitychange", focus);
+        window.addEventListener("dsh-desktop:git-changed", focus);
         const timer = setInterval(focus, 5e3);
         return () => {
           own.abort();
           busy.current = false;
           clearInterval(timer);
           window.removeEventListener("focus", focus);
+          window.removeEventListener("dsh-desktop:git-changed", focus);
           document.removeEventListener("visibilitychange", focus);
         };
       }, [sessionId, tab.visible, refresh]);
@@ -546,10 +620,14 @@
             h(SourceMenu, { source: "history", capabilities, onChange: onSourceChange, visible: tab.visible }),
             data?.shallow && h(StatusTag, { label: t("\u6D45\u514B\u9686\u53EA\u5305\u542B\u5DF2\u83B7\u53D6\u7684\u5386\u53F2\uFF0C\u8FB9\u754C\u4E4B\u5916\u7684\u63D0\u4EA4\u6682\u4E0D\u53EF\u89C1") }, t("\u6D45\u514B\u9686"))
           ),
-          expanded.length > 0 && h(Tooltip, { label: t("\u5168\u90E8\u6298\u53E0"), portal: true, side: "bottom" }, h(Button, { className: "dshChanges__collapse dshHistory__collapse", size: "sm", "aria-label": t("\u5168\u90E8\u6298\u53E0"), onClick: () => {
-            restoring.current = false;
-            setExpanded([]);
-          } }, h(CollapseIcon, { size: 14 })))
+          expanded.length > 0 && h(
+            "div",
+            { className: "dshChanges__toolbarActions" },
+            h(Tooltip, { label: t("\u5168\u90E8\u6298\u53E0"), portal: true, side: "bottom" }, h(Button, { className: "dshChanges__collapse dshHistory__collapse", size: "sm", "aria-label": t("\u5168\u90E8\u6298\u53E0"), onClick: () => {
+              restoring.current = false;
+              setExpanded([]);
+            } }, h(CollapseIcon, { size: 14 })))
+          )
         ),
         error && h(Placeholder, { error: true, retry: reload, busy: loading }, error),
         !data && loading && !error && h(Placeholder, null, t("\u6B63\u5728\u52A0\u8F7D\u63D0\u4EA4\u8BB0\u5F55\u2026")),
@@ -739,6 +817,549 @@
           history ? t("\u6536\u8D77\u64CD\u4F5C\u5386\u53F2") : t("\u67E5\u770B\u64CD\u4F5C\u5386\u53F2\uFF08{0}\uFF09", [entry.operationCount])
         ),
         history && h(Records, { ...props, key: "operations-" + revision, recordKind: "operations" })
+      );
+    };
+  }
+
+  // dsh-plugin/sidebar-changes/git-operation.mjs
+  var gitBusy = (state) => ["starting", "generating", "switching", "staging", "committing", "pushing", "recovering"].includes(state.phase);
+  var gitDraftKey = (context) => JSON.stringify([context.endpointId, context.repositoryRoot, context.workspaceRoot, context.branch]);
+  async function gitQuery(remote, method, ...args) {
+    const result = await remote[method](...args);
+    if (result?.ok === false) throw result.error;
+    return result?.ok === true ? result.value : result;
+  }
+  function createGitOperation(remote, onChanged = () => {
+  }) {
+    let state = { phase: "idle", action: null, commitId: "", message: "", error: null, context: null };
+    const listeners = /* @__PURE__ */ new Set(), drafts = /* @__PURE__ */ new Map();
+    const publish = (patch) => {
+      state = { ...state, ...patch };
+      for (const listener of listeners) listener();
+    };
+    const errorState = (error) => ({ phase: "error", error: { code: error?.details?.reason || (error?.code?.startsWith("git-") ? error.code : error?.message || "git-failed"), detail: error?.details?.detail || error?.message || "" } });
+    const finish = () => {
+      if (state.phase === "done" && state.context && state.action !== "pushOnly") drafts.delete(gitDraftKey(state.context));
+      onChanged();
+    };
+    const operation = {
+      getSnapshot: () => state,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      draft: (context) => drafts.get(gitDraftKey(context)) || "",
+      saveDraft: (context, message) => drafts.set(gitDraftKey(context), message),
+      reconcile(context) {
+        if (state.phase === "error" && state.commitId && state.context && gitDraftKey(context) === gitDraftKey(state.context) && (context.head !== state.commitId || JSON.stringify(context.target) !== JSON.stringify(state.context.target))) {
+          publish({ commitId: "", error: { code: "git-head-changed", detail: "" } });
+        }
+      },
+      reset: () => {
+        if (!gitBusy(state) && state.phase !== "unknown") publish({ phase: "idle", error: null, commitId: "", context: null });
+      },
+      async recover() {
+        if (!state.request || state.phase === "recovering") return;
+        publish({ phase: "recovering" });
+        const { sessionId, revision } = state.request;
+        try {
+          for (let attempt = 0; attempt < 120; attempt++) {
+            const update = await gitQuery(remote, "getGitOperation", sessionId, revision, new AbortController().signal);
+            if (!gitBusy(update)) {
+              publish({ ...update, action: state.request.displayAction || state.request.action });
+              finish();
+              return;
+            }
+            if (update.commitId) publish({ commitId: update.commitId });
+            await new Promise((resolve) => setTimeout(resolve, 1e3));
+          }
+        } catch {
+        }
+        publish({ phase: "unknown", error: { code: "git-result-unknown", detail: "" } });
+        onChanged();
+      },
+      async switchBranch(sessionId, branch, context) {
+        if (gitBusy(state) || state.phase === "unknown") return null;
+        publish({ phase: "switching", error: null, context, commitId: "" });
+        try {
+          const signal = new AbortController().signal;
+          if (!context.contextRevision) {
+            const expected = context;
+            context = await gitQuery(remote, "getGitContext", sessionId, expected.source, signal);
+            if (context.endpointId !== expected.endpointId || context.workspaceRoot !== expected.workspaceRoot || context.source !== expected.source) throw Error("stale");
+            publish({ context });
+          }
+          const value = await gitQuery(remote, "switchGitBranch", sessionId, branch, context.contextRevision, signal);
+          publish({ phase: "idle", context: null });
+          return value;
+        } catch (error) {
+          publish(errorState(error));
+          return null;
+        } finally {
+          onChanged();
+        }
+      },
+      async run(request) {
+        if (gitBusy(state) || state.phase === "unknown") return null;
+        const { sessionId, action, source, revision, committedId = "", context } = request;
+        let message = action === "pushOnly" ? "" : request.message || "", writing = false;
+        publish({
+          action: request.displayAction || action,
+          message,
+          commitId: committedId,
+          error: null,
+          context: context || null,
+          request,
+          phase: !message.trim() && context && !committedId && ["commit", "push"].includes(action) ? "generating" : committedId || action === "pushOnly" ? "pushing" : source !== "staged" ? "staging" : "committing"
+        });
+        try {
+          if (message.length > 65536 || message.includes("\0")) throw Error("git-message");
+          const signal = new AbortController().signal;
+          if (state.phase === "generating") {
+            if (!context.canGenerateMessage) throw Error("git-generation-unavailable");
+            const generated = await gitQuery(remote, "generateCommitMessage", sessionId, source, revision, signal);
+            if (generated.contextRevision !== revision) throw Error("stale");
+            if (operation.draft(context) !== message) throw Error("stale");
+            message = generated.message;
+            operation.saveDraft(context, message);
+            publish({ message, phase: source === "staged" ? "committing" : "staging" });
+          }
+          writing = true;
+          for await (const update of remote.runGitAction(sessionId, action, source, revision, message, committedId, signal)) publish({ ...update, action: request.displayAction || action });
+          if (gitBusy(state)) throw Error("git-result-unknown");
+        } catch (error) {
+          if (writing && context) {
+            publish({ phase: "unknown", error: { code: "git-result-unknown", detail: "" } });
+            await operation.recover();
+          } else publish(errorState(error));
+        } finally {
+          finish();
+        }
+        return state;
+      }
+    };
+    return operation;
+  }
+
+  // dsh-plugin/sidebar-changes/git-preview.mjs
+  function gitListStatistics(data, sessionId, capabilities, source) {
+    if (!data || !["working", "staged"].includes(source) || data.source !== source || data.sessionId !== sessionId || data.workspaceRoot !== capabilities?.workspaceRoot || data.endpointId !== capabilities?.endpointId) return null;
+    const known = data.entries.filter((entry) => entry.stats.added !== null && entry.stats.removed !== null);
+    const statisticsComplete = known.length === data.entries.length;
+    return {
+      added: known.length || statisticsComplete ? known.reduce((sum, entry) => sum + entry.stats.added, 0) : null,
+      removed: known.length || statisticsComplete ? known.reduce((sum, entry) => sum + entry.stats.removed, 0) : null,
+      statisticsComplete,
+      listRevision: data.revision
+    };
+  }
+
+  // dsh-plugin/sidebar-changes/git-actions.mjs
+  function createGitActions(React, primitives) {
+    const h = React.createElement;
+    const { Button, Menu, MenuItemButton, Modal, Tooltip, Toast, StateDot, IconChevronDownOutlineRegular: ChevronDown } = primitives;
+    const repositories = /* @__PURE__ */ new WeakMap(), noop = () => {
+    };
+    const labels = () => ({ stage: t("\u6682\u5B58"), commit: t("\u63D0\u4EA4"), push: t("\u63D0\u4EA4\u5E76\u63A8\u9001"), pushOnly: t("\u63A8\u9001") });
+    const phases = () => ({ generating: t("\u751F\u6210\u4E2D\u2026"), staging: t("\u6682\u5B58\u4E2D\u2026"), committing: t("\u63D0\u4EA4\u4E2D\u2026"), pushing: t("\u63A8\u9001\u4E2D\u2026"), switching: t("\u5207\u6362\u4E2D\u2026"), recovering: t("\u786E\u8BA4\u4E2D\u2026") });
+    const complete = () => ({ stage: t("\u5DF2\u6682\u5B58\u66F4\u6539"), commit: t("\u5DF2\u63D0\u4EA4"), push: t("\u5DF2\u63D0\u4EA4\u5E76\u63A8\u9001"), pushOnly: t("\u5DF2\u63A8\u9001") });
+    const reason = (error) => REASONS[error?.code] || REASONS[error?.message] || error?.message || REASONS["git-failed"];
+    const BranchIcon = () => h(
+      "svg",
+      { width: 13, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, "aria-hidden": true },
+      h("circle", { cx: 6, cy: 5, r: 2.5 }),
+      h("circle", { cx: 6, cy: 19, r: 2.5 }),
+      h("circle", { cx: 18, cy: 5, r: 2.5 }),
+      h("path", { d: "M6 7.5v9M18 7.5v2a5 5 0 0 1-5 5H6" })
+    );
+    const tip = (label, child, key) => h(Tooltip, { key, label, portal: true, side: "bottom", maxWidth: 320 }, child);
+    const loading = (className) => h(
+      "span",
+      { className: "dshChanges__gitLoading " + (className || ""), role: "status", "aria-live": "polite" },
+      h(StateDot, { state: "ongoing", size: 13 }),
+      t("\u52A0\u8F7D\u4E2D\u2026")
+    );
+    return function GitActions({ ctx, sessionId, capabilities, source, data, visible, onStaged, primaryAction = source === "working" ? "stage" : "commit" }) {
+      useLocale(React);
+      const remote = ctx.remote.desktopChanges, available = capabilities?.gitAvailability?.status === "available";
+      const supported = capabilities?.gitContextVersion === 1;
+      const [menu, setMenu] = React.useState(false), [dialog, setDialog] = React.useState(false), [notice, setNotice] = React.useState(null);
+      const [include, setInclude] = React.useState(source !== "staged"), [context, setContext] = React.useState(null);
+      const [preview, setPreview] = React.useState(null), [reuseList, setReuseList] = React.useState(true);
+      const [draft, setDraft] = React.useState(""), [error, setError] = React.useState(null), [refresh, setRefresh] = React.useState(0);
+      const [branchInfo, setBranchInfo] = React.useState(null), [branchMenu, setBranchMenu] = React.useState(false);
+      const [branchLoading, setBranchLoading] = React.useState(true), [branchError, setBranchError] = React.useState(null);
+      const [branchRefresh, setBranchRefresh] = React.useState(0), [contextLoading, setContextLoading] = React.useState(true);
+      const mounted = React.useRef(true), requestVersion = React.useRef(0);
+      const branchTrigger = React.useRef();
+      const messageId = "dsh-git-message-" + React.useId(), branchMenuClass = "dshGitBranches-" + React.useId();
+      const operation = React.useMemo(() => {
+        let repos = repositories.get(ctx);
+        if (!repos) {
+          repos = /* @__PURE__ */ new Map();
+          repositories.set(ctx, repos);
+        }
+        const key = JSON.stringify([capabilities?.endpointId, capabilities?.gitAvailability?.root]);
+        if (!repos.has(key)) repos.set(key, createGitOperation(remote, () => window.dispatchEvent(new Event("dsh-desktop:git-changed"))));
+        return repos.get(key);
+      }, [ctx, capabilities?.endpointId, capabilities?.gitAvailability?.root]);
+      const state = React.useSyncExternalStore(operation.subscribe, operation.getSnapshot, operation.getSnapshot);
+      const busy = gitBusy(state), uncertain = state.phase === "unknown", range = include ? "working" : "staged";
+      const listStatistics = React.useMemo(
+        () => reuseList ? gitListStatistics(data, sessionId, capabilities, range) : null,
+        [data, sessionId, capabilities?.endpointId, capabilities?.workspaceRoot, range, reuseList]
+      );
+      const savedPreview = preview?.sessionId === sessionId && preview.endpointId === capabilities?.endpointId && preview.workspaceRoot === capabilities?.workspaceRoot && preview.source === range ? preview : null;
+      const statistics = context || (listStatistics && listStatistics.listRevision !== savedPreview?.listRevision ? listStatistics : savedPreview || listStatistics);
+      const branchPending = branchLoading && !branchInfo;
+      const draftScope = context || branchInfo && available && {
+        endpointId: capabilities.endpointId,
+        repositoryRoot: capabilities.gitAvailability.root,
+        workspaceRoot: capabilities.workspaceRoot,
+        branch: branchInfo.branch
+      };
+      const draftKey = draftScope && gitDraftKey(draftScope);
+      const sameDraft = context && state.context && gitDraftKey(context) === gitDraftKey(state.context);
+      const retry = sameDraft && state.phase === "error" && Boolean(state.commitId) && ["push", "pushOnly"].includes(state.action);
+      const done = sameDraft && state.phase === "done";
+      const locked = busy || uncertain || retry || done;
+      React.useEffect(() => {
+        mounted.current = true;
+        return () => {
+          mounted.current = false;
+        };
+      }, []);
+      React.useEffect(() => {
+        requestVersion.current++;
+        setDialog(false);
+        setMenu(false);
+        setBranchMenu(false);
+        setContext(null);
+        setDraft("");
+        setError(null);
+        setPreview(null);
+        setReuseList(true);
+        setBranchInfo(null);
+        setBranchError(null);
+        setBranchLoading(true);
+        setContextLoading(true);
+      }, [operation, sessionId, capabilities?.workspaceRoot]);
+      React.useEffect(() => {
+        if (!dialog || !supported || busy) return;
+        const own = new AbortController(), version = ++requestVersion.current;
+        setContext(null);
+        setContextLoading(true);
+        gitQuery(remote, "getGitContext", sessionId, range, own.signal).then((value) => {
+          if (own.signal.aborted || version !== requestVersion.current) return;
+          if (value.endpointId !== capabilities.endpointId || value.workspaceRoot !== capabilities.workspaceRoot || value.source !== range) return;
+          operation.reconcile(value);
+          setError(null);
+          setContext(value);
+          setReuseList(true);
+          setPreview({ ...value, sessionId, listRevision: data?.revision });
+        }).catch((failure) => {
+          if (!own.signal.aborted && version === requestVersion.current) setError(failure);
+        }).finally(() => {
+          if (!own.signal.aborted && version === requestVersion.current) setContextLoading(false);
+        });
+        return () => own.abort();
+      }, [dialog, supported, sessionId, range, refresh, operation, busy, data?.revision]);
+      React.useEffect(() => {
+        if (!available || !visible || !supported || busy) return;
+        const own = new AbortController();
+        setBranchLoading(true);
+        setBranchError(null);
+        gitQuery(remote, "listGitBranches", sessionId, own.signal).then((value) => {
+          if (!own.signal.aborted) setBranchInfo(value);
+        }).catch((failure) => {
+          if (!own.signal.aborted) setBranchError(failure);
+        }).finally(() => {
+          if (!own.signal.aborted) setBranchLoading(false);
+        });
+        return () => own.abort();
+      }, [available, visible, supported, operation, sessionId, capabilities?.workspaceRoot, branchRefresh, busy]);
+      React.useEffect(() => {
+        if (!visible || !supported) return;
+        const refreshContext = () => {
+          if (!document.hidden) {
+            setRefresh((value) => value + 1);
+            setBranchRefresh((value) => value + 1);
+          }
+        };
+        window.addEventListener("focus", refreshContext);
+        window.addEventListener("dsh-desktop:git-changed", refreshContext);
+        document.addEventListener("visibilitychange", refreshContext);
+        return () => {
+          window.removeEventListener("focus", refreshContext);
+          window.removeEventListener("dsh-desktop:git-changed", refreshContext);
+          document.removeEventListener("visibilitychange", refreshContext);
+        };
+      }, [visible, supported]);
+      React.useEffect(() => {
+        if (draftScope) setDraft(operation.draft(draftScope));
+      }, [operation, draftKey]);
+      React.useEffect(() => {
+        if (sameDraft && state.message && busy) setDraft(state.message);
+      }, [state.message, busy, sameDraft]);
+      React.useEffect(() => {
+        if (!visible || busy) {
+          setMenu(false);
+          setBranchMenu(false);
+        }
+      }, [visible, busy]);
+      React.useEffect(() => {
+        if (!branchMenu) return;
+        const frame = requestAnimationFrame(() => {
+          const list = document.getElementsByClassName(branchMenuClass)[0];
+          if (document.activeElement === branchTrigger.current || document.activeElement === list) {
+            list?.querySelector('[role="menuitem"]:not(:disabled)')?.focus();
+          }
+        });
+        return () => cancelAnimationFrame(frame);
+      }, [branchMenu, branchInfo, branchLoading, branchError]);
+      if (!available || !visible) return null;
+      const activate = (action) => {
+        if (gitBusy(operation.getSnapshot())) return;
+        setMenu(false);
+        setError(null);
+        if (action === "stage") {
+          if (!data || uncertain) return;
+          void operation.run({ sessionId, action, source, revision: data.revision }).then((result) => {
+            if (!mounted.current || result?.phase !== "done") return;
+            setNotice(complete().stage);
+            onStaged?.();
+          });
+          return;
+        }
+        if (!supported) {
+          setError({ code: "git-upgrade-required" });
+          return;
+        }
+        if (state.phase === "done") operation.reset();
+        const restoreRange = state.commitId && state.phase === "error" && state.context?.workspaceRoot === capabilities.workspaceRoot;
+        setInclude(restoreRange ? state.context.source === "working" : source !== "staged");
+        setContext(null);
+        setContextLoading(true);
+        if (draftScope) setDraft(operation.draft(draftScope));
+        setDialog(true);
+        setRefresh((value) => value + 1);
+      };
+      const run = (action) => {
+        if (!context || gitBusy(operation.getSnapshot()) || uncertain || done) return;
+        const retrying = retry && action === state.action;
+        if (retry && !retrying) return;
+        if (!retrying && (action === "pushOnly" ? !context.canPush : !context.hasCommittableChanges || action === "push" && !context.canPushAfterCommit || !draft.trim() && !context.canGenerateMessage)) return;
+        setError(null);
+        setBranchMenu(false);
+        const saved = retrying ? state.context : context;
+        void operation.run({
+          sessionId,
+          action: retrying && action === "pushOnly" ? "push" : action,
+          displayAction: action,
+          source: saved.source,
+          revision: saved.contextRevision,
+          message: retrying ? state.message : draft,
+          committedId: retrying ? state.commitId : "",
+          context: saved
+        });
+      };
+      const close = () => {
+        if (!gitBusy(operation.getSnapshot())) {
+          setBranchMenu(false);
+          setDialog(false);
+        }
+      };
+      const reloadBranches = () => {
+        branchTrigger.current?.focus({ preventScroll: true });
+        setBranchError(null);
+        setBranchLoading(true);
+        setBranchRefresh((value) => value + 1);
+      };
+      const openBranches = () => {
+        if (locked) return;
+        if (branchMenu) {
+          setBranchMenu(false);
+          return;
+        }
+        setBranchMenu(true);
+        if (!branchLoading) reloadBranches();
+      };
+      const chooseBranch = async (branch) => {
+        setBranchMenu(false);
+        if (locked || branch === (branchInfo ? branchInfo.branch : context?.branch)) return;
+        setError(null);
+        setContext(null);
+        setContextLoading(true);
+        setPreview(null);
+        setReuseList(false);
+        await operation.switchBranch(sessionId, branch, context || {
+          endpointId: capabilities.endpointId,
+          workspaceRoot: capabilities.workspaceRoot,
+          source: range
+        });
+        if (mounted.current) setRefresh((value) => value + 1);
+      };
+      const shownError = error || (sameDraft || !dialog || state.context == null ? state.error : null);
+      const branchLabel = branchInfo ? branchInfo.branch || t("\u5206\u79BB HEAD") : context ? context.branch || t("\u5206\u79BB HEAD") : branchError ? t("\u5206\u652F\u8BFB\u53D6\u5931\u8D25") : t("\u52A0\u8F7D\u4E2D\u2026");
+      const block = busy || uncertain || !context || done;
+      const actionButton = (action) => {
+        const ownRetry = retry && action === state.action, active = busy && state.action === action;
+        const disabled = block || retry && !ownRetry || !ownRetry && (action === "pushOnly" ? !context?.canPush : !context?.hasCommittableChanges || action === "push" && !context?.canPushAfterCommit || !draft.trim() && !context?.canGenerateMessage);
+        const title = ownRetry ? t("\u91CD\u8BD5\u63A8\u9001") : active ? phases()[state.phase] || t("\u5904\u7406\u4E2D\u2026") : labels()[action];
+        const hint = ownRetry ? t("\u672C\u6B21\u63D0\u4EA4\u5DF2\u4FDD\u5B58\uFF0C\u91CD\u8BD5\u4E0D\u4F1A\u521B\u5EFA\u65B0\u7684\u63D0\u4EA4\u3002") : action === "pushOnly" ? REASONS[context?.pushReason] : REASONS[context?.commitReason] || action === "push" && REASONS[context?.pushReason] || (!draft.trim() && !context?.canGenerateMessage ? t("\u8BF7\u586B\u5199\u63D0\u4EA4\u4FE1\u606F") : "");
+        return tip(hint || title, h("span", { className: "dshChanges__gitActionSlot" }, h(Button, {
+          size: "sm",
+          type: "button",
+          className: "dshChanges__gitSubmit",
+          "data-preferred": action === "commit" && !retry || ownRetry,
+          disabled,
+          "aria-busy": active,
+          onClick: () => run(action)
+        }, active && h(StateDot, { state: "ongoing", size: 12 }), title)), action);
+      };
+      const errorContent = shownError && h(
+        "div",
+        { className: "dshChanges__gitError", role: "alert" },
+        retry && h("p", null, state.action === "pushOnly" ? t("\u63A8\u9001\u5931\u8D25") : t("\u63D0\u4EA4\u5DF2\u4FDD\u5B58 \xB7 \u63A8\u9001\u5931\u8D25")),
+        h("p", null, reason(shownError)),
+        shownError.detail && shownError.detail !== reason(shownError) && h("pre", null, shownError.detail)
+      );
+      return h(
+        React.Fragment,
+        null,
+        h(
+          "div",
+          { className: "dshChanges__gitActions", role: "group", "aria-label": t("Git \u64CD\u4F5C") },
+          h(Button, {
+            size: "sm",
+            className: "dshChanges__gitPrimary",
+            disabled: busy || primaryAction === "stage" && (!data || uncertain),
+            "aria-busy": busy,
+            onClick: () => activate(primaryAction)
+          }, busy ? h(StateDot, { state: "ongoing", size: 16 }) : labels()[primaryAction]),
+          h(Menu, {
+            open: menu && !busy,
+            portal: true,
+            compact: true,
+            autoFocus: true,
+            align: "end",
+            className: "dshChanges__gitMenuAnchor",
+            listClassName: "dshChanges__gitMenu",
+            onClose: () => setMenu(false),
+            onSelect: activate,
+            items: ["stage", "commit", "push"].filter((id) => id !== primaryAction && (source !== "staged" || id !== "stage")).map((id) => ({ id, label: labels()[id], disabled: id === "stage" && uncertain })),
+            anchor: h(Button, {
+              size: "sm",
+              className: "dshChanges__gitToggle",
+              disabled: busy,
+              "aria-label": t("\u66F4\u591A Git \u64CD\u4F5C"),
+              "aria-haspopup": "menu",
+              "aria-expanded": menu,
+              onClick: () => setMenu((value) => !value),
+              onKeyDown: (event) => {
+                if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+                  event.preventDefault();
+                  setMenu(true);
+                }
+              }
+            }, h(ChevronDown, { size: 12 }))
+          })
+        ),
+        dialog && h(
+          Modal,
+          {
+            open: true,
+            headless: true,
+            title: t("\u63D0\u4EA4\u4E0E\u63A8\u9001"),
+            onClose: busy ? noop : close,
+            className: "dshChanges__gitDialog",
+            onKeyDownCapture: (event) => {
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent?.isComposing && !event.isComposing && event.keyCode !== 229) {
+                event.preventDefault();
+                run(event.shiftKey ? "push" : "commit");
+              }
+            }
+          },
+          h(
+            "div",
+            { className: "dshChanges__gitTop", "aria-busy": contextLoading || branchLoading },
+            h(Menu, {
+              open: branchMenu,
+              portal: true,
+              compact: true,
+              autoFocus: true,
+              selectedId: branchInfo ? branchInfo.branch : context?.branch,
+              className: "dshChanges__gitBranchPicker",
+              listClassName: "dshChanges__gitBranchMenu " + branchMenuClass,
+              onClose: () => setBranchMenu(false),
+              onSelect: chooseBranch,
+              items: !branchInfo && (branchLoading || branchError) ? [] : branchInfo?.branches?.length ? branchInfo.branches.map((branch) => ({ id: branch.name, label: branch.name, disabled: branch.disabled || locked })) : [{ id: "", label: t("\u6682\u65E0\u672C\u5730\u5206\u652F"), disabled: true }],
+              children: branchPending ? loading("dshChanges__gitBranchLoading") : branchError ? h(
+                React.Fragment,
+                null,
+                h("div", { className: "dshChanges__gitBranchError", role: "alert" }, reason(branchError)),
+                h(MenuItemButton, { onSelect: reloadBranches }, t("\u91CD\u8BD5"))
+              ) : null,
+              anchor: tip(branchLabel, h(Button, {
+                ref: branchTrigger,
+                size: "sm",
+                className: "dshChanges__gitBranch",
+                disabled: locked,
+                "aria-busy": branchLoading,
+                "aria-label": t("\u5207\u6362\u5206\u652F\uFF1A{branch}", { branch: branchLabel }),
+                "aria-haspopup": "menu",
+                "aria-expanded": branchMenu,
+                onClick: openBranches,
+                onKeyDown: (event) => {
+                  if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+                    event.preventDefault();
+                    openBranches();
+                  }
+                }
+              }, branchPending ? h(StateDot, { state: "ongoing", size: 13 }) : h(BranchIcon), h("span", { className: "dshChanges__gitBranchName" }, branchLabel), h(ChevronDown, { size: 12 })))
+            }),
+            contextLoading && !statistics ? loading("dshChanges__gitStatsLoading") : tip(
+              statistics?.statisticsComplete ? t("\u9884\u8BA1\u63D0\u4EA4\u7684\u884C\u6570\u53D8\u5316") : t("\u4EC5\u7EDF\u8BA1\u53EF\u6BD4\u8F83\u7684\u6587\u672C\uFF0C\u90E8\u5206\u66F4\u6539\u65E0\u6CD5\u6309\u884C\u8BA1\u7B97\u3002"),
+              h("span", { className: "dshChanges__gitStats", tabIndex: 0, "aria-busy": contextLoading }, h("span", null, "+" + (statistics?.added ?? "\u2014")), h("span", null, "-" + (statistics?.removed ?? "\u2014")))
+            ),
+            h("label", { className: "dshChanges__gitScope" }, h("input", {
+              type: "checkbox",
+              checked: include,
+              disabled: locked,
+              onChange: (event) => {
+                setContext(null);
+                setContextLoading(true);
+                setError(null);
+                setInclude(event.target.checked);
+              }
+            }), t("\u542B\u672A\u6682\u5B58"))
+          ),
+          h(
+            "div",
+            { className: "dshChanges__gitMessageArea" },
+            h("label", { htmlFor: messageId, className: "dshChanges__gitSrOnly" }, t("\u63D0\u4EA4\u4FE1\u606F")),
+            h("textarea", {
+              id: messageId,
+              className: "dshChanges__gitMessage",
+              value: draft,
+              readOnly: locked || !draftScope,
+              rows: 3,
+              maxLength: 65536,
+              "data-modal-autofocus": "",
+              placeholder: context?.canGenerateMessage ? t("\u63D0\u4EA4\u4FE1\u606F\uFF08\u53EF\u7559\u7A7A\uFF09") : t("\u8BF7\u586B\u5199\u63D0\u4EA4\u4FE1\u606F"),
+              onChange: (event) => {
+                const value = event.target.value;
+                setDraft(value);
+                if (draftScope) operation.saveDraft(draftScope, value);
+              }
+            })
+          ),
+          errorContent,
+          done && h("p", { className: "dshChanges__gitSuccess", role: "status" }, complete()[state.action]),
+          uncertain ? h(Button, { size: "sm", onClick: () => operation.recover() }, t("\u91CD\u65B0\u68C0\u67E5\u72B6\u6001")) : done ? h("div", { className: "dshChanges__gitFooter" }, h(Button, { size: "sm", className: "dshChanges__gitSubmit", onClick: close }, t("\u5B8C\u6210"))) : h("div", { className: "dshChanges__gitFooter" }, ...["commit", "push", "pushOnly"].map(actionButton))
+        ),
+        !dialog && errorContent,
+        notice && h(Toast, { text: notice, onDone: () => setNotice(null) })
       );
     };
   }
@@ -954,6 +1575,7 @@
       );
     }
     const SessionDetails = createSessionDetails(React, primitives, { call, message, Placeholder, DiffRows, stats });
+    const GitActions = createGitActions(React, primitives);
     const HistoryView = createHistoryView(React, primitives, { SourceMenu, Placeholder, StatusTag, call, message });
     function Panel(props) {
       useLocale(React);
@@ -1038,7 +1660,7 @@
           }
           const value = await call(ctx, "listChanges", sessionId, source, signal);
           if (signal.aborted || value.sessionId !== sessionId || value.source !== source || value.workspaceRoot !== root.current) return;
-          setData(value);
+          setData({ ...value, endpointId: cap.endpointId });
           if (retryDetails.current) {
             retryDetails.current = false;
             setDetailAttempt((attempt) => attempt + 1);
@@ -1070,6 +1692,7 @@
         };
         window.addEventListener("focus", focus);
         document.addEventListener("visibilitychange", focus);
+        window.addEventListener("dsh-desktop:git-changed", invalidate);
         const timer = setInterval(focus, source === "session" ? 3e4 : 5e3);
         if (source === "session") (async () => {
           try {
@@ -1088,6 +1711,7 @@
           clearTimeout(debounce);
           clearInterval(timer);
           window.removeEventListener("focus", focus);
+          window.removeEventListener("dsh-desktop:git-changed", invalidate);
           document.removeEventListener("visibilitychange", focus);
         };
       }, [sessionId, source, tab.visible]);
@@ -1134,19 +1758,24 @@
             h(SourceMenu, { source, capabilities, onChange: changeSource, visible: tab.visible }),
             noGit && h(StatusTag, { label: git.reason }, git.status === "none" ? t("\u975E Git \u4ED3\u5E93") : git.status === "missing" ? t("Git \u672A\u5B89\u88C5") : t("Git \u4E0D\u53EF\u7528"))
           ),
-          Boolean(data?.entries.length) && h(
+          h(
             "div",
-            { className: "dshChanges__summary", "aria-label": t("{0} \u4E2A\u6587\u4EF6", [data.entries.length]) },
-            h(Tag, { tone: "neutral" }, data.entries.length),
-            summary
-          ),
-          expanded.length > 0 && h(
-            Tooltip,
-            { label: t("\u5168\u90E8\u6298\u53E0"), portal: true, side: "bottom" },
-            h(Button, { size: "sm", className: "dshChanges__collapse", "aria-label": t("\u5168\u90E8\u6298\u53E0"), onClick: () => {
-              restoring.current = false;
-              setExpanded([]);
-            } }, h(ChevronUp, { size: 14 }))
+            { className: "dshChanges__toolbarActions" },
+            Boolean(data?.entries.length) && h(
+              "div",
+              { className: "dshChanges__summary", "aria-label": t("{0} \u4E2A\u6587\u4EF6", [data.entries.length]) },
+              h(Tag, { tone: "neutral" }, data.entries.length),
+              summary
+            ),
+            h(GitActions, { ctx, sessionId, capabilities, source, data, visible: tab.visible, onStaged: () => changeSource("staged") }),
+            expanded.length > 0 && h(
+              Tooltip,
+              { label: t("\u5168\u90E8\u6298\u53E0"), portal: true, side: "bottom" },
+              h(Button, { size: "sm", className: "dshChanges__collapse", "aria-label": t("\u5168\u90E8\u6298\u53E0"), onClick: () => {
+                restoring.current = false;
+                setExpanded([]);
+              } }, h(ChevronUp, { size: 14 }))
+            )
           )
         ),
         data?.coverageEvents?.length > 0 && h(

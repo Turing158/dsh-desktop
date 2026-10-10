@@ -455,11 +455,20 @@ html:not([data-dsh-ui='vanilla']) body [role='menu'][data-menu-material] > [clas
   display: none;
 }
 
-/* Completion menus used to span the entire composer (left: 0; right: 0).
-   Bound these inline surfaces to their available column as well as the window. */
-html:not([data-dsh-ui='vanilla']) body :is([data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) {
+/* Searchable pickers stay compact within their available column. */
+html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='listbox'])) {
   right: auto;
   max-width: min(var(--dsh-menu-max-width), calc(100vw - 16px), 100%) !important;
+}
+
+/* Commands and skills share the composer's overlay anchor. Match its width,
+   and respond to that column even when a sidebar narrows a wide window. */
+html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] {
+  left: 0;
+  right: 0;
+  width: 100% !important;
+  max-width: min(100%, calc(100vw - 16px)) !important;
+  container: dsh-trigger-menu / inline-size;
 }
 
 html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) :is([class*='_viewport'], [class*='_groups']) {
@@ -509,7 +518,7 @@ html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_itemLabel'] {
 
 html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemName'] {
   flex: 0 1 auto;
-  max-width: none;
+  max-width: 100%;
   font-weight: 500;
 }
 
@@ -517,6 +526,36 @@ html:not([data-dsh-ui='vanilla']) body :is([data-trigger-menu], [class*='_card']
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
+}
+
+/* The scrolling viewport is a flex column. Rows must retain their content
+   height instead of shrinking while multiline descriptions paint over them. */
+html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [role='option'] {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 2px;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemAlias'] {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemDescription'] {
+  flex: 1 1 16rem;
+  text-align: start;
+}
+
+/* Keep the name, alias and drill affordance together above the description.
+   Full descriptions wrap in normal flow; the menu, not each row, scrolls. */
+@container dsh-trigger-menu (max-width: 520px) {
+  html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemDescription'] {
+    flex-basis: 100%;
+    order: 1;
+  }
 }
 
 html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) [class*='_itemIcon'] {
@@ -1382,6 +1421,35 @@ html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='item'][class*='_selecte
   color: var(--dsw-alias-state-warn-label);
 }
 
+/* Loading indicators share the motion preference across all their consumers.
+   StateDot already supplies a ring and arc, but its upstream reduced-motion
+   rule does not know about the desktop override. IconLoadingOutline has no
+   semantic marker or intrinsic motion; identify only its shared SVG artwork. */
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-loading-spin: dsh-desktop-loading-spin 1.5s linear infinite;
+  --dsh-loading-dash: dsh-desktop-loading-dash 1.5s ease-in-out infinite;
+}
+html:not([data-dsh-ui='vanilla']) body svg[data-state='ongoing'] > [class*='_spinnerMotion_'] {
+  transform-box: view-box;
+  transform-origin: center;
+  animation: var(--dsh-loading-spin);
+}
+html:not([data-dsh-ui='vanilla']) body svg[data-state='ongoing'] [class*='_spinnerArc_'] {
+  stroke-dasharray: 18 150;
+  stroke-dashoffset: -3;
+  animation: var(--dsh-loading-dash);
+}
+html:not([data-dsh-ui='vanilla']) body svg[viewBox='0 0 16 16']:has(> path[d^='M12.596 12.596C11.687']) {
+  transform-box: view-box;
+  transform-origin: center;
+  animation: var(--dsh-loading-spin);
+}
+@keyframes dsh-desktop-loading-spin { to { transform: rotate(360deg); } }
+@keyframes dsh-desktop-loading-dash {
+  0%, 100% { stroke-dasharray: 12 150; stroke-dashoffset: 0; }
+  50% { stroke-dasharray: 24 150; stroke-dashoffset: -6; }
+}
+
 /* Reduced motion, and the animation setting that overrides it.
  *
  * The app respects `prefers-reduced-motion` in three places, and this overlay
@@ -1403,6 +1471,11 @@ html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='item'][class*='_selecte
  * declarations earlier in this file apply unopposed.
  */
 @media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body {
+    --dsh-loading-spin: none;
+    --dsh-loading-dash: none;
+  }
+
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body button,
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body a,
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body summary,
@@ -1460,6 +1533,11 @@ html:not([data-dsh-ui='vanilla']) body [data-dsh-danger='item'][class*='_selecte
 /* An explicit "off" disables motion regardless of the OS setting. Written
    without a media query so it applies on machines that report `no-preference`
    too, where the block above would not match. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body {
+  --dsh-loading-spin: none;
+  --dsh-loading-dash: none;
+}
+
 html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body button,
 html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body a,
 html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body summary,
@@ -2671,53 +2749,11 @@ html body [data-dsh-chrome='layer'] {
   top: var(--dsh-desktop-titlebar-height, 44px);
 }
 
-/* THE SAME OFFSET, ONE SCOPE DEEPER 鈥?and why one rule was not enough.
- *
- * The rule above is (0,1,2): two types and one attribute. That beats the settings
- * overlay (`.VOzbGW_overlay`, (0,1,0)) but LOSES to any app rule carrying two
- * class-level selectors, and the right sidebar's fullscreen opening is exactly
- * one:
- *
- *     .P3OORG_panel[data-sidebar-right-panel=fullscreen] { position:fixed; inset:0 }
- *
- * (0,2,0) wins over (0,1,2) because the class/attribute count is compared BEFORE
- * the type count, so the fullscreen rule's `inset: 0` outvoted the offset 鈥?the
- * panel kept the bar's strip, and its own top row, the tab strip that carries the
- * 鍏ㄥ睆 button, sat under the opaque bar where it could be neither seen nor
- * clicked.
- *
- * Scoping this copy under `#root` adds an ID, which outranks any number of
- * class-level selectors. The panel renders inside the frame, which is inside
- * `#root` (see the grounding comment at the top of `dom.js`), so the scope is
- * free 鈥?and every layer the app renders inside `#root`, the settings overlay
- * among them, is hardened the same way for free. Body-portalled layers keep the
- * rule above; their app rules are single-class today.
- */
+/* In-root viewport layers need enough specificity to beat native inset rules.
+ * The current right sidebar stays absolute in fullscreen, so #root already
+ * clears the title bar for it. Only fixed layers tagged by the DOM tier receive
+ * this offset; applying it to every fullscreen sidebar leaves a second 44px gap. */
 html body #root [data-dsh-chrome='layer'] {
-  top: var(--dsh-desktop-titlebar-height, 44px);
-}
-
-/* The fullscreen right panel, keyed on the app's OWN attribute rather than on the
-   tag.
- *
- * The tag needs a pass to arrive: the cheap candidate scan keys on ARIA roles,
- * which the panel declares none of, and the sweep that catches it runs every
- * WATCH_MS 鈥?so a tag-keyed rule lands up to two seconds after the click, as a
- * visible jump. `data-sidebar-right-panel` is written by React synchronously with
- * the switch (`"fullscreen"` or `"push"`), so keying on it applies the offset in
- * the same frame as the click and stops applying it the moment the panel docks
- * back.
- *
- * That round trip matters because the panel is ONE element in both shapes:
- * fullscreen is `position: fixed; inset: 0`, docked is `position: absolute;
- * top: 0` inside its column, below a bar the container has already cleared. An
- * offset that outlived the fullscreen shape would leave the docked panel starting
- * 44px below its column's top edge. (`markFullSurfaceLayers` retires the tag on
- * the same grounds; this rule simply never participates in it.)
- *
- * `#root` scope for the same reason as the rule above: the app's own fullscreen
- * rule is (0,2,0), and an attribute-only selector cannot beat it. */
-html body #root [data-sidebar-right-panel='fullscreen'] {
   top: var(--dsh-desktop-titlebar-height, 44px);
 }
 
@@ -3174,6 +3210,115 @@ html:not([data-dsh-titlebar-hover='off']) .dshTb__control--close:hover {
   overflow: auto;
 }
 
+/* Shared update dialog: two independent checks, with the app's own palette. */
+.dshTb__updateDialog[role='dialog'] {
+  width: min(560px, 100%);
+  max-height: 100%;
+}
+
+.dshTb__updateContent {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.dshTb__updateTabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin-bottom: 22px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-module-platform);
+}
+
+.dshTb__updateTab {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.dshTb__updateTab:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshTb__updateTab[aria-selected='true'] {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: 0 1px 3px #00000012;
+}
+
+.dshTb__updateDialog :is(button, [tabindex='0']):focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.dshTb__updateDialog button:not(:disabled) { cursor: pointer; }
+.dshTb__updateDialog [role='tabpanel'][hidden] { display: none; }
+.dshTb__updateDialog [role='tabpanel'] { min-height: 300px; }
+
+.dshTb__updateSpinner {
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: dshTb-update-spin 800ms linear infinite;
+}
+
+.dshTb__updateDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-brand-primary);
+}
+
+@keyframes dshTb-update-spin { to { transform: rotate(360deg); } }
+html[data-dsh-desktop-animation='off'] .dshTb__updateSpinner { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-desktop-animation='on']) .dshTb__updateSpinner { animation: none; }
+  .dshTb__updateTab { transition: none; }
+}
+
+.dshTb__desktopUpdate { gap: 16px; }
+.dshTb__desktopStatus { display: flex; align-items: center; gap: 14px; }
+.dshTb__desktopStatusText { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.dshTb__desktopStatusText strong { color: var(--dsw-alias-label-primary); font-size: 16px; font-weight: 600; }
+.dshTb__desktopStatusText span { font-size: 12px; }
+.dshTb__desktopVersions { margin: 0; padding: 14px 16px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; }
+.dshTb__desktopVersions dd { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.dshTb__releaseNotes { min-width: 0; }
+.dshTb__releaseHeading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 10px; }
+.dshTb__releaseHeading h3 { margin: 0; color: var(--dsw-alias-label-primary); font-size: 13px; font-weight: 600; }
+.dshTb__releaseHeading span { font-size: 12px; overflow-wrap: anywhere; }
+.dshTb__releaseBody { max-height: 210px; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; scrollbar-gutter: stable; padding-right: 8px; }
+.dshTb__releaseNotes .dshTb__releaseBody > * { color: var(--dsw-alias-label-secondary); }
+.dshTb__releasePlain { margin: 0; white-space: pre-wrap; }
+.dshTb__updateSource { margin-right: auto; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+
+@media (max-width: 480px) {
+  .dshTb__updateSource { display: none; }
+  .dshTb__desktopVersions { padding: 12px; gap: 8px 12px; }
+}
+
 /* 鈹€鈹€ 鍏充簬 dialog 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
    Deliberately plain: the mark, the name, the version, one sentence. The
    surface, radius, shadow and focus handling are the app's own Modal; only
@@ -3269,7 +3414,90 @@ html body [data-shortcut-modal='settings'] {
 .dshChanges__scope { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .dshChanges__source { flex: none; }
 .dshChanges .dshChanges__sourceButton { gap: 8px; font-size: 13px; padding: 0 8px; }
-.dshChanges__summary { display: flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
+.dshChanges__toolbarActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 100%; margin-left: auto; }
+.dshChanges__summary { display: flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 8px; font-size: 12px; }
+.dshChanges__gitActions {
+  display: inline-flex; flex: none; align-items: stretch; box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm, 8px);
+}
+.dshChanges .dshChanges__gitPrimary, .dshChanges .dshChanges__gitToggle { height: 26px; cursor: pointer; }
+.dshChanges .dshChanges__gitPrimary { padding: 0 10px; border-radius: calc(var(--dsw-radius-sm, 8px) - 1px) 0 0 calc(var(--dsw-radius-sm, 8px) - 1px); font-weight: 500; }
+.dshChanges__gitMenuAnchor { display: inline-flex; border-left: 1px solid var(--dsw-alias-border-l3); }
+.dshChanges .dshChanges__gitToggle { width: 26px; padding: 0; border-radius: 0 calc(var(--dsw-radius-sm, 8px) - 1px) calc(var(--dsw-radius-sm, 8px) - 1px) 0; }
+.dshChanges .dshChanges__gitToggle[aria-expanded='true'] { background: var(--dsw-alias-interactive-bg-active); }
+/* Keep these short action labels in a comfortably sized clickable menu. */
+html body [role='menu'].dshChanges__gitMenu { min-width: min(128px, calc(100vw - 16px)) !important; }
+.dshChanges__gitMenu [role='menuitem'] { cursor: pointer; }
+.dshChanges__gitMenu [role='menuitem']:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
+.dshChanges .dshChanges__gitPrimary, .dshChanges__gitSubmit { position: relative; }
+.dshChanges__gitPrimary[aria-busy='true'] .dshChanges__gitActionLabel,
+.dshChanges__gitSubmit[aria-busy='true'] .dshChanges__gitActionLabel { visibility: hidden; }
+.dshChanges__gitSpinner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.dshChanges .dshChanges__gitActions button:disabled, .dshChanges__gitSubmit:disabled { cursor: default; }
+/* Headless project Modal retains its accessible name, focus trap and return focus. */
+html body .dshChanges__gitDialog[role='dialog'] {
+  box-sizing: border-box; width: min(421px, calc(100vw - 24px)); max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 32px); gap: 0; padding: 3px 3px 7px; overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 18px;
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  box-shadow: 0 12px 32px -10px rgb(0 0 0 / 25%), 0 2px 6px rgb(0 0 0 / 7%);
+  font-size: 12px;
+}
+.dshChanges__gitTop { display: flex; align-items: center; gap: 7px; padding: 5px 5px 9px; min-width: 0; }
+.dshChanges__gitBranchPicker { flex: 1; min-width: 0; }
+html body .dshChanges__gitDialog .dshChanges__gitBranch {
+  display: flex; width: 100%; min-width: 0; height: 32px; min-height: 32px; gap: 6px; padding: 0 6px;
+  border: 0; border-radius: 18px; background: transparent; font-size: 12px;
+}
+.dshChanges__gitBranch svg { flex: none; }
+.dshChanges__gitBranchName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshChanges__gitLoading { display: inline-flex; flex: none; align-items: center; gap: 6px; white-space: nowrap; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.dshChanges__gitBranchLoading { display: flex; min-width: 140px; padding: 10px 12px; }
+.dshChanges__gitBranchError { max-width: 280px; padding: 8px 12px; color: var(--dsw-alias-state-error-primary); font-size: 12px; overflow-wrap: anywhere; }
+html body [role='menu'].dshChanges__gitBranchMenu { max-width: calc(100vw - 32px) !important; }
+.dshChanges__gitStats { display: inline-flex; flex: none; gap: 3px; white-space: nowrap; font-size: 12px; font-variant-numeric: tabular-nums; }
+.dshChanges__gitStats > span { padding: 4px 6px; border-radius: 5px; background: color-mix(in srgb, currentColor 8%, transparent); }
+.dshChanges__gitStats > span:first-child { color: var(--dsw-alias-state-success-primary); }
+.dshChanges__gitStats > span:last-child { color: var(--dsw-alias-state-error-primary); }
+.dshChanges__gitScope { display: flex; flex: none; align-items: center; gap: 5px; min-height: 32px; white-space: nowrap; font-size: 10px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.dshChanges__gitScope input { margin: 0; }
+.dshChanges__gitScope:has(input:disabled) { cursor: default; }
+.dshChanges__gitMessageArea { padding: 12px 10px 7px; border: 0; }
+html body .dshChanges__gitDialog .dshChanges__gitMessage,
+html body .dshChanges__gitDialog .dshChanges__gitMessage:focus,
+html body .dshChanges__gitDialog .dshChanges__gitMessage:focus-visible {
+  display: block; box-sizing: border-box; width: 100%; height: 84px; min-height: 84px; resize: none;
+  padding: 3px 1px; border: 0 !important; outline: none !important; box-shadow: none !important; border-radius: 5px;
+  background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; line-height: 1.7;
+}
+.dshChanges__gitMessage::placeholder { color: var(--dsw-alias-label-tertiary); }
+.dshChanges__gitMessage[readonly] { color: var(--dsw-alias-label-secondary); }
+.dshChanges__gitSrOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.dshChanges__gitFooter { display: flex; align-items: stretch; gap: 4px; padding-top: 6px; border: 0; }
+.dshChanges__gitActionSlot { display: flex; flex: 1; min-width: 0; }
+.dshChanges__gitActionSlot:nth-child(2) { flex: 1.5; }
+.dshChanges__gitActionSlot:has([aria-busy='true']) { flex: 1.8; }
+/* Specificity includes the portal root to beat global and mobile 44px button rules. */
+html body .dshChanges__gitDialog[role='dialog'] .dshChanges__gitSubmit {
+  display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 5px; box-sizing: border-box;
+  width: 100%; min-width: 0; height: 28px !important; min-height: 28px !important; max-height: 28px !important;
+  padding: 0 7px; border: 0; border-radius: 8px; background: transparent; font-size: 11px; line-height: 1; white-space: nowrap;
+}
+html body .dshChanges__gitDialog .dshChanges__gitSubmit[data-preferred='true'],
+html body .dshChanges__gitDialog :is(.dshChanges__gitSubmit, .dshChanges__gitBranch):hover:enabled { background: var(--dsw-alias-interactive-bg-hover); }
+.dshChanges__gitDialog :is(button, [tabindex]):focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
+.dshChanges__gitDialog .dshChanges__gitError { padding: 0 10px; }
+.dshChanges__gitSuccess { margin: 2px 10px 7px; color: var(--dsw-alias-state-success-primary); }
+@media (max-width: 375px) {
+  .dshChanges__gitTop { gap: 4px; padding-inline: 3px; }
+  html body .dshChanges__gitDialog .dshChanges__gitBranch { gap: 3px; padding-inline: 2px; }
+  .dshChanges__gitStats { font-size: 11px; }
+  .dshChanges__gitStats > span { padding-inline: 3px; }
+  .dshChanges__gitScope { gap: 4px; }
+}
+.dshChanges__gitError { flex-basis: 100%; min-width: 0; max-width: 100%; color: var(--dsw-alias-state-error-primary); font-size: 12px; overflow-wrap: anywhere; }
+.dshChanges__gitError p { margin: 4px 0; }
+.dshChanges__gitError pre { margin: 6px 0 0; max-height: 120px; overflow: auto; white-space: pre-wrap; font: inherit; }
 .dshChanges .dshChanges__collapse { width: 28px; padding: 0; flex: none; }
 .dshChanges__metadata { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px 0; }
 .dshChanges__tag { display: inline-flex; min-width: 0; max-width: 100%; border-radius: 999px; }
@@ -3322,6 +3550,10 @@ html body [data-shortcut-modal='settings'] {
 .dshChanges__coverage summary { cursor: pointer; }
 @container (max-width: 185px) { .dshChanges__row { flex-wrap: wrap; gap: 2px 8px; } .dshChanges__path { flex-basis: 100%; } }
 @media (pointer: coarse) { .dshChanges .dshChanges__file, .dshChanges .dshChanges__sourceButton, .dshChanges .dshChanges__collapse, .dshChanges .dshChanges__context { min-height: 44px; } }
+@media (pointer: coarse) {
+  .dshChanges .dshChanges__gitPrimary, .dshChanges .dshChanges__gitToggle { min-height: 44px; min-width: 44px; }
+  .dshChanges__gitMenu [role='menuitem'] { min-height: 44px; }
+}
 @media (prefers-reduced-motion: reduce) { .dshChanges button { transition: none; } }
 html[data-dsh-desktop-animation='off'] .dshChanges button { transition: none; }
 
@@ -3346,7 +3578,6 @@ html[data-dsh-desktop-animation='off'] .dshChanges button { transition: none; }
 .dshHistory__byline { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--changes-muted); font-size: 11px; line-height: 16px; }
 .dshHistory__byline > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshHistory__byline time { flex: none; }
-.dshHistory .dshHistory__collapse { margin-left: auto; }
 .dshHistory__expanded { padding: 0 6px; overflow: hidden; overflow-anchor: none; }
 .dshHistory__reveal { padding: 6px 0 10px; }
 .dshHistory__detail {

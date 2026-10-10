@@ -19,6 +19,7 @@ mod drag_guard;
 mod dsh;
 mod builtin_plugins;
 mod dsh_update;
+mod desktop_update;
 #[cfg(feature = "single")]
 mod embedded_plugins;
 mod folder_focus;
@@ -103,6 +104,8 @@ fn main() {
                 open_external,
                 dsh_update::check_dsh_update,
                 dsh_update::install_dsh_update,
+                desktop_update::check_desktop_update,
+                desktop_update::open_desktop_release,
                 window_controls::window_start_drag,
                 window_controls::window_start_resize,
                 window_controls::window_minimize,
@@ -139,7 +142,7 @@ fn main() {
             handler(invoke)
         })
         .setup(|app| {
-            set_app_user_model_id(app.handle());
+            notify::initialize(app.handle());
             create_main_window(app.handle(), false)?;
             // The tray icon exists from launch, not from the first close: it is
             // the way back into a hidden window, and a control that only
@@ -455,24 +458,6 @@ fn apply_system_icon(app: &AppHandle) {
         return;
     };
     app_icon::apply_to_window(&window);
-}
-
-/// Tag this process so its toast notifications are attributed correctly.
-///
-/// Without an AppUserModelID Windows may drop toasts from an app that has no
-/// Start-menu shortcut (the common case in development).
-fn set_app_user_model_id(app: &AppHandle) {
-    #[cfg(windows)]
-    {
-        use windows::core::HSTRING;
-        use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-
-        let identifier = app.config().identifier.clone();
-        let _ =
-            unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(identifier.as_str())) };
-    }
-    #[cfg(not(windows))]
-    let _ = app;
 }
 
 /// Resolve the notification overlay that ships with the app.
@@ -1014,6 +999,7 @@ fn wait_then_stream(
     terminal::authorize_backend(&app, instance, &url)?;
     deep_link::authorize_backend(&app, instance, &url)?;
     dsh_update::authorize_backend(&app, instance, &url)?;
+    desktop_update::authorize_backend(&app, instance, &url)?;
     remote_control::authorize_backend(&app, instance, &url)?;
     debug_log(&format!("[ready] {}", public_origin(&url)));
     {
@@ -1141,13 +1127,13 @@ fn deliver(app: &AppHandle, state: &Shared, payload: dsh::NotifyPayload, instanc
     ) {
         Ok(()) => {
             debug_log(&format!(
-                "[notify/shown] {} — {}",
+                "[notify/submitted] {} — {}",
                 payload.title, payload.body
             ));
             record(
                 app,
                 state,
-                ChildEvent::Log(format!("已通知：{}", payload.title)),
+                ChildEvent::Log(format!("通知已提交系统：{}", payload.title)),
                 instance,
             );
         }

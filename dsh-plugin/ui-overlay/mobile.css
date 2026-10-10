@@ -141,6 +141,7 @@ html[data-dsh-browser] .dshMobile__spinner {
   border-radius: 50%; animation: dsh-mobile-spin 700ms linear infinite;
 }
 @keyframes dsh-mobile-spin { to { transform: rotate(360deg); } }
+html[data-dsh-browser][data-dsh-desktop-animation='off'] .dshMobile__spinner { animation: none; }
 
 /* Safari gives native buttons inline padding even when their grid is centred.
    Reset only the composer's three icon controls, including send/stop variants. */
