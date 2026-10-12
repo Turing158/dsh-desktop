@@ -53,9 +53,11 @@ var React = require('react')
      * to load at all.
      */
     var Menu = null
+    var Tooltip = null
     try {
       var primitives = require('@deepseek-ai/dsh-client-ui-primitives')
       if (primitives && typeof primitives.Menu === 'function') Menu = primitives.Menu
+      if (primitives && typeof primitives.Tooltip === 'function') Tooltip = primitives.Tooltip
     } catch (error) {
       // Logged rather than swallowed: a silent fallback would look like a styling
       // choice, when it means the selector's menu has degraded to the native list.
@@ -64,6 +66,71 @@ var React = require('react')
 
     /** `createElement` shorthand; no JSX is available in a hand-built bundle. */
     var h = React.createElement
+
+    /** Attach DSH's Tooltip to upstream-owned rows without replacing their DOM
+     * or handlers. The native component owns the bubble, delay and positioning. */
+    function createTriggerMenuTooltips() {
+      var selector = '[data-trigger-menu] [role="option"]'
+      var Anchor = React.forwardRef(function Anchor(props, ref) {
+        var row = props.row
+        var handlers = React.useRef(props)
+        handlers.current = props
+        React.useLayoutEffect(function () {
+          ref(row)
+          var events = { mouseenter: 'onMouseEnter', mouseleave: 'onMouseLeave', click: 'onClick', focus: 'onFocus', blur: 'onBlur' }
+          var listeners = Object.entries(events).map(function (entry) {
+            var listener = function (event) { handlers.current[entry[1]]?.(event) }
+            row.addEventListener(entry[0], listener)
+            return function () { row.removeEventListener(entry[0], listener) }
+          })
+          // A menu can finish mounting while the pointer is already over a row.
+          if (row.matches(':hover')) handlers.current.onMouseEnter?.()
+          return function () { listeners.forEach(function (off) { off() }); ref(null) }
+        }, [row, ref])
+        return null
+      })
+
+      return function TriggerMenuTooltips() {
+        var state = React.useState([]), rows = state[0], setRows = state[1]
+        React.useEffect(function () {
+          var keys = new WeakMap(), nextKey = 0
+          function sync() {
+            var next = document.documentElement.getAttribute('data-dsh-ui') === 'vanilla' ? [] :
+              Array.from(document.querySelectorAll(selector)).filter(function (row) {
+                return !row.closest('[data-dsh-ghost]') && !row.hasAttribute('title') && !row.hasAttribute('aria-describedby')
+              }).map(function (row) {
+                if (!keys.has(row)) keys.set(row, ++nextKey)
+                var label = Array.from(row.querySelectorAll('[class*="_itemName"], [class*="_itemAlias"], [class*="_itemDescription"]'))
+                  .map(function (node) { return node.textContent.trim() }).filter(Boolean).join('\n')
+                return { row: row, key: keys.get(row), label: label }
+              }).filter(function (entry) { return entry.label })
+            setRows(function (previous) {
+              return previous.length === next.length && previous.every(function (entry, i) {
+                return entry.row === next[i].row && entry.label === next[i].label
+              }) ? previous : next
+            })
+          }
+          var observer = new MutationObserver(function (records) {
+            if (records.some(function (record) {
+              var target = record.target.nodeType === 1 ? record.target : record.target.parentElement
+              if (target?.closest('[data-trigger-menu]')) return true
+              return Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).some(function (node) {
+                return node.nodeType === 1 && (node.matches('[data-trigger-menu]') || node.querySelector('[data-trigger-menu]'))
+              })
+            })) sync()
+          })
+          observer.observe(document.body, { childList: true, subtree: true, characterData: true,
+            attributes: true, attributeFilter: ['data-dsh-ghost', 'title', 'aria-describedby'] })
+          document.addEventListener('dsh-desktop:ui-mode', sync)
+          sync()
+          return function () { observer.disconnect(); document.removeEventListener('dsh-desktop:ui-mode', sync) }
+        }, [])
+        return h(React.Fragment, null, rows.map(function (entry) {
+          return h(Tooltip, { key: entry.key, label: entry.label, portal: true, side: 'top', delayMs: 500, focusDelayMs: 500 },
+            h(Anchor, { row: entry.row }))
+        }))
+      }
+    }
 
     /** Settings services differ across DSH versions and are acquired in apply. */
     var inject = ['slots', 'theme']
@@ -871,6 +938,12 @@ var React = require('react')
      * @param ctx - the client root context.
      */
     function apply(ctx) {
+      if (Tooltip) {
+        var TriggerMenuTooltips = createTriggerMenuTooltips()
+        ctx.slots.inject('shell.overlay', function () {
+          return ctx.slots.register({ name: 'shell.overlay', id: 'desktop-trigger-tooltips' }, TriggerMenuTooltips)
+        })
+      }
       ctx.inject(['configForms'], function (child) {
         applySettings(child, child.configForms.get('desktop-appearance'))
       })

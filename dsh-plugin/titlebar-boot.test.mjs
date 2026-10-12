@@ -57,6 +57,15 @@ const BOOT = join(here, 'title-bar', 'boot.js')
 const CLIENT = join(here, 'title-bar', 'client.js')
 const OVERLAY = join(here, 'ui-overlay', 'dom.js')
 const bootSource = readFileSync(BOOT, 'utf8')
+const localeSource = readFileSync(join(here, 'i18n', 'runtime.js'), 'utf8')
+const localeMessages = readFileSync(join(here, 'i18n', 'en.json'), 'utf8')
+
+// boot_bar::initialization_script injects these sources as ONE classic script.
+// Evaluating each file separately misses failures at the concatenation boundary.
+const startupSource = (locale) =>
+  `window.__DSH_DESKTOP_BOOT_HOST__ = true;\n` +
+  `window.__DSH_I18N_INITIAL__ = ${JSON.stringify(locale)};\n` +
+  `window.__DSH_I18N_MESSAGES__ = ${localeMessages};\n${localeSource}\n${bootSource}`
 
 /** The host element's id, mirroring the constant in `boot.js`. */
 const HOST_ID = 'dsh-desktop-titlebar-boot'
@@ -410,6 +419,51 @@ const controlsOf = (document) => barOf(document).querySelectorAll('.dshBoot__con
 const moreOf = (document) => barOf(document).querySelector('.dshBoot__item')
 
 // ── the bar is always there ──────────────────────────────────────────────────
+
+for (const [locale, moreLabel] of [['zh', '更多'], ['en', 'More']]) {
+  test(`the combined startup script mounts usable chrome in ${locale}`, async () => {
+    const { document } = createDocument()
+    const sandbox = createSandbox(document)
+    vm.createContext(sandbox)
+    const script = new vm.Script(startupSource(locale), { filename: 'desktop-startup.js' })
+
+    script.runInContext(sandbox)
+    await settle()
+    const bar = barOf(document)
+    assert.ok(bar, 'the locale runtime must not prevent the title bar from starting')
+    assert.equal(moreOf(document).textContent, moreLabel)
+    assert.equal(bar.querySelector('.dshBoot__controls').getAttribute('data-host'), 'yes')
+    controlsOf(document)[0].dispatch('click', { button: 0 })
+    controlsOf(document)[2].dispatch('click', { button: 0 })
+    assert.ok(sandbox.__invoked.some(({ command }) => command === 'window_minimize'))
+    assert.ok(sandbox.__invoked.some(({ command }) => command === 'window_close'))
+
+    script.runInContext(sandbox)
+    assert.equal(barOf(document), bar, 're-injection must keep the existing bar')
+    assert.equal(document.querySelectorAll('#' + HOST_ID).length, 1)
+    document.dispatchEvent({ type: READY_EVENT })
+    assert.equal(barOf(document), null, 'the full title bar must still take over')
+  })
+}
+
+test('the combined startup script waits for the unparsed document before mounting', async () => {
+  const { document, documentElement, head, body } = createDocument()
+  document.documentElement = document.head = document.body = null
+  const sandbox = createSandbox(document)
+  sandbox.navigator = { language: 'zh-CN' }
+  vm.createContext(sandbox)
+
+  new vm.Script(startupSource(null), { filename: 'desktop-startup.js' }).runInContext(sandbox)
+  assert.equal(barOf(document), null, 'no bar can mount before the document exists')
+  document.documentElement = documentElement
+  document.head = head
+  document.body = body
+  await drainTimers(sandbox)
+
+  assert.ok(barOf(document), 'the bar must appear once the parser creates the body')
+  assert.equal(moreOf(document).textContent, '更多')
+  assert.equal(documentElement.style.getPropertyValue('--dsh-desktop-titlebar-height'), '44px')
+})
 
 test('the bar mounts immediately, with the 更多 menu as its only option', () => {
   const { document } = createDocument()

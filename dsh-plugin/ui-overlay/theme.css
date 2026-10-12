@@ -514,8 +514,10 @@ html:not([data-dsh-ui='vanilla']) body [class*='_card']:where(:has(> [role='list
 }
 
 /* Commands and skills share the composer's overlay anchor. Match its width,
-   and respond to that column even when a sidebar narrows a wide window. */
-html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] {
+   and respond to that column even when a sidebar narrows a wide window.
+   The composer scope beats the shared material-menu selector's specificity;
+   otherwise max-content plus inline-size containment collapses this to 10px. */
+html:not([data-dsh-ui='vanilla']) body [data-composer-card] [data-trigger-menu] {
   left: 0;
   right: 0;
   width: 100% !important;

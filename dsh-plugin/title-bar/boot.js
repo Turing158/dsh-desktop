@@ -59,7 +59,9 @@
  * bug this placement exists to avoid — see `title-bar/client.js`, which portals
  * the real bar to the same plane for the same reason.
  */
-(function () {
+// The host concatenates the locale runtime before this script. Terminate its
+// final expression so this IIFE cannot be parsed as a call on the runtime's result.
+;(function () {
   'use strict'
 
   const t = (source, values) => window.__DSH_I18N__?.t(source, values) ?? (typeof source === 'string' ? source.replace(/\{(\w+)\}/g, (match, key) => values?.[key] ?? match) : source)

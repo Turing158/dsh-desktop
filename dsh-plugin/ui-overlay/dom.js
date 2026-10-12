@@ -195,11 +195,6 @@
    */
   function clearDecorations() {
     var changed = false
-    document.querySelectorAll('[data-dsh-trigger-title]').forEach(function (node) {
-      if (node.getAttribute('title') === node.getAttribute('data-dsh-trigger-title')) node.removeAttribute('title')
-      node.removeAttribute('data-dsh-trigger-title')
-      changed = true
-    })
     document.querySelectorAll('.dshPluginStatus').forEach(function (node) { node.remove() })
     var tagged = document.querySelectorAll('[data-dsh-desktop], [data-dsh-relocated], [data-dsh-danger]')
     for (var i = 0; i < tagged.length; i++) {
@@ -805,37 +800,6 @@
     })
   }
 
-  /** The compact trigger rows expose their complete text in a native tooltip. */
-  function decorateTriggerMenuTitles() {
-    if (isVanilla()) return
-    document.querySelectorAll('[data-trigger-menu] [role="option"]').forEach(function (row) {
-      var previous = row.getAttribute('data-dsh-trigger-title')
-      // Keep a tooltip supplied by the frontend itself, including later updates.
-      if (row.hasAttribute('title') && row.getAttribute('title') !== previous) return
-      var title = Array.from(row.querySelectorAll('[class*="_itemName"], [class*="_itemAlias"], [class*="_itemDescription"]'))
-        .map(function (node) { return node.textContent.trim() })
-        .filter(Boolean).join('\n')
-      if (!title) {
-        row.removeAttribute('title')
-        row.removeAttribute('data-dsh-trigger-title')
-        return
-      }
-      if (row.getAttribute('title') !== title) row.setAttribute('title', title)
-      if (previous !== title) row.setAttribute('data-dsh-trigger-title', title)
-    })
-  }
-
-  /** Menus mount on demand; hovering must not wait for the periodic pass. */
-  function installTriggerMenuTitles() {
-    if (window.__dshTriggerMenuTitles === true) return
-    window.__dshTriggerMenuTitles = true
-    function update(event) {
-      if (event.target && event.target.closest && event.target.closest('[data-trigger-menu] [role="option"]')) decorateTriggerMenuTitles()
-    }
-    document.addEventListener('mouseover', update, true)
-    document.addEventListener('focusin', update, true)
-  }
-
   /** Run one overlay pass. @returns {boolean} whether the app had mounted. */
   function pass() {
     // The remote page's quick actions are window chrome, like the bar they sit
@@ -867,7 +831,6 @@
     // `sweep: true` — the periodic pass is the backstop that catches a layer with
     // no role of its own, which the cheap candidate set would miss.
     markFullSurfaceLayers(true)
-    decorateTriggerMenuTitles()
 
     var ready = decorateComposer()
     if (ready) {
@@ -4104,7 +4067,6 @@
   }
 
   begin()
-  installTriggerMenuTitles()
   watchRelocatedRows()
   watchRowMenus()
   watchRemovalGhosts()
