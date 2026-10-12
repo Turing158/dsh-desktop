@@ -185,6 +185,21 @@ test('save completion leaves keystrokes typed during the request dirty; duplicat
   assert.equal(calls, 1); assert.equal(doc.getSnapshot().text, 'second edit')
   assert.equal(doc.getSnapshot().base, 'first edit'); assert.equal(doc.dirty(), true)
 })
+
+test('a read started by a viewer switch cannot overwrite a newer edit', async () => {
+  const waiting = deferred(); let reads = 0
+  const { doc } = fixture({ read: () => ++reads === 1 ? ok({ text: 'initial', version: 'v1' }) : waiting.promise })
+  await doc.load()
+  const loading = doc.load(true)
+  doc.edit('<h1>new HTML draft</h1>')
+  waiting.resolve(ok({ text: 'disk content', version: 'v2' }))
+  await loading
+  assert.equal(doc.getSnapshot().text, '<h1>new HTML draft</h1>')
+  assert.equal(doc.getSnapshot().base, 'initial')
+  assert.equal(doc.getSnapshot().version, 'v1')
+  assert.equal(doc.getSnapshot().loading, false)
+  assert.equal(doc.dirty(), true)
+})
 test('save failure retains the last successful version and draft; ordinary errors can be retried', async () => {
   let count = 0
   const { doc } = fixture({ save: async (_id, _path, _version, text) => ++count === 1

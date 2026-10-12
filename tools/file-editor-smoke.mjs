@@ -18,6 +18,10 @@ const longName = '这是一份文件名很长的未保存文档'.repeat(5) + '.t
 await writeFile(join(workspace, longName), 'long filename\n')
 await writeFile(join(workspace, 'LICENSE'), 'license text\n')
 await writeFile(join(workspace, 'sample.md'), '# Markdown\n')
+const htmlName = '预览 # 页面.HTML'
+const html = title => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>body{margin:0;padding:24px;font:16px system-ui;background:#f4f7fa;color:#18344c}h1{font-size:28px}article{padding:24px;background:white;border-radius:12px}</style></head><body><article><h1>${title}</h1><p>HTML 预览 · 中文与内联样式</p><input aria-label="预览输入" value="editable"></article></body></html>`
+await writeFile(join(workspace, htmlName), html('已保存页面'))
+await writeFile(join(workspace, 'second.htm'), html('HTM 页面'))
 await writeFile(join(workspace, 'broken.txt'), Buffer.from([0, 1, 2, 3]))
 await writeFile(join(workspace, 'image.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><circle r="5" cx="10" cy="10"/></svg>')
 await writeFile(join(probe, 'package.json'), JSON.stringify({ name: '@dsh-desktop/editor-smoke', type: 'module', main: 'index.js', exports: { '.': './index.js', './client': './client.js' }, dsh: { client: { platform: 'web', inject: ['@deepseek-ai/dsh-client-ui-sidebar-right', '@dsh-desktop/file-editor'] } } }))
@@ -26,7 +30,7 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({ id:'@d
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')).replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
   + '\n- insert:\n    - id: editor-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 await writeFile(join(root, 'patch.yml'), patch)
-let child, browser, output = ''
+let child, browser, page, output = ''
 const report = { root, checks: [] }, sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 try {
   child = spawn(process.execPath, [dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], { cwd: workspace, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes') }, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -35,7 +39,8 @@ try {
   for (let i = 0; i < 400; i++) { url = output.match(/dsh web: (http:\/\/[^\s\u001b]+)/)?.[1]; if (url) break; if (child.exitCode !== null) throw Error(output); await sleep(100) }
   if (!url) throw Error(output)
   browser = await chromium.launch({ headless: true, channel: 'msedge' })
-  const page = await browser.newPage({ viewport: { width: 1600, height: 950 } }), errors = []
+  page = await browser.newPage({ viewport: { width: 1600, height: 950 } })
+  const errors = []
   page.on('pageerror', error => { errors.push(error.message); console.error(error.message) })
   await page.addInitScript(() => { window.__EDITOR_PROVIDERS__ = new Map(); window.__DSH_UI_STATE__ = { registerProvider(id, provider) { window.__EDITOR_PROVIDERS__.set(id, provider); return () => window.__EDITOR_PROVIDERS__.delete(id) } } })
   await page.goto(url)
@@ -44,7 +49,15 @@ try {
     const ctx = window.__EDITOR_SMOKE__, work = await ctx.workspaces.create({ path: workspace })
     const id = await ctx.sessions.create({ workspaceId: work.workspaceId }); await ctx.uiWorkspace.openSession(id); return id
   }, workspace)
-  for (let i = 0; i < 4; i++) { await page.evaluate(() => { for (const button of document.querySelectorAll('button')) if (['继续', '稍后配置'].includes(button.textContent.trim())) button.click() }); await sleep(150) }
+  await page.getByRole('button', { name: '继续', exact: true }).waitFor()
+  await page.waitForFunction(() => {
+    for (const button of document.querySelectorAll('button')) {
+      if (button.textContent.trim() === '稍后配置') return true
+      if (['继续', '我知道了'].includes(button.textContent.trim())) button.click()
+    }
+    return false
+  })
+  await page.getByRole('button', { name: '稍后配置', exact: true }).click()
   const chooseViewer = async label => {
     await page.locator('[data-document-viewer-menu]:visible').click()
     await page.getByRole('menuitem', { name: label, exact: true }).click()
@@ -55,7 +68,10 @@ try {
     await page.locator('.dshFileEditor:visible .cm-content').waitFor()
   }
   const editor = () => page.locator('.dshFileEditor:visible .cm-content')
-  const replace = async text => { await editor().click(); await page.keyboard.press('Control+a'); await page.keyboard.insertText(text) }
+  const replace = async text => {
+    await page.locator('.dshFileEditor:visible[aria-busy="false"] .cm-content[contenteditable="true"]').waitFor()
+    await editor().click(); await page.keyboard.press('Control+a'); await page.keyboard.insertText(text)
+  }
   const dirtyMarker = async () => {
     const tabId = await page.evaluate(() => window.__EDITOR_SMOKE__.sidebarRight.active().id)
     return page.locator(`[data-dockkit-tab="${tabId}"] .dshFileEditor__dirty`)
@@ -239,7 +255,71 @@ try {
   await previewMenu.click(); await page.getByRole('menuitem', { name: 'Markdown', exact: true }).click()
   await page.getByRole('heading', { name: 'Edited markdown', exact: true }).waitFor()
   report.checks.push('extensionless file editing and Markdown preview selection')
+  await page.evaluate(({ sessionId, htmlName }) => window.__EDITOR_SMOKE__.sidebarRight.openResource('dsh-resource://file/session/' + sessionId + '/' + encodeURIComponent(htmlName)), { sessionId, htmlName })
+  const htmlPreview = () => page.locator('.dshFileEditor[data-editor-mode="html"]:visible')
+  const htmlFrame = () => page.frameLocator('.dshFileEditor[data-editor-mode="html"]:visible iframe')
+  await htmlFrame().getByRole('heading', { name: '已保存页面', exact: true }).waitFor()
+  assert.equal(await htmlPreview().locator('.dshFileEditor__toolbar').count(), 0)
+  assert.equal(await htmlFrame().locator('body').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(244, 247, 250)')
+  assert.ok(['', 'allow-scripts'].includes(await htmlPreview().locator('iframe').getAttribute('sandbox')))
+  assert.equal(await htmlFrame().locator('body').evaluate(() => { try { return Boolean(parent.document) } catch { return false } }), false)
+  await htmlFrame().getByRole('textbox', { name: '预览输入', exact: true }).fill('preview interaction')
+  await chooseViewer('代码')
+  await editor().waitFor()
+  await replace(html('未保存页面'))
+  await page.getByRole('button', { name: '预览 HTML', exact: true }).click()
+  await htmlFrame().getByRole('heading', { name: '未保存页面', exact: true }).waitFor()
+  assert.equal(await readFile(join(workspace, htmlName), 'utf8'), html('已保存页面'))
+  assert.equal(await htmlPreview().locator('.dshFileEditor__toolbar').count(), 0)
+  await page.screenshot({ path: join(root, 'html-preview.png') })
+  await chooseViewer('代码')
+  await editor().click(); await page.keyboard.press('Control+z')
+  assert.match(await editor().innerText(), /已保存页面/)
+  await page.keyboard.press('Control+y')
+  await chooseViewer('HTML')
+  await htmlFrame().getByRole('heading', { name: '未保存页面', exact: true }).waitFor()
+  await close(); await dialog().waitFor()
+  await dialog().getByRole('button', { name: '取消', exact: true }).click()
+  await htmlFrame().getByRole('heading', { name: '未保存页面', exact: true }).waitFor()
+  await page.evaluate(sessionId => {
+    const ctx = window.__EDITOR_SMOKE__, id = ctx.sidebarRight.active().id
+    const handle = ctx.slots.entriesOfSlot('sidebar.right.pane.tab').find(entry => entry.options.key === '@deepseek-ai/dsh-client-ui-sidebar-documentpreview').store
+    const store = ctx.slots.resolveStore(handle, { key: sessionId, ctx: ctx.sessions.scope(sessionId) })
+    if (store.getSnapshot().byTab[id].autoRefresh) store.actions.toggledAutoRefresh(id)
+  }, sessionId)
+  await chooseViewer('代码'); await editor().click(); await save()
+  assert.equal(await readFile(join(workspace, htmlName), 'utf8'), html('未保存页面'))
+  await chooseViewer('HTML')
+  await htmlFrame().getByRole('heading', { name: '未保存页面', exact: true }).waitFor()
+  report.checks.push('HTML/uppercase extension, Unicode path, inline styles, sandbox, draft preview without an extra toolbar, undo and save after returning to code')
+  await chooseViewer('纯文本'); await editor().waitFor()
+  await replace(html('重新读取前的草稿'))
+  await page.getByRole('button', { name: '预览 HTML', exact: true }).click()
+  await htmlFrame().getByRole('heading', { name: '重新读取前的草稿', exact: true }).waitFor()
+  await page.locator('[data-textpreview-tool="reload"]:visible').click()
+  await dialog().waitFor()
+  await dialog().getByRole('button', { name: '取消', exact: true }).click()
+  await htmlFrame().getByRole('heading', { name: '重新读取前的草稿', exact: true }).waitFor()
+  await page.locator('[data-textpreview-tool="reload"]:visible').click()
+  await dialog().getByRole('button', { name: '不保存', exact: true }).click()
+  await htmlFrame().getByRole('heading', { name: '未保存页面', exact: true }).waitFor()
+  await chooseViewer('纯文本')
+  await page.locator('.dshFileEditor[data-editor-mode="plain"]:visible .cm-content').waitFor()
+  report.checks.push('HTML preview guards closing/reloading unsaved drafts and switches to text through the viewer menu')
+  await page.evaluate(sessionId => window.__EDITOR_SMOKE__.sidebarRight.openResource('dsh-resource://file/session/' + sessionId + '/second.htm'), sessionId)
+  await htmlFrame().getByRole('heading', { name: 'HTM 页面', exact: true }).waitFor()
+  await chooseViewer('代码')
+  await editor().waitFor()
+  await page.getByRole('button', { name: '预览 HTML', exact: true }).click()
+  await htmlFrame().getByRole('heading', { name: 'HTM 页面', exact: true }).waitFor()
+  await page.setViewportSize({ width: 768, height: 850 })
+  const previewBounds = await htmlPreview().evaluate(node => ({ width: node.clientWidth, scroll: node.scrollWidth, height: node.querySelector('iframe').clientHeight }))
+  assert.ok(previewBounds.scroll <= previewBounds.width + 1 && previewBounds.height > 100, JSON.stringify(previewBounds))
+  await page.screenshot({ path: join(root, 'html-preview-narrow.png') })
+  await page.setViewportSize({ width: 1600, height: 950 })
+  report.checks.push('HTM preview remains usable in a narrow sidebar')
   await open('notes.txt'); await replace('visible text\n'); await save()
+  assert.equal(await page.getByRole('button', { name: '预览 HTML', exact: true }).count(), 0)
   await page.screenshot({ path: join(root, 'light.png') })
   await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''))
   await page.screenshot({ path: join(root, 'dark.png') })
@@ -273,7 +353,11 @@ try {
   report.checks.push('binary, outside-workspace, invalid-session and unauthenticated requests rejected')
   assert.deepEqual(errors, [])
   report.ok = true
-} catch (error) { report.error = error.stack; throw error }
+} catch (error) {
+  report.error = error.stack
+  if (page) { await page.screenshot({ path: join(root, 'failure.png') }).catch(() => {}); await writeFile(join(root, 'failure.txt'), await page.locator('body').innerText().catch(() => '')) }
+  throw error
+}
 finally {
   await writeFile(join(root, 'host.log'), output)
   await writeFile(join(root, 'report.json'), JSON.stringify(report, null, 2))

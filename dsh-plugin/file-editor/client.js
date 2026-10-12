@@ -13,6 +13,8 @@
   var MAX_BYTES = 2 * 1024 * 1024;
   var ID = "@dsh-desktop/file-editor";
   var PLAIN_ID = "@deepseek-ai/dsh-client-ui-sidebar-documentpreview/text";
+  var CODE_ID = "@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code";
+  var HTML_ID = "@deepseek-ai/dsh-client-ui-sidebar-documentpreview/html";
   function parseFile(address) {
     const prefix = "dsh-resource://file/session/";
     if (typeof address !== "string" || !address.startsWith(prefix)) return null;
@@ -74,6 +76,7 @@
         },
         dirty: () => state.version !== null && state.text !== state.base,
         edit(text) {
+          generation++;
           patch({ text, error: state.conflict ? state.error : "" });
         },
         async load(force = false) {
@@ -34558,7 +34561,7 @@
   }
 
   // dsh-plugin/file-editor/style.css
-  var style_default = "[data-textpreview-body]:has(.dshFileEditor) { display:flex; flex-direction:column; overflow:hidden; }\n.dshFileEditor { --editor-keyword:#8b36ad; --editor-string:#267541; --editor-number:#946000; --editor-comment:#667381; --editor-function:#175bbb; display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; white-space:normal; color:var(--dsw-alias-label-primary); font-family:var(--dsw-font-family,system-ui); }\nbody[data-ds-dark-theme] .dshFileEditor { --editor-keyword:#d6a5f2; --editor-string:#a4d59a; --editor-number:#e5bc80; --editor-comment:#9aa6b3; --editor-function:#9cc6fa; }\n.dshFileEditor__button { cursor:pointer; border:1px solid var(--dsw-alias-border-l2); border-radius:5px; padding:4px 9px; min-height:28px; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-2); font:inherit; }\n.dshFileEditor__button:hover:not(:disabled) { background:var(--dsw-alias-interactive-bg-hover); }\n.dshFileEditor__button:disabled { cursor:default; opacity:.5; }\n.dshFileEditor__button:focus-visible { outline:2px solid var(--dsw-alias-label-primary); outline-offset:2px; }\n.dshFileEditor__error { margin:0; padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; border-bottom:1px solid var(--dsw-alias-border-l2); flex:none; }\n.dshFileEditor__error .dshFileEditor__button { margin-left:8px; }\n.dshFileEditor__empty { padding:24px; white-space:normal; font-size:13px; }\n.dshFileEditor__host { flex:1; min-height:0; min-width:0; overflow:hidden; }\n.dshFileEditor .cm-editor { height:100%; font-size:13px; background:transparent; color:var(--dsw-alias-label-primary); }\n.dshFileEditor .cm-editor.cm-focused { outline:1px solid var(--dsw-alias-border-l2); outline-offset:-1px; }\n.dshFileEditor .cm-scroller { overflow:auto; font-family:var(--dsw-font-mono,Consolas,monospace); line-height:1.6; }\n.dshFileEditor .cm-gutters { color:var(--dsw-alias-label-tertiary); background:var(--dsw-alias-bg-layer-2); border-right:1px solid var(--dsw-alias-border-l3); }\n.dshFileEditor .cm-activeLine, .dshFileEditor .cm-activeLineGutter { background:var(--dsw-alias-interactive-bg-hover); }\n.dshFileEditor .cm-cursor { border-left-color:var(--dsw-alias-label-primary); }\n.dshFileEditor .cm-selectionBackground, .dshFileEditor .cm-editor.cm-focused .cm-selectionBackground { background:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent); }\n.dshFileEditor .cm-panels, .dshFileEditor .cm-tooltip { color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-2); border-color:var(--dsw-alias-border-l2); }\n.dshFileEditor .cm-search { white-space:normal; }\n.dshFileEditor .cm-search input { max-width:140px; color:inherit; background:var(--dsw-alias-bg-layer-1); }\n.dshFileEditor__footer { display:flex; flex-wrap:wrap; gap:10px; padding:4px 10px; border-top:1px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-secondary); font-size:11px; flex:none; }\n.dshFileEditor__dirty { margin-left:6px; font-size:11px; }\n.dshFileEditor__closeDialog { max-height:100%; }\n.dshFileEditor__closeContent { min-height:0; overflow-y:auto; }\n.dshFileEditor__closeBody { display:flex; flex-direction:column; gap:8px; font-size:14px; line-height:22px; color:var(--dsw-alias-label-primary); overflow-wrap:anywhere; }\n.dshFileEditor__closeBody p { margin:0; }\n.dshFileEditor__closeName { font-weight:500; }\n.dshFileEditor__closeHint { color:var(--dsw-alias-label-secondary); }\n.dshFileEditor__closeError { color:var(--dsw-alias-label-primary); }\n.dshFileEditor__closeActions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; width:100%; }\n";
+  var style_default = "[data-textpreview-body]:has(.dshFileEditor) { display:flex; flex-direction:column; overflow:hidden; }\n.dshFileEditor { --editor-keyword:#8b36ad; --editor-string:#267541; --editor-number:#946000; --editor-comment:#667381; --editor-function:#175bbb; display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; white-space:normal; color:var(--dsw-alias-label-primary); font-family:var(--dsw-font-family,system-ui); }\nbody[data-ds-dark-theme] .dshFileEditor { --editor-keyword:#d6a5f2; --editor-string:#a4d59a; --editor-number:#e5bc80; --editor-comment:#9aa6b3; --editor-function:#9cc6fa; }\n.dshFileEditor__button { cursor:pointer; border:1px solid var(--dsw-alias-border-l2); border-radius:5px; padding:4px 9px; min-height:28px; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-2); font:inherit; }\n.dshFileEditor__button:hover:not(:disabled) { background:var(--dsw-alias-interactive-bg-hover); }\n.dshFileEditor__button:disabled { cursor:default; opacity:.5; }\n.dshFileEditor__button:focus-visible { outline:2px solid var(--dsw-alias-label-primary); outline-offset:2px; }\n.dshFileEditor__toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--dsw-alias-border-l3); font-size:12px; flex:none; }\n.dshFileEditor__preview { flex:1; min-width:0; min-height:0; overflow:auto; }\n.dshFileEditor__preview > iframe { display:block; width:100%; height:100%; min-height:0; border:0; background:white; }\n.dshFileEditor__error { margin:0; padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; border-bottom:1px solid var(--dsw-alias-border-l2); flex:none; }\n.dshFileEditor__error .dshFileEditor__button { margin-left:8px; }\n.dshFileEditor__empty { padding:24px; white-space:normal; font-size:13px; }\n.dshFileEditor__host { flex:1; min-height:0; min-width:0; overflow:hidden; }\n.dshFileEditor .cm-editor { height:100%; font-size:13px; background:transparent; color:var(--dsw-alias-label-primary); }\n.dshFileEditor .cm-editor.cm-focused { outline:1px solid var(--dsw-alias-border-l2); outline-offset:-1px; }\n.dshFileEditor .cm-scroller { overflow:auto; font-family:var(--dsw-font-mono,Consolas,monospace); line-height:1.6; }\n.dshFileEditor .cm-gutters { color:var(--dsw-alias-label-tertiary); background:var(--dsw-alias-bg-layer-2); border-right:1px solid var(--dsw-alias-border-l3); }\n.dshFileEditor .cm-activeLine, .dshFileEditor .cm-activeLineGutter { background:var(--dsw-alias-interactive-bg-hover); }\n.dshFileEditor .cm-cursor { border-left-color:var(--dsw-alias-label-primary); }\n.dshFileEditor .cm-selectionBackground, .dshFileEditor .cm-editor.cm-focused .cm-selectionBackground { background:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent); }\n.dshFileEditor .cm-panels, .dshFileEditor .cm-tooltip { color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-2); border-color:var(--dsw-alias-border-l2); }\n.dshFileEditor .cm-search { white-space:normal; }\n.dshFileEditor .cm-search input { max-width:140px; color:inherit; background:var(--dsw-alias-bg-layer-1); }\n.dshFileEditor__footer { display:flex; flex-wrap:wrap; gap:10px; padding:4px 10px; border-top:1px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-secondary); font-size:11px; flex:none; }\n.dshFileEditor__dirty { margin-left:6px; font-size:11px; }\n.dshFileEditor__closeDialog { max-height:100%; }\n.dshFileEditor__closeContent { min-height:0; overflow-y:auto; }\n.dshFileEditor__closeBody { display:flex; flex-direction:column; gap:8px; font-size:14px; line-height:22px; color:var(--dsw-alias-label-primary); overflow-wrap:anywhere; }\n.dshFileEditor__closeBody p { margin:0; }\n.dshFileEditor__closeName { font-weight:500; }\n.dshFileEditor__closeHint { color:var(--dsw-alias-label-secondary); }\n.dshFileEditor__closeError { color:var(--dsw-alias-label-primary); }\n.dshFileEditor__closeActions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; width:100%; }\n";
 
   // dsh-plugin/file-editor/client-entry.mjs
   window.__ModuleLoader__.load({ id: ID, factory(require2) {
@@ -34574,12 +34577,8 @@
         const doc2 = docs.get(address);
         return [doc2, React.useSyncExternalStore(doc2.subscribe, doc2.getSnapshot, doc2.getSnapshot)];
       };
-      function Editor(props) {
-        useLocale(React);
+      function useFileTab(props, nativePreview = false) {
         const { tab: tab2 } = props.useTabInfo(), [doc2, state] = useDoc(props.resourceAddress);
-        const host = React.useRef(null), editor = React.useRef(null);
-        const [cursor, setCursor] = React.useState({ line: 1, column: 1 });
-        const content2 = props.content;
         const section = React.useRef(null);
         const sessionId = React.useMemo(() => ctx.sidebarRight.openTabs.getSnapshot().find((value) => value.tabId === tab2.id)?.sessionId ?? ctx.sidebarRight.mounted.getSnapshot(), [tab2.actions]);
         React.useLayoutEffect(() => {
@@ -34590,9 +34589,22 @@
             occurrence,
             tab2.actions,
             preview,
-            (commit) => closeGuard.reload(sessionId, tab2, doc2, commit)
+            (commit) => nativePreview && !doc2.dirty() && !doc2.getSnapshot().saving ? commit() : closeGuard.reload(sessionId, tab2, doc2, commit)
           );
-        }, [doc2, tab2.actions, sessionId]);
+        }, [doc2, tab2.actions, sessionId, nativePreview]);
+        const viewer = React.useMemo(() => {
+          const handle = ctx.slots.entriesOfSlot("sidebar.right.pane.tab").find((entry) => entry.options.key === "@deepseek-ai/dsh-client-ui-sidebar-documentpreview")?.store;
+          const scope = ctx.sessions.scope(sessionId);
+          return handle && scope ? ctx.slots.resolveStore(handle, { key: sessionId, ctx: scope }) : null;
+        }, [sessionId]);
+        return { tab: tab2, doc: doc2, state, section, sessionId, viewer };
+      }
+      function Editor(props) {
+        useLocale(React);
+        const { tab: tab2, doc: doc2, state, section, sessionId, viewer } = useFileTab(props);
+        const host = React.useRef(null), editor = React.useRef(null);
+        const [cursor, setCursor] = React.useState({ line: 1, column: 1 });
+        const content2 = props.content;
         React.useEffect(() => {
           void doc2.load();
         }, [doc2]);
@@ -34628,9 +34640,20 @@
           if (tab2.visible) editor.current?.measure();
         }, [tab2.visible]);
         const reload = () => closeGuard.reload(sessionId, tab2, doc2);
+        const canPreview = /\.html?$/i.test(doc2.file.path) && viewer?.actions.selected && ctx.slots.entriesOfSlot("sidebar.right.tab.document").some((entry) => entry.options.key === HTML_ID);
         return h(
           "section",
           { ref: section, className: "dshFileEditor", "data-dsh-file-editor": props.resourceAddress, "data-editor-mode": props.mode, "aria-label": t("\u6587\u4EF6\u7F16\u8F91"), "aria-busy": state.loading || state.saving },
+          canPreview && h(
+            "div",
+            { className: "dshFileEditor__toolbar" },
+            h("button", {
+              type: "button",
+              className: "dshFileEditor__button",
+              disabled: !ready || state.loading,
+              onClick: () => viewer.actions.selected(tab2.id, HTML_ID)
+            }, t("\u9884\u89C8 HTML"))
+          ),
           state.error && h(
             "div",
             { className: "dshFileEditor__error", role: "alert" },
@@ -34645,6 +34668,40 @@
             h("span", null, state.bom ? "UTF-8 BOM" : "UTF-8"),
             h("span", null, state.eol === "\r\n" ? "CRLF" : state.eol === "\r" ? "CR" : "LF")
           )
+        );
+      }
+      function HtmlPreview({ Native, ...props }) {
+        useLocale(React);
+        const { tab: tab2, doc: doc2, state, section, sessionId } = useFileTab(props, true);
+        React.useEffect(() => {
+          const current = doc2.getSnapshot();
+          if (current.version !== null && !doc2.dirty() && !current.saving) void doc2.load(true);
+        }, [doc2, props.content.kind === "bytes" ? props.content.data : props.content.revision]);
+        const draft = doc2.dirty() ? state.text : null;
+        const text = state.version !== null && (!state.error || draft !== null) ? state.text : null;
+        const content2 = React.useMemo(() => text === null ? props.content : { kind: "bytes", data: new TextEncoder().encode(text) }, [text, props.content]);
+        return h(
+          "section",
+          {
+            ref: section,
+            className: "dshFileEditor dshFileEditor--preview",
+            "data-dsh-file-editor": props.resourceAddress,
+            "data-editor-mode": "html",
+            "aria-label": t("HTML \u9884\u89C8"),
+            "aria-busy": state.loading || state.saving
+          },
+          state.error && h(
+            "div",
+            { className: "dshFileEditor__error", role: "alert" },
+            state.error,
+            h("button", {
+              type: "button",
+              className: "dshFileEditor__button",
+              disabled: state.loading || state.saving,
+              onClick: () => closeGuard.reload(sessionId, tab2, doc2)
+            }, t("\u91CD\u65B0\u8BFB\u53D6"))
+          ),
+          h("div", { className: "dshFileEditor__preview" }, h(Native, { ...props, content: content2 }))
         );
       }
       function Title(props) {
@@ -34701,11 +34758,38 @@
       }
       const off = [() => closeGuard.dispose()];
       off.push(ctx.slots.inject("shell.overlay", () => ctx.slots.register({ name: "shell.overlay", id: "desktop-file-editor-close" }, CloseDialog)));
-      for (const [key, mode] of [[PLAIN_ID, "plain"], ["@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code", "code"]]) off.push(ctx.slots.inject("sidebar.right.tab.document", () => ctx.slots.register({
+      for (const [key, mode] of [[PLAIN_ID, "plain"], [CODE_ID, "code"]]) off.push(ctx.slots.inject("sidebar.right.tab.document", () => ctx.slots.register({
         name: "sidebar.right.tab.document",
         key,
         priority: -10
       }, (props) => h(Editor, { ...props, mode }))));
+      off.push(ctx.slots.inject("sidebar.right.tab.document", () => {
+        let remove2, registering = false;
+        const attach = () => {
+          if (remove2 || registering) return;
+          const native = ctx.slots.entriesOfSlot("sidebar.right.tab.document").find((entry) => entry.options.key === HTML_ID);
+          if (!native) return;
+          registering = true;
+          try {
+            remove2 = ctx.slots.register({
+              name: "sidebar.right.tab.document",
+              key: HTML_ID,
+              priority: -10,
+              inject: native.inject,
+              locale: native.locale,
+              store: native.store
+            }, (props) => h(HtmlPreview, { ...props, Native: native.component }));
+          } finally {
+            registering = false;
+          }
+        };
+        const unsubscribe = ctx.slots.subscribe("sidebar.right.tab.document", attach);
+        attach();
+        return () => {
+          unsubscribe();
+          remove2?.();
+        };
+      }));
       off.push(ctx.slots.inject("sidebar.right.pane.tab.title", () => ctx.slots.register({
         name: "sidebar.right.pane.tab.title",
         key: "@deepseek-ai/dsh-client-ui-sidebar-documentpreview",

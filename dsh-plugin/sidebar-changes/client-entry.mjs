@@ -4,6 +4,9 @@ import { createStateProvider, createViewStates, migrateFileIds } from './client-
 import { createHistoryView } from './history-view.mjs'
 import { createSessionDetails } from './session-details.mjs'
 import { createGitActions } from './git-actions.mjs'
+import { createFileMenu } from './file-menu.mjs'
+import { createFileView } from './file-view.mjs'
+import { FILE_KIND, FILE_PREFIX, parseChangeAddress, changeTitle } from './file-resource.mjs'
 
 const ID = '@dsh-desktop/sidebar-changes', KIND = 'desktop-changes', PREFIX = 'dsh-resource://desktop-changes/'
 const STATUS = { get added() { return t('新增') }, get deleted() { return t('删除') }, get renamed() { return t('重命名') }, get modified() { return t('修改') }, get restored() { return t('已恢复原状') }, get conflict() { return t('合并冲突') }, get submodule() { return t('子模块') }, get symlink() { return t('符号链接') } }
@@ -115,6 +118,8 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
   const SessionDetails = createSessionDetails(React, primitives, { call, message, Placeholder, DiffRows, stats })
   const GitActions = createGitActions(React, primitives)
   const HistoryView = createHistoryView(React, primitives, { SourceMenu, Placeholder, StatusTag, call, message })
+  const FileMenu = createFileMenu(React, primitives)
+  const FileView = createFileView(React, primitives, { call, message, Placeholder, Details, stats })
   function Panel(props) {
       useLocale(React)
     const { states, sessionId, tab } = props, key = sessionId + '\0' + tab.contentId
@@ -138,6 +143,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     const [capabilities, setCapabilities] = React.useState(null), [data, setData] = React.useState(null), [error, setError] = React.useState(null)
     const [refresh, setRefresh] = React.useState(0), [loading, setLoading] = React.useState(true)
     const [detailAttempt, setDetailAttempt] = React.useState(0), retryDetails = React.useRef(false)
+    const [fileMenu, setFileMenu] = React.useState(null), [actionError, setActionError] = React.useState(null)
     const list = React.useRef(), position = React.useRef(saved), root = React.useRef(null)
     const restoring = React.useRef(true), readyFiles = React.useRef(new Set())
     const fetching = React.useRef(false)
@@ -204,6 +210,13 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     }
     const reload = () => { retryDetails.current = true; setRefresh(n => n + 1) }
     const toggle = id => { restoring.current = false; setExpanded(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id]) }
+    React.useEffect(() => { setFileMenu(null) }, [source, tab.visible])
+    const showFileMenu = (event, fileId, keyboard = false) => {
+      event.preventDefault(); event.stopPropagation()
+      const rect = event.currentTarget.getBoundingClientRect()
+      setFileMenu({ fileId, trigger: event.currentTarget, point: keyboard ? { x: rect.left + 8, y: rect.bottom } : { x: event.clientX, y: event.clientY } })
+    }
+    const dismissFileMenu = () => { setFileMenu(null); fileMenu?.trigger?.focus({ preventScroll: true }) }
     const totals = data?.entries.reduce((total, entry) => ({
       added: total.added === null || entry.stats.added === null ? null : total.added + entry.stats.added,
       removed: total.removed === null || entry.stats.removed === null ? null : total.removed + entry.stats.removed,
@@ -212,6 +225,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     const noGit = git && git.status !== 'available'
     const panelId = React.useId()
     const entries = [...(data?.entries || []), ...(showRestored ? data?.restoredEntries || [] : [])]
+    const menuEntry = fileMenu && entries.find(entry => entry.fileId === fileMenu.fileId)
     const summary = source === 'session' && data?.totals
       ? h(React.Fragment, null,
         data.totals.session.files > 0 && h('span', { title: t('已确认的会话净变化') }, stats(data.totals.session)),
@@ -228,34 +242,39 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
           h(GitActions, { ctx, sessionId, capabilities, source, data, visible: tab.visible, onStaged: () => changeSource('staged') }),
           expanded.length > 0 && h(Tooltip, { label: t('全部折叠'), portal: true, side: 'bottom' },
             h(Button, { size: 'sm', className: 'dshChanges__collapse', 'aria-label': t('全部折叠'), onClick: () => { restoring.current = false; setExpanded([]) } }, h(ChevronUp, { size: 14 }))))),
-      data?.coverageEvents?.length > 0 && h('details', { className: 'dshChanges__coverage' },
-        h('summary', null, t('查看采集范围')),
-        data.coverageEvents.map((event, index) => h('div', { key: index },
-          `${REASONS[event.reason] || event.reason} · ${event.root} · ${(event.paths || [event.path || '.']).join('、')}`))),
       source === 'session' && data?.pendingCount > 0 && h('div', { className: 'dshChanges__metadata' },
         h(Tag, { tone: 'quiet' }, t('正在采集'))),
+      actionError && h('div', { className: 'dshChanges__actionError', role: 'alert' }, actionError,
+        h(Button, { size: 'sm', onClick: () => setActionError(null) }, t('关闭'))),
+      tab.visible && menuEntry && h(FileMenu, { key: menuEntry.fileId, ctx, tab, sessionId, source, entry: menuEntry,
+        workspaceRoot: data.workspaceRoot, point: fileMenu.point, expanded: expanded.includes(menuEntry.fileId), toggle,
+        dismiss: dismissFileMenu, onError: setActionError }),
       error && h(Placeholder, { error: true, retry: reload, busy: loading }, error),
       loading && !data && !error && h(Placeholder, null, t('正在加载更改…')),
       data && h('div', { className: 'dshChanges__list', ref: list,
         onWheel: () => { restoring.current = false }, onPointerDown: () => { restoring.current = false },
-        onScroll: event => { if (tab.visible && !restoring.current) update({ listScroll: event.currentTarget.scrollTop }) } },
+        onScroll: event => { setFileMenu(null); if (tab.visible && !restoring.current) update({ listScroll: event.currentTarget.scrollTop }) } },
         !data.entries.length && h(Placeholder, null, source === 'session' ? data.gaps.length ? t('暂未找到可展示的更改，采集范围存在缺口') : data.restoredEntries?.length ? t('已记录的文件均已恢复原状') : t('尚无已记录的文件更改') : source === 'staged' ? t('暂无暂存的更改') : t('没有未提交的更改')),
         data.restoredEntries?.length > 0 && h(Button, { size: 'sm', className: 'dshChanges__historyButton', 'aria-expanded': showRestored,
           onClick: () => { setShowRestored(value => !value); update({ showRestored: !showRestored }) } }, t("{0}已恢复原状（{1}）", [showRestored ? t('收起') : t('查看'), data.restoredEntries.length])),
         entries.map((entry, index) => {
           const open = expanded.includes(entry.fileId), detailId = panelId + '-' + entry.fileId
+          const segmented = entry.reason && entry.continuity === 'broken'
           return h('article', { key: entry.fileId, className: 'dshChanges__item', 'data-open': open },
             data.roots?.length > 1 && entry.root !== entries[index - 1]?.root && h('div', { className: 'dshChanges__metadata dshChanges__root' }, entry.root),
             h(Tooltip, { label: entry.path, portal: true, side: 'bottom', delayMs: 600, focusDelayMs: 400, maxWidth: 420 },
               h(Button, { size: 'sm', className: 'dshChanges__file', onClick: () => toggle(entry.fileId),
+                onContextMenu: event => showFileMenu(event, entry.fileId),
+                onKeyDown: event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') showFileMenu(event, entry.fileId, true) },
+                'data-context-open': menuEntry?.fileId === entry.fileId || undefined,
                 'aria-expanded': open, 'aria-controls': detailId,
                 'aria-label': t("{0}，{1}，新增 {2} 行，删除 {3} 行", [entry.path, STATUS[entry.status], entry.stats.added ?? t('未知'), entry.stats.removed ?? t('未知')]) },
                 h('span', { className: 'dshChanges__chevron', 'aria-hidden': true }, h(open ? ChevronDown : ChevronRight, { size: 12 })),
                 h(FileTypeIcon, { path: entry.path, size: 16, className: 'dshChanges__fileIcon' }),
                 h('span', { className: 'dshChanges__row' }, h(FilePath, { path: entry.path }), stats(entry.stats)))),
-            (entry.reason || !['added', 'modified'].includes(entry.status)) && h('div', { className: 'dshChanges__fileTags' },
+            (segmented || !['added', 'modified'].includes(entry.status)) && h('div', { className: 'dshChanges__fileTags' },
               !['added', 'modified'].includes(entry.status) && h(Tag, { tone: entry.status === 'deleted' ? 'danger' : 'neutral' }, STATUS[entry.status]),
-              entry.reason && h(StatusTag, { tone: 'warning', label: REASONS[entry.reason] || entry.reason }, entry.continuity === 'broken' ? t('分段比较') : t('内容受限'))),
+              segmented && h(StatusTag, { tone: 'warning', label: REASONS[entry.reason] || entry.reason }, t('分段比较'))),
             h('div', { id: detailId, 'aria-hidden': !open }, open && tab.visible && h(Details, { key: entry.fileId + source + detailAttempt, ctx, sessionId, source, entry, revision: data.revision, signal: tab.signal, onReady: restoreScroll, reload, retryBusy: loading })))
         })))
   }
@@ -272,6 +291,11 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       return tab.contentId.startsWith(PREFIX) ? h(Panel, { key: props.sessionId + tab.contentId, ctx, tab, sessionId: props.sessionId, states }) : h(Placeholder, null, t('正在打开更改…'))
     }
     const offBody = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: ID, inject: sessionId => ({ sessionId }) }, Body))
+    const offFileBody = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+      name: 'sidebar.right.pane.tab', key: ID + '/file', inject: sessionId => ({ sessionId }),
+    }, props => h(FileView, { ctx, tab: props.useTabInfo().tab, sessionId: props.sessionId, states })))
+    const offFileType = ctx.sidebarRightTabs.register({ id: ID + '/file', kind: FILE_KIND, patterns: [FILE_PREFIX + '**'],
+      canOpen: address => Boolean(parseChangeAddress(address)), title: changeTitle })
     let offType, mode
     const sync = () => {
       const next = document.documentElement.getAttribute('data-dsh-ui') !== 'vanilla'
@@ -284,9 +308,9 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     const observer = new MutationObserver(sync); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-ui'] })
     const provider = createStateProvider(ctx, states)
     const offState = window.__DSH_UI_STATE__?.registerProvider('desktop-changes', provider)
-    return () => { observer.disconnect(); document.removeEventListener('dsh-desktop:ui-mode', sync); offType?.(); offBody(); offState?.(); states.clear() }
+    return () => { observer.disconnect(); document.removeEventListener('dsh-desktop:ui-mode', sync); offType?.(); offFileType(); offFileBody(); offBody(); offState?.(); states.clear() }
   }
-  return { inject: ['slots', 'sidebarRightTabs', 'sessions', 'remote'], async apply(ctx) {
+  return { inject: ['slots', 'sidebarRightTabs', 'sessions', 'remote', 'remote.session'], async apply(ctx) {
     const offRemote = await ctx.remote.$mount(contribution)
     const fiber = ctx.inject(['remote.desktopChanges'], installUI)
     return async () => { await fiber.dispose(); await offRemote() }

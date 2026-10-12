@@ -2322,7 +2322,7 @@ test('a SESSION menu gets 复制... and its deep-link child copies through the h
   assert.equal(copied[0].command, 'clipboard_write_text', 'through the granted clipboard command')
   assert.equal(
     copied[0].args.text,
-    'deepseekharness://session/session-abc-123',
+    'deepseekharness://session/abc-123',
     'naming the row’s own session',
   )
   const toast = document.body.children.find((c) => c.getAttribute('data-dsh-desktop') === 'toast')

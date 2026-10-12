@@ -13,7 +13,35 @@ import { git, listGit, availability } from './sidebar-changes/host/git-provider.
 import { absent, hash, relative } from './sidebar-changes/host/paths.mjs'
 import { GitHistory } from './sidebar-changes/host/git-history.mjs'
 import { layoutCommits } from './sidebar-changes/shared/commit-graph.mjs'
-import { createViewStates } from './sidebar-changes/client-state.mjs'
+import { createViewStates, isChanges } from './sidebar-changes/client-state.mjs'
+import { changeAddress, parseChangeAddress, fileAddress, absoluteFilePath, FILE_KIND } from './sidebar-changes/file-resource.mjs'
+import { parseFile } from './file-editor/protocol.mjs'
+
+test('file review addresses preserve the session, scope and unusual path through tab restoration', () => {
+  const entry = { fileId: 'file-one', path: 'folder/中文 # % 文件.ts', absolutePath: 'D:\\project\\folder\\中文 # % 文件.ts' }
+  const addresses = ['session', 'working', 'staged'].map(source => {
+    const address = changeAddress('session-one', source, entry)
+    assert.deepEqual(parseChangeAddress(address), { sessionId: 'session-one', source, fileId: entry.fileId, path: entry.path })
+    assert.equal(isChanges({ kind: FILE_KIND, contentId: address }), true)
+    return address
+  })
+  assert.equal(new Set(addresses).size, 3)
+  assert.deepEqual(parseFile(fileAddress('session-one', absoluteFilePath(entry))), { sessionId: 'session-one', path: entry.absolutePath })
+  for (const address of [addresses[0] + '/extra', addresses[0].replace('/session/', '/history/'), addresses[0].replace('file-one', '%ZZ')]) {
+    assert.equal(parseChangeAddress(address), null)
+  }
+})
+
+test('file actions receive the recorded absolute path, including files outside the session root', async t => {
+  const { workspace, root, store } = await fixture(t), scope = { sessionId: 'paths', root: workspace }
+  const sibling = path.join(root, 'other'); await mkdir(sibling)
+  await record(store, scope, endpoint('a'), endpoint('b'), 'local.txt')
+  await record(store, { ...scope, root: sibling }, endpoint('x'), endpoint('y'), 'remote.txt')
+  const api = new ChangesApi(store), list = await api.listChanges(scope, 'session')
+  assert.equal(list.entries.find(entry => entry.path === 'local.txt').absolutePath, path.join(workspace, 'local.txt'))
+  assert.equal(list.entries.find(entry => entry.path === 'remote.txt').absolutePath, path.join(sibling, 'remote.txt'))
+  assert.equal(list.entries.find(entry => entry.path === 'remote.txt').directoryPath, sibling)
+})
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'dsh-changes-')))

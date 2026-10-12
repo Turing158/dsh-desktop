@@ -1,5 +1,5 @@
 import { t, useLocale } from '../i18n/api.mjs'
-import { contribution, ID, PLAIN_ID, parseFile } from './protocol.mjs'
+import { contribution, ID, PLAIN_ID, CODE_ID, HTML_ID, parseFile } from './protocol.mjs'
 import { createDocuments } from './documents.mjs'
 import { mountEditor } from './editor.mjs'
 import { createStateProvider } from './state-provider.mjs'
@@ -18,12 +18,8 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       const doc = docs.get(address)
       return [doc, React.useSyncExternalStore(doc.subscribe, doc.getSnapshot, doc.getSnapshot)]
     }
-    function Editor(props) {
-      useLocale(React)
+    function useFileTab(props, nativePreview = false) {
       const { tab } = props.useTabInfo(), [doc, state] = useDoc(props.resourceAddress)
-      const host = React.useRef(null), editor = React.useRef(null)
-      const [cursor, setCursor] = React.useState({ line: 1, column: 1 })
-      const content = props.content
       const section = React.useRef(null)
       // A tab can display a file belonging to another session's workspace.
       const sessionId = React.useMemo(() => ctx.sidebarRight.openTabs.getSnapshot()
@@ -33,8 +29,23 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         if (!preview) return
         const occurrence = ctx.sidebarRight.tabDomain.occurrence(sessionId, tab)
         return bindReloadGuard(occurrence, tab.actions, preview,
-          commit => closeGuard.reload(sessionId, tab, doc, commit))
-      }, [doc, tab.actions, sessionId])
+          commit => nativePreview && !doc.dirty() && !doc.getSnapshot().saving
+            ? commit() : closeGuard.reload(sessionId, tab, doc, commit))
+      }, [doc, tab.actions, sessionId, nativePreview])
+      const viewer = React.useMemo(() => {
+        const handle = ctx.slots.entriesOfSlot('sidebar.right.pane.tab')
+          .find(entry => entry.options.key === '@deepseek-ai/dsh-client-ui-sidebar-documentpreview')?.store
+        const scope = ctx.sessions.scope(sessionId)
+        return handle && scope ? ctx.slots.resolveStore(handle, { key: sessionId, ctx: scope }) : null
+      }, [sessionId])
+      return { tab, doc, state, section, sessionId, viewer }
+    }
+    function Editor(props) {
+      useLocale(React)
+      const { tab, doc, state, section, sessionId, viewer } = useFileTab(props)
+      const host = React.useRef(null), editor = React.useRef(null)
+      const [cursor, setCursor] = React.useState({ line: 1, column: 1 })
+      const content = props.content
       React.useEffect(() => { void doc.load() }, [doc])
       // Native reloads can remount the renderer; a dirty draft always wins.
       React.useEffect(() => {
@@ -57,12 +68,38 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       React.useEffect(() => { editor.current?.wrap(props.wrap) }, [props.wrap])
       React.useEffect(() => { if (tab.visible) editor.current?.measure() }, [tab.visible])
       const reload = () => closeGuard.reload(sessionId, tab, doc)
+      const canPreview = /\.html?$/i.test(doc.file.path) && viewer?.actions.selected
+        && ctx.slots.entriesOfSlot('sidebar.right.tab.document').some(entry => entry.options.key === HTML_ID)
       return h('section', { ref: section, className: 'dshFileEditor', 'data-dsh-file-editor': props.resourceAddress, 'data-editor-mode': props.mode, 'aria-label': t('文件编辑'), 'aria-busy': state.loading || state.saving },
+        canPreview && h('div', { className: 'dshFileEditor__toolbar' },
+          h('button', { type: 'button', className: 'dshFileEditor__button', disabled: !ready || state.loading,
+            onClick: () => viewer.actions.selected(tab.id, HTML_ID) }, t('预览 HTML'))),
         state.error && h('div', { className: 'dshFileEditor__error', role: 'alert' }, state.error,
           h('button', { type: 'button', className: 'dshFileEditor__button', onClick: reload, disabled: state.loading || state.saving }, ready ? t('重新读取') : t('重试'))),
         ready ? h('div', { ref: host, className: 'dshFileEditor__host' }) : h('div', { className: 'dshFileEditor__empty' }, state.loading ? t('正在读取完整文件…') : t('文件内容未载入。')),
         ready && h('div', { className: 'dshFileEditor__footer' }, h('span', null, t("第 {0} 行，第 {1} 列", [cursor.line, cursor.column])),
           h('span', null, state.bom ? 'UTF-8 BOM' : 'UTF-8'), h('span', null, state.eol === '\r\n' ? 'CRLF' : state.eol === '\r' ? 'CR' : 'LF')))
+    }
+    function HtmlPreview({ Native, ...props }) {
+      useLocale(React)
+      const { tab, doc, state, section, sessionId } = useFileTab(props, true)
+      // Keep the host's HTML renderer, resource readers and sandbox policy.
+      // Once edited, retain the shared text after saving, including when the
+      // native viewer's automatic refresh is off. Reconcile later disk reads.
+      React.useEffect(() => {
+        const current = doc.getSnapshot()
+        if (current.version !== null && !doc.dirty() && !current.saving) void doc.load(true)
+      }, [doc, props.content.kind === 'bytes' ? props.content.data : props.content.revision])
+      const draft = doc.dirty() ? state.text : null
+      const text = state.version !== null && (!state.error || draft !== null) ? state.text : null
+      const content = React.useMemo(() => text === null ? props.content
+        : { kind: 'bytes', data: new TextEncoder().encode(text) }, [text, props.content])
+      return h('section', { ref: section, className: 'dshFileEditor dshFileEditor--preview', 'data-dsh-file-editor': props.resourceAddress,
+        'data-editor-mode': 'html', 'aria-label': t('HTML 预览'), 'aria-busy': state.loading || state.saving },
+        state.error && h('div', { className: 'dshFileEditor__error', role: 'alert' }, state.error,
+          h('button', { type: 'button', className: 'dshFileEditor__button', disabled: state.loading || state.saving,
+            onClick: () => closeGuard.reload(sessionId, tab, doc) }, t('重新读取'))),
+        h('div', { className: 'dshFileEditor__preview' }, h(Native, { ...props, content })))
     }
     function Title(props) {
       const { tab } = props.useTabInfo(), file = parseFile(tab.contentId)
@@ -105,9 +142,27 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     // Slot shadowing is a public contract. The native plain-text fallback also
     // covers extensionless/unknown text files and already-open text tabs. Keep
     // the native viewer choices; editing is available in both text modes.
-    for (const [key, mode] of [[PLAIN_ID, 'plain'], ['@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code', 'code']]) off.push(ctx.slots.inject('sidebar.right.tab.document', () => ctx.slots.register({
+    for (const [key, mode] of [[PLAIN_ID, 'plain'], [CODE_ID, 'code']]) off.push(ctx.slots.inject('sidebar.right.tab.document', () => ctx.slots.register({
       name: 'sidebar.right.tab.document', key, priority: -10,
     }, props => h(Editor, { ...props, mode }))))
+    off.push(ctx.slots.inject('sidebar.right.tab.document', () => {
+      let remove, registering = false
+      // The owner declares the slot before it registers its HTML body.
+      const attach = () => {
+        if (remove || registering) return
+        const native = ctx.slots.entriesOfSlot('sidebar.right.tab.document').find(entry => entry.options.key === HTML_ID)
+        if (!native) return
+        registering = true
+        try {
+          remove = ctx.slots.register({ name: 'sidebar.right.tab.document', key: HTML_ID, priority: -10,
+            inject: native.inject, locale: native.locale, store: native.store,
+          }, props => h(HtmlPreview, { ...props, Native: native.component }))
+        } finally { registering = false }
+      }
+      const unsubscribe = ctx.slots.subscribe('sidebar.right.tab.document', attach)
+      attach()
+      return () => { unsubscribe(); remove?.() }
+    }))
     off.push(ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
       name: 'sidebar.right.pane.tab.title', key: '@deepseek-ai/dsh-client-ui-sidebar-documentpreview', priority: -10,
     }, Title)))

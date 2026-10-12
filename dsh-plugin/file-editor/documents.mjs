@@ -18,7 +18,7 @@ export function createDocuments(remote) {
       getSnapshot: () => state,
       subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
       dirty: () => state.version !== null && state.text !== state.base,
-      edit(text) { patch({ text, error: state.conflict ? state.error : '' }) },
+      edit(text) { generation++; patch({ text, error: state.conflict ? state.error : '' }) },
       async load(force = false) {
         if (pendingRead) return pendingRead
         if (state.saving || (!force && state.version !== null)) return

@@ -273,9 +273,13 @@ html body .dshTerminalSettings__row { display:flex; align-items:center; flex-wra
 html body .dshTerminalSettings__text { display:flex; flex:1; flex-direction:column; gap:4px; min-width:160px; padding-right:16px; }
 html body .dshTerminalSettings__title { color:var(--dsw-alias-label-primary); font-size:14px; line-height:22px; }
 html body .dshTerminalSettings__hint { color:var(--dsw-alias-label-secondary); font-size:12px; line-height:18px; }
-html body .dshTerminalSettings__selector:hover { background:var(--dsw-alias-interactive-bg-hover)!important; }
-html body .dshTerminalSettings__selector:focus-visible { outline:2px solid var(--dsw-alias-state-focus-primary,#4c83e8); outline-offset:2px; }
-html body .dshTerminalSettings__selector:disabled { opacity:.55; cursor:default!important; }
+/* Match General's language selector, including its shared radius and icon. */
+html body .dshTerminalSettings__selector { box-sizing:border-box; display:inline-flex; align-items:center; gap:12px; min-width:0; max-width:100%; height:36px; padding:0 14px; border:none; border-radius:var(--dsw-radius-md,8px); background:var(--dsw-alias-bg-module-platform); color:var(--dsw-alias-label-primary); font:inherit; font-size:14px; line-height:22px; cursor:pointer; }
+html body .dshTerminalSettings__value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+html body .dshTerminalSettings__chevron { flex:none; }
+html body .dshTerminalSettings__selector:hover:not(:disabled) { background-color:var(--dsw-alias-interactive-bg-hover); }
+html body .dshTerminalSettings__selector:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4c83e8)); outline-offset:2px; }
+html body .dshTerminalSettings__selector:disabled { opacity:.4; cursor:default; }
 html body .dshTerminal__more { display:inline-flex; align-items:center; justify-content:center; flex:none; box-sizing:border-box; min-width:34px; height:28px; padding:0 10px; color:var(--dsw-alias-label-secondary,#4a4f57); font:inherit; font-size:14px; line-height:1; letter-spacing:1px; background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.12)); border:none; border-radius:14px; cursor:pointer; }
 
 /* The stand-in menu, for a page where the app's Menu primitive could not be

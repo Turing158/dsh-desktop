@@ -10,7 +10,7 @@
  * Grounding — selectors come from inspecting the live page, not guessing:
  *   #root > div > div[class*="_frame"]      the app frame
  *   [class*="_sidebarCol"]                  the left column
- *   [class*="_input"][contenteditable]      the composer's editable area
+ *   [data-composer-card]                    editable and workspace-picker cards
  *   body[data-ds-dark-theme]                dark mode marker
  * Each step fails quietly if a selector misses, so a DSH upgrade degrades to
  * "overlay does nothing" instead of a broken UI.
@@ -52,6 +52,10 @@
 
   /** Steady-state re-check interval, to survive React re-renders, in ms. */
   var WATCH_MS = 2000
+
+  // The workspace picker and disabled composer share the same card marker.
+  // Keep the editable-input fallback for older DSH versions.
+  var COMPOSER_SELECTOR = '[data-composer-card], [class*="_input"][contenteditable="true"]'
 
   /** `<html>` attribute naming the UI mode; the CSS tier's gate keys off it. */
   var MODE_ATTRIBUTE = 'data-dsh-ui'
@@ -191,6 +195,11 @@
    */
   function clearDecorations() {
     var changed = false
+    document.querySelectorAll('[data-dsh-trigger-title]').forEach(function (node) {
+      if (node.getAttribute('title') === node.getAttribute('data-dsh-trigger-title')) node.removeAttribute('title')
+      node.removeAttribute('data-dsh-trigger-title')
+      changed = true
+    })
     document.querySelectorAll('.dshPluginStatus').forEach(function (node) { node.remove() })
     var tagged = document.querySelectorAll('[data-dsh-desktop], [data-dsh-relocated], [data-dsh-danger]')
     for (var i = 0; i < tagged.length; i++) {
@@ -254,14 +263,17 @@
    * @returns {boolean} whether the composer was found.
    */
   function decorateComposer() {
-    var input = document.querySelector('[class*="_input"][contenteditable="true"]')
-    if (!input) return false
-    var card = input.closest('[class*="_card"]') || input.parentElement
-    if (card && !marked.has(card)) {
-      marked.add(card)
-      card.setAttribute('data-dsh-desktop', 'composer')
-    }
-    return true
+    var found = false
+    document.querySelectorAll(COMPOSER_SELECTOR).forEach(function (node) {
+      var card = node.hasAttribute('data-composer-card') ? node : node.closest('[class*="_card"]') || node.parentElement
+      if (!card) return
+      found = true
+      if (!marked.has(card)) {
+        marked.add(card)
+        card.setAttribute('data-dsh-desktop', 'composer')
+      }
+    })
+    return found
   }
 
   /**
@@ -793,6 +805,37 @@
     })
   }
 
+  /** The compact trigger rows expose their complete text in a native tooltip. */
+  function decorateTriggerMenuTitles() {
+    if (isVanilla()) return
+    document.querySelectorAll('[data-trigger-menu] [role="option"]').forEach(function (row) {
+      var previous = row.getAttribute('data-dsh-trigger-title')
+      // Keep a tooltip supplied by the frontend itself, including later updates.
+      if (row.hasAttribute('title') && row.getAttribute('title') !== previous) return
+      var title = Array.from(row.querySelectorAll('[class*="_itemName"], [class*="_itemAlias"], [class*="_itemDescription"]'))
+        .map(function (node) { return node.textContent.trim() })
+        .filter(Boolean).join('\n')
+      if (!title) {
+        row.removeAttribute('title')
+        row.removeAttribute('data-dsh-trigger-title')
+        return
+      }
+      if (row.getAttribute('title') !== title) row.setAttribute('title', title)
+      if (previous !== title) row.setAttribute('data-dsh-trigger-title', title)
+    })
+  }
+
+  /** Menus mount on demand; hovering must not wait for the periodic pass. */
+  function installTriggerMenuTitles() {
+    if (window.__dshTriggerMenuTitles === true) return
+    window.__dshTriggerMenuTitles = true
+    function update(event) {
+      if (event.target && event.target.closest && event.target.closest('[data-trigger-menu] [role="option"]')) decorateTriggerMenuTitles()
+    }
+    document.addEventListener('mouseover', update, true)
+    document.addEventListener('focusin', update, true)
+  }
+
   /** Run one overlay pass. @returns {boolean} whether the app had mounted. */
   function pass() {
     // The remote page's quick actions are window chrome, like the bar they sit
@@ -824,6 +867,7 @@
     // `sweep: true` — the periodic pass is the backstop that catches a layer with
     // no role of its own, which the cheap candidate set would miss.
     markFullSurfaceLayers(true)
+    decorateTriggerMenuTitles()
 
     var ready = decorateComposer()
     if (ready) {
@@ -852,7 +896,7 @@
    * @returns {boolean} whether the composer was found.
    */
   function decorateComposerPresent() {
-    return document.querySelector('[class*="_input"][contenteditable="true"]') !== null
+    return document.querySelector(COMPOSER_SELECTOR) !== null
   }
 
   /** Wait for the app to mount, then keep watching it. */
@@ -1631,6 +1675,79 @@
     // preference either, so the stylesheet's un-suppressed default stands.
     if (typeof window.matchMedia !== 'function') return true
     return !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
+
+  /** Extend the native keyed-row animator to disclosures and view changes.
+   * Its pre-commit snapshot preserves in-flight positions during rapid toggles;
+   * its own renderer still owns scrolling, focus, dragging and exit cleanup.
+   * There is no row-animation slot, so adapt only instances with this contract.
+   */
+  function watchWorkspaceMotion() {
+    if (typeof MutationObserver !== 'function' || !document.body.animate || window.__dshWorkspaceMotion) return
+    window.__dshWorkspaceMotion = true
+    var owners = new Map()
+    var treeSelector = '[data-slot="sidebar.workspaces"] [role="tree"]'
+
+    function snapshot(previous) {
+      if (isVanilla()) return owners.get(this).call(this, previous)
+      if (!animationsActive() || !previous.ready || !this.props.ready ||
+          previous.rowKeys.length === this.props.rowKeys.length && previous.rowKeys.every((key, i) => key === this.props.rowKeys[i])) return null
+      var list = this.list.current
+      if (!list || !list.getClientRects().length) return null
+      var viewport = list.getBoundingClientRect()
+      var positions = this.readPositions(), next = new Set(this.props.rowKeys), removed = new Map()
+      positions.forEach(function (row, key) {
+        var rect = row.rect
+        if (next.has(key) || rect.bottom <= viewport.top || rect.top >= viewport.bottom || rect.right <= viewport.left || rect.left >= viewport.right) return
+        var clone = row.element.cloneNode(true)
+        clone.removeAttribute('data-row-key')
+        clone.removeAttribute('id')
+        clone.querySelectorAll('[id]').forEach(function (child) { child.removeAttribute('id') })
+        clone.inert = true
+        clone.setAttribute('aria-hidden', 'true')
+        clone.style.setProperty('--dsh-workspace-indent', getComputedStyle(row.element).getPropertyValue('--dsh-workspace-indent'))
+        removed.set(key, Object.assign({}, row, { element: clone }))
+      })
+      return { positions: positions, removed: removed }
+    }
+
+    function scan() {
+      owners.forEach(function (original, owner) {
+        if (owner.list.current && owner.list.current.isConnected) return
+        owner.getSnapshotBeforeUpdate = original
+        owners.delete(owner)
+      })
+      document.querySelectorAll(treeSelector).forEach(function (tree) {
+        var fiberKey = Object.keys(tree).find(function (key) { return key.indexOf('__reactFiber$') === 0 })
+        for (var fiber = tree[fiberKey], depth = 0; fiber && depth < 12; fiber = fiber.return, depth++) {
+          var owner = fiber.stateNode
+          if (!owner || owner.list?.current !== tree || !Array.isArray(owner.props?.rowKeys) ||
+              !['getSnapshotBeforeUpdate', 'readPositions', 'clear', 'componentDidUpdate'].every(function (key) { return typeof owner[key] === 'function' })) continue
+          if (!owners.has(owner)) {
+            owners.set(owner, owner.getSnapshotBeforeUpdate)
+            owner.getSnapshotBeforeUpdate = snapshot
+          }
+          break
+        }
+      })
+    }
+    function syncPreference() {
+      // Clear immediately: disabling motion must not leave an inert exit behind.
+      if (!animationsActive()) owners.forEach(function (_, owner) { owner.clear() })
+    }
+    var observer = new MutationObserver(function (records) {
+      if (records.some(function (record) {
+        return Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).some(function (node) {
+          return node.nodeType === 1 && (node.matches('[role="tree"]') || node.querySelector('[role="tree"]'))
+        })
+      })) scan()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    var preferences = new MutationObserver(syncPreference)
+    preferences.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-ui', 'data-dsh-desktop-animation'] })
+    var media = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)')
+    if (media && media.addEventListener) media.addEventListener('change', syncPreference)
+    scan()
   }
 
   /** Animate navigation identities, never transcript or terminal output updates.
@@ -3271,7 +3388,7 @@
    * @param {string} sessionId - the session the link names.
    */
   function copySessionDeepLink(sessionId) {
-    var link = DEEP_LINK_PREFIX + sessionId
+    var link = DEEP_LINK_PREFIX + sessionId.replace(/^session-/, '')
     try {
       var api = window.__TAURI__
       if (!api || !api.core || typeof api.core.invoke !== 'function') {
@@ -3987,9 +4104,11 @@
   }
 
   begin()
+  installTriggerMenuTitles()
   watchRelocatedRows()
   watchRowMenus()
   watchRemovalGhosts()
+  watchWorkspaceMotion()
   watchViewMotion()
   watchModelDisclosures()
   installFileReferenceSelection()

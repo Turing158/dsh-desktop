@@ -5,6 +5,7 @@
 //! it binds an OS-assigned port and carries a one-time token (`dsh.rs`) — so the
 //! link carries only the session id and the app translates it, after boot, into
 //! a session selection through the page's own services.
+//! Links omit the internal `session-` prefix; older links with it still open.
 //!
 //! ## The three stages
 //!
@@ -107,7 +108,8 @@ impl std::fmt::Display for ParseError {
 /// parses the part after `//` as host + path) and the host-less
 /// `deepseekharness:session/<id>`. Both must name exactly one id; the id is
 /// percent-decoded before validation, so an over-eager encoder cannot smuggle
-/// a character the whitelist would reject in raw form.
+/// a character the whitelist would reject in raw form. The returned internal id
+/// includes `session-`, whether the link uses the short or legacy format.
 pub fn parse(input: &str) -> Result<String, ParseError> {
     let url = Url::parse(input.trim()).map_err(|_| ParseError::NotOurScheme)?;
     if !url.scheme().eq_ignore_ascii_case(SCHEME) {
@@ -146,24 +148,24 @@ pub fn parse(input: &str) -> Result<String, ParseError> {
     }
 }
 
-/// The id whitelist. Real ids are `session-<uuid>` (see the P0 findings in
-/// `plan/deep-link.md`); the whitelist adds the URL-safe punctuation DSH could
-/// adopt, and nothing that survives into a shell, a path, or an eval.
+/// Validate the link's id and restore the internal `session-` prefix. Accept
+/// older links that already include it, applying the size limit to the full id.
 fn validate_id(raw: &str) -> Result<String, ParseError> {
     let decoded = percent_decode_utf8(raw);
-    if decoded.is_empty() {
+    let suffix = decoded.strip_prefix("session-").unwrap_or(&decoded);
+    if suffix.is_empty() {
         return Err(ParseError::MissingId);
     }
-    if decoded.len() > 128 {
+    if suffix.len() + "session-".len() > 128 {
         return Err(ParseError::ExtraParts);
     }
-    if !decoded
+    if !suffix
         .bytes()
         .all(|byte| matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'~' | b'-'))
     {
         return Err(ParseError::ExtraParts);
     }
-    Ok(decoded)
+    Ok(format!("session-{suffix}"))
 }
 
 /// Percent-decode one path segment, keeping undecodable input verbatim.
@@ -435,14 +437,27 @@ mod tests {
     #[test]
     fn a_canonical_link_parses_to_its_session_id() {
         assert_eq!(
-            parse("deepseekharness://session/session-b4899765-8e01-4e03-9221-0f4520dccc78"),
+            parse("deepseekharness://session/b4899765-8e01-4e03-9221-0f4520dccc78"),
             Ok("session-b4899765-8e01-4e03-9221-0f4520dccc78".to_string())
         );
     }
 
     #[test]
+    fn legacy_links_still_name_the_same_internal_session() {
+        for link in [
+            "deepseekharness://session/session-b4899765-8e01-4e03-9221-0f4520dccc78",
+            "deepseekharness:session/session-b4899765-8e01-4e03-9221-0f4520dccc78/",
+        ] {
+            assert_eq!(
+                parse(link),
+                Ok("session-b4899765-8e01-4e03-9221-0f4520dccc78".to_string())
+            );
+        }
+    }
+
+    #[test]
     fn both_spellings_and_cases_name_the_same_session() {
-        let id = "abc-123";
+        let id = "session-abc-123";
         for link in [
             "deepseekharness://session/abc-123",
             "deepseekharness:session/abc-123",
@@ -457,6 +472,10 @@ mod tests {
 
     #[test]
     fn an_encoded_id_validates_on_its_decoded_form() {
+        assert_eq!(
+            parse("deepseekharness://session/%61bc"),
+            Ok("session-abc".to_string())
+        );
         // '-' is never encoded; 's' can be by an over-eager caller.
         assert_eq!(
             parse("deepseekharness://session/%73ession-abc"),
@@ -499,6 +518,10 @@ mod tests {
             parse("deepseekharness://session/"),
             Err(ParseError::MissingId)
         );
+        assert_eq!(
+            parse("deepseekharness://session/session-"),
+            Err(ParseError::MissingId)
+        );
     }
 
     #[test]
@@ -522,19 +545,24 @@ mod tests {
         // into the page — assert that collapse rather than a rejection.
         assert_eq!(
             parse("deepseekharness://session/abc/../system32"),
-            Ok("system32".to_string())
+            Ok("session-system32".to_string())
         );
     }
 
     #[test]
     fn ids_are_bounded() {
-        let long = "a".repeat(129);
-        assert_eq!(
-            parse(&format!("deepseekharness://session/{long}")),
-            Err(ParseError::ExtraParts)
-        );
-        let fits = "a".repeat(128);
-        assert_eq!(parse(&format!("deepseekharness://session/{fits}")), Ok(fits));
+        for prefix in ["", "session-"] {
+            let long = "a".repeat(121);
+            assert_eq!(
+                parse(&format!("deepseekharness://session/{prefix}{long}")),
+                Err(ParseError::ExtraParts)
+            );
+            let fits = "a".repeat(120);
+            assert_eq!(
+                parse(&format!("deepseekharness://session/{prefix}{fits}")),
+                Ok(format!("session-{fits}"))
+            );
+        }
     }
 
     #[test]
@@ -542,12 +570,12 @@ mod tests {
         let argv = [
             "--some-flag",
             "C:\\Program Files\\DeepseekHarness\\DeepseekHarness.exe",
-            "deepseekharness://session/session-abc",
+            "deepseekharness://session/abc",
             "deepseekharness://session/session-def",
         ];
         assert_eq!(
             parse_argv(argv),
-            Some("deepseekharness://session/session-abc".to_string())
+            Some("deepseekharness://session/abc".to_string())
         );
         assert_eq!(parse_argv(["--flag", "/path/to/file"]), None);
     }

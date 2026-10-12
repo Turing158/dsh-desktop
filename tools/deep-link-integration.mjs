@@ -108,7 +108,7 @@ async function copyFromTitleBar(expectedId) {
   })()`)
   await until(`Boolean(window.__TAURI__)`)
   const text = await cdp.evaluate(`window.__TAURI__.core.invoke('clipboard_read_text')`)
-  assert.equal(text, 'deepseekharness://session/' + expectedId, 'the clipboard must hold the link')
+  assert.equal(text, 'deepseekharness://session/' + expectedId.replace(/^session-/, ''), 'the clipboard must hold the short link')
   return text
 }
 
@@ -164,7 +164,7 @@ async function copyFromRowMenu(sessionId) {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: state.x, y: state.y, button: 'left', clickCount: 1 })
   await sleep(400)
   const text = await cdp.evaluate(`window.__TAURI__.core.invoke('clipboard_read_text')`)
-  assert.equal(text, 'deepseekharness://session/' + sessionId, 'the row menu must copy the row’s own session')
+  assert.equal(text, 'deepseekharness://session/' + sessionId.replace(/^session-/, ''), 'the row menu must copy the row’s own session')
   return text
 }
 
@@ -209,7 +209,7 @@ try {
 
   // ── activation, warm ────────────────────────────────────────────────────
   assert.equal(await currentSession(), a, 'the current session must be the first before the link')
-  openLink('deepseekharness://session/' + b)
+  openLink(fromRow)
   await until(`${CTX}.sessions.list.getSnapshot().current==='${b}'`, 30000)
   check('clicking the link in Windows switches to the named session (warm)', { session: b })
 
@@ -226,7 +226,7 @@ try {
   for (let i = 0; i < 100; i++) { try { process.kill(pid, 0) } catch { break } await sleep(100) }
   try { cdp.close() } catch {}
   await writeFile(resolve(dirAbsolute, 'command.json'), '{}')
-  const child = spawn(exe, ['deepseekharness://session/' + a], { windowsHide: true, detached: true, stdio: 'ignore', env: bootEnv() })
+  const child = spawn(exe, [fromBar], { windowsHide: true, detached: true, stdio: 'ignore', env: bootEnv() })
   child.unref()
   await writeFile(resolve(dirAbsolute, 'host.pid'), String(child.pid))
   for (let i = 0; i < 150; i++) {

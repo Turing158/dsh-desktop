@@ -453,6 +453,8 @@ fn web_args(patch_file: &Path, config: &crate::remote_control::Config) -> Vec<st
 /// A running `dsh web` child, its job object, and its output stream.
 pub struct DshProcess {
     child: Child,
+    /// Exact local sockets requested from this backend, published only after readiness.
+    pub listeners: Vec<crate::remote_control::ListenerAddress>,
     _plugin_boot: tempfile::NamedTempFile,
     /// Kept alive so the job outlives the child handle: dropping it kills the tree.
     _job: crate::winjob::JobObject,
@@ -483,12 +485,21 @@ impl DshProcess {
         // Both launcher overlays must precede the first web-app option.
         args.splice(3..3, ["--patch".into(), plugin_boot.path().as_os_str().to_os_string()]);
 
+        let listeners = if config.enabled {
+            let addresses = crate::remote_control::lan_addresses()
+                .map_err(|error| std::io::Error::other(error.message))?;
+            config.listen_addresses(&addresses)
+        } else {
+            vec![]
+        };
+
         let mut child = Command::new(&runtime.node_exe)
             .arg(&runtime.dsh_bin)
             .args(args)
             .env("DSH_DESKTOP_DSH_BIN", &runtime.dsh_bin)
             .env("DSH_DESKTOP_PLUGINS_FILE", &plugin_file)
             .env("DSH_DESKTOP_CHANGES_DIR", changes_dir)
+            .env("DSH_DESKTOP_LISTENERS", serde_json::to_string(&listeners)?)
             // Node's default request-header budget is 16 KiB, and WebView2 spends
             // a surprising amount of it on a single script request. DSH loads its
             // client plugins as ONE combined URL — `/plugins/??a/client.js,b/…` —
@@ -545,6 +556,7 @@ impl DshProcess {
         Ok(Self {
             _plugin_boot: plugin_boot,
             child,
+            listeners,
             _job: job,
             events: Some(events),
             stderr: stderr_lines,

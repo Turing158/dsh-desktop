@@ -427,7 +427,7 @@ html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] {
   --dsh-menu-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 12px 32px rgb(0 0 0 / 20%);
 }
 
-html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) {
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-menu-material][role='group'], [data-trigger-menu], [data-dockkit-tab-menu], [class*='_card']:where(:has(> [role='listbox']))) {
   box-sizing: border-box;
   /* Some consumers pass an inline width/min-width based on the trigger. These
      three overrides make the longest option, rather than the anchor, size it. */
@@ -451,8 +451,60 @@ html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [
 
 /* Newer upstream menus add a translucent material child; injected submenus
    have no such child. Let the shared surface above paint both menu levels. */
-html:not([data-dsh-ui='vanilla']) body [role='menu'][data-menu-material] > [class*='_material'] {
+html:not([data-dsh-ui='vanilla']) body [data-menu-material]:is([role='menu'], [role='group']) > [class*='_material'] {
   display: none;
+}
+
+/* The model picker uses an outer group surface with a menu as its scroll area.
+   Paint the surface once; the inner menu must fill it without its own card. */
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] {
+  min-width: min(240px, calc(100vw - 16px)) !important;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] > [role='menu'] {
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: none;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  animation: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] [class*='_searchRow'] {
+  margin: 0 0 4px;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] [class*='_searchRow'] > [class*='_search'] {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  padding: 6px 34px 6px 9px;
+  border: 1px solid var(--dsh-menu-border);
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] [class*='_searchRow'] input {
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] [class*='_searchRow'] > [class*='_search']:focus-within {
+  border-color: var(--dsh-menu-accent);
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] [data-menu-group-heading] {
+  padding: 6px 10px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 /* Searchable pickers stay compact within their available column. */
@@ -518,7 +570,7 @@ html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_itemLabel'] {
 
 html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemName'] {
   flex: 0 1 auto;
-  max-width: 100%;
+  max-width: 40%;
   font-weight: 500;
 }
 
@@ -528,34 +580,28 @@ html:not([data-dsh-ui='vanilla']) body :is([data-trigger-menu], [class*='_card']
   line-height: 18px;
 }
 
-/* The scrolling viewport is a flex column. Rows must retain their content
-   height instead of shrinking while multiline descriptions paint over them. */
+/* Keep each command or skill on one line, including in a narrow composer. */
 html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [role='option'] {
   flex-shrink: 0;
-  flex-wrap: wrap;
-  align-items: baseline;
-  row-gap: 2px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] :is([class*='_itemName'], [class*='_itemAlias'], [class*='_itemDescription']) {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemAlias'] {
-  min-width: 0;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  flex: 0 1 auto;
+  max-width: 20%;
 }
 
 html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemDescription'] {
-  flex: 1 1 16rem;
+  flex: 1 1 0%;
   text-align: start;
-}
-
-/* Keep the name, alias and drill affordance together above the description.
-   Full descriptions wrap in normal flow; the menu, not each row, scrolls. */
-@container dsh-trigger-menu (max-width: 520px) {
-  html:not([data-dsh-ui='vanilla']) body [data-trigger-menu] [class*='_itemDescription'] {
-    flex-basis: 100%;
-    order: 1;
-  }
 }
 
 html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-trigger-menu], [class*='_card']:where(:has(> [role='listbox']))) [class*='_itemIcon'] {
@@ -2374,6 +2420,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_cente
 }
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sidebarCol'] [data-slot='sidebar'] > [class*='_root'],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] [class*='_root']:has(> [data-conversation-region]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [data-dsh-archive-panel],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] [class*='_composerSeat'],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-sidebar-right-panel] :is([data-dockkit-pane], [data-dockkit-strip-chrome], [data-dockkit-tab-strip], [class*='_tabBody'], .dshTerminal, .dshTerminal__content),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-dsh-terminal-dock] :is(.dshTerminal, .dshTerminal__content) {
@@ -2516,6 +2563,57 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body :is([da
 @media (prefers-reduced-motion: reduce) {
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body :is([data-trigger-menu], [role='dialog'][class*='_panel']:not([aria-modal='true']):has(dl, [class*='_percent'])) {
     animation: none;
+  }
+}
+
+/* Workspace disclosures use the native keyed-row animator. Keep list swaps,
+   selection and disclosure arrows in the same short motion vocabulary. */
+html:not([data-dsh-ui='vanilla']) body [data-slot='sidebar.workspaces'] [class*='_treeBody'] {
+  animation: dsh-workspace-view-in 200ms ease-out;
+}
+@keyframes dsh-workspace-view-in { from { opacity: 0; } to { opacity: 1; } }
+html:not([data-dsh-ui='vanilla']) body [data-slot='sidebar.workspaces'] [class*='_arrow'] {
+  transition: transform 180ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body [data-slot='sidebar.workspaces'] [role='treeitem'] {
+  transition: background-color 180ms ease-out, color 180ms ease-out, box-shadow 180ms ease-out;
+}
+/* Explicit on also overrides the native header's OS-only reduced-motion rule. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_searchSlot'] {
+  transition: max-width 180ms ease-out, padding-left 180ms ease-out;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_searchSlot'] > div {
+  transition: width 180ms ease-out, padding 180ms ease-out, border-color 180ms ease-out, background-color 180ms ease-out;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_searchInput'] {
+  transition: opacity 120ms ease-out;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_sectionLabel'] {
+  transition: max-width 180ms ease-out, margin-right 180ms ease-out, opacity 120ms ease-out, transform 180ms ease-out, visibility 0s;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_headerActions'] {
+  transition: max-width 180ms ease-out, opacity 120ms ease-out, transform 180ms ease-out, visibility 0s;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_sectionLabelHidden'] {
+  transition-delay: 0s, 0s, 0s, 0s, 180ms;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='on'] body [data-slot='sidebar.workspaces'] [class*='_headerActionsHidden'] {
+  transition-delay: 0s, 0s, 0s, 180ms;
+}
+/* The upstream search header also has transitions; an explicit off must stop
+   those and the native list entrance as well as our new row motion. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-slot='sidebar.workspaces'] *,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-slot='sidebar.workspaces'] *::before,
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-slot='sidebar.workspaces'] *::after {
+  animation: none;
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-slot='sidebar.workspaces'] *,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-slot='sidebar.workspaces'] *::before,
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-slot='sidebar.workspaces'] *::after {
+    animation: none;
+    transition: none;
   }
 }
 
@@ -2821,6 +2919,7 @@ html body [data-dsh-chrome='layer']:has(> [style*='position: fixed']) {
  * outrank there.
  */
 html body [role='menu'],
+html body [data-menu-material][role='group'],
 html body [data-dockkit-tab-menu] {
   z-index: 1300;
 }
@@ -3408,10 +3507,20 @@ html body [data-shortcut-modal='settings'] {
 .dshChanges :is(button, [tabindex]):focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: -2px; }
 .dshChanges button { transition: background-color 150ms ease, color 150ms ease; }
 .dshChanges__toolbar {
-  display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 44px; padding: 6px 8px;
+  /* Together with the 38px tab strip, align with the 76px conversation header. */
+  display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 6px; box-sizing: border-box; min-height: 38px; padding: 4px 8px;
   border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 .dshChanges__scope { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.dshChanges__file[data-context-open='true'] { background: var(--dsw-alias-interactive-bg-hover); }
+.dshChanges__appIcon { object-fit: contain; }
+.dshChanges__actionError { display: flex; align-items: center; gap: 8px; padding: 6px 12px; color: var(--dsw-alias-state-error-primary); }
+.dshChanges__actionError button { flex: none; margin-left: auto; }
+.dshChangeFile__path { display: flex; align-items: center; flex: 1; gap: 6px; min-width: 0; overflow: hidden; }
+.dshChangeFile__path > svg { flex: none; }
+.dshChangeFile__path > :last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshChangeFile__summary { padding-bottom: 8px; color: var(--changes-muted); font-size: 12px; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
+.dshChangeFile__content { flex: 1; min-height: 0; overflow: auto; }
 .dshChanges__source { flex: none; }
 .dshChanges .dshChanges__sourceButton { gap: 8px; font-size: 13px; padding: 0 8px; }
 .dshChanges__toolbarActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; max-width: 100%; margin-left: auto; }
@@ -3546,8 +3655,6 @@ html body .dshChanges__gitDialog :is(.dshChanges__gitSubmit, .dshChanges__gitBra
 .dshChanges .dshChanges__recordToggle { box-sizing: border-box; min-height: 20px; height: 20px; padding: 0 8px; line-height: 20px; }
 .dshChanges__recordLabel { display: inline-flex; align-items: center; min-height: 20px; padding: 0 8px; font-size: 12px; line-height: 20px; }
 .dshChanges__root { overflow-wrap: anywhere; font-size: 12px; color: var(--changes-muted); padding-bottom: 6px; }
-.dshChanges__coverage { flex: none; max-height: 160px; overflow: auto; padding: 6px 12px; overflow-wrap: anywhere; color: var(--changes-muted); font-size: 12px; }
-.dshChanges__coverage summary { cursor: pointer; }
 @container (max-width: 185px) { .dshChanges__row { flex-wrap: wrap; gap: 2px 8px; } .dshChanges__path { flex-basis: 100%; } }
 @media (pointer: coarse) { .dshChanges .dshChanges__file, .dshChanges .dshChanges__sourceButton, .dshChanges .dshChanges__collapse, .dshChanges .dshChanges__context { min-height: 44px; } }
 @media (pointer: coarse) {

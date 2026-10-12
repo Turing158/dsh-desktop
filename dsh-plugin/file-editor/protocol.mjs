@@ -1,6 +1,8 @@
 export const MAX_BYTES = 2 * 1024 * 1024
 export const ID = '@dsh-desktop/file-editor'
 export const PLAIN_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/text'
+export const CODE_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code'
+export const HTML_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/html'
 export function parseFile(address) {
   const prefix = 'dsh-resource://file/session/'
   if (typeof address !== 'string' || !address.startsWith(prefix)) return null

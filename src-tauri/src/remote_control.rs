@@ -5,7 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     net::{Ipv4Addr, TcpListener},
     path::Path,
     sync::Arc,
@@ -15,6 +15,53 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 pub const MAX_HOSTS: usize = 32;
 pub const MAX_HOST_LENGTH: usize = 253;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccessScheme {
+    Http,
+    #[default]
+    Https,
+}
+impl AccessScheme {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PreferredHost {
+    pub host: String,
+    #[serde(default)]
+    pub scheme: AccessScheme,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ListenerAddress {
+    pub address: String,
+    pub port: u16,
+}
+impl ListenerAddress {
+    fn from_host(host: &str, default_port: u16) -> Option<Self> {
+        let (name, port) = match host.split_once(':') {
+            Some((name, port)) => (name, port.parse().ok()?),
+            None => (host, default_port),
+        };
+        let address = if name == "localhost" {
+            Ipv4Addr::LOCALHOST
+        } else {
+            name.parse().ok()?
+        };
+        Some(Self {
+            address: address.to_string(),
+            port,
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
@@ -23,6 +70,12 @@ pub struct Config {
     pub bind_address: String,
     pub port: u16,
     pub trusted_hosts: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub host_schemes: BTreeMap<String, AccessScheme>,
+    /// Last access selection, saved immediately without restarting the listener.
+    /// Keep the legacy JSON key for existing configurations; None follows LAN.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_host: Option<PreferredHost>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -32,6 +85,8 @@ impl Default for Config {
             bind_address: String::new(),
             port: 3080,
             trusted_hosts: vec![],
+            host_schemes: BTreeMap::new(),
+            preferred_host: None,
         }
     }
 }
@@ -48,7 +103,230 @@ impl Config {
         }
         hosts
     }
-    pub fn validate(mut self, addresses: &[LanAddress]) -> Result<Self, Error> {
+
+    pub fn listen_addresses(&self, addresses: &[LanAddress]) -> Vec<ListenerAddress> {
+        if !self.enabled {
+            return vec![];
+        }
+        let mut listeners = vec![ListenerAddress {
+            address: self.bind_address.clone(),
+            port: self.port,
+        }];
+        for host in &self.trusted_hosts {
+            let Some(listener) = ListenerAddress::from_host(host, self.port) else {
+                continue;
+            };
+            let local = listener
+                .address
+                .parse::<Ipv4Addr>()
+                .is_ok_and(|ip| ip.is_loopback())
+                || listener.address == self.bind_address
+                || addresses
+                    .iter()
+                    .any(|address| address.address == listener.address);
+            if local && !listeners.contains(&listener) {
+                listeners.push(listener);
+            }
+        }
+        listeners
+    }
+
+    fn resolved_access(
+        &self,
+        target: &PreferredHost,
+        listeners: &[ListenerAddress],
+    ) -> PreferredHost {
+        let Some(listener) = ListenerAddress::from_host(&target.host, self.port) else {
+            return target.clone();
+        };
+        if listeners.contains(&listener)
+            || listener.address == self.bind_address && listener.port == self.port
+        {
+            PreferredHost {
+                host: format!(
+                    "{}:{}",
+                    target.host.split(':').next().unwrap(),
+                    listener.port
+                ),
+                scheme: AccessScheme::Http,
+            }
+        } else {
+            target.clone()
+        }
+    }
+
+    fn access_scheme(&self, host: &str, listeners: &[ListenerAddress]) -> AccessScheme {
+        let scheme = self.host_schemes.get(host).copied().unwrap_or_else(|| {
+            self.preferred_host
+                .as_ref()
+                .filter(|target| target.host == host)
+                .map(|target| target.scheme)
+                .unwrap_or(AccessScheme::Https)
+        });
+        self.resolved_access(
+            &PreferredHost {
+                host: host.into(),
+                scheme,
+            },
+            listeners,
+        )
+        .scheme
+    }
+
+    fn access_origin(&self, listeners: &[ListenerAddress]) -> String {
+        let host = self
+            .preferred_host
+            .as_ref()
+            .map(|target| target.host.clone())
+            .unwrap_or_else(|| self.authority());
+        let target = PreferredHost {
+            scheme: self.access_scheme(&host, listeners),
+            host,
+        };
+        let target = self.resolved_access(&target, listeners);
+        format!("{}://{}/", target.scheme.as_str(), target.host)
+    }
+
+    fn access_target(
+        &self,
+        target: &PreferredHost,
+        listeners: &[ListenerAddress],
+    ) -> Result<PreferredHost, Error> {
+        let host = validate_authority(&target.host)
+            .map_err(|message| Error::new("access-host-invalid", "target.host", message))?;
+        if !self.effective_hosts().contains(&host) {
+            return Err(Error::new(
+                "access-host-untrusted",
+                "target.host",
+                "请选择已应用的 Host；新增地址需先应用白名单",
+            ));
+        }
+        let target = PreferredHost {
+            host,
+            scheme: target.scheme,
+        };
+        if self.resolved_access(&target, listeners).scheme != target.scheme {
+            return Err(Error::new(
+                "access-scheme-invalid",
+                "target.scheme",
+                "本机监听地址仅支持 HTTP",
+            ));
+        }
+        Ok(PreferredHost {
+            scheme: self.access_scheme(&target.host, listeners),
+            host: target.host,
+        })
+    }
+
+    fn select_access(
+        &mut self,
+        target: &PreferredHost,
+        listeners: &[ListenerAddress],
+    ) -> Result<(), Error> {
+        let host = validate_authority(&target.host)
+            .map_err(|message| Error::new("access-host-invalid", "target.host", message))?;
+        if !self.effective_hosts().contains(&host) {
+            return Err(Error::new(
+                "access-host-untrusted",
+                "target.host",
+                "请选择已应用的 Host；新增地址需先应用白名单",
+            ));
+        }
+        let requested = PreferredHost {
+            host: host.clone(),
+            scheme: target.scheme,
+        };
+        if self.resolved_access(&requested, listeners).scheme != requested.scheme {
+            return Err(Error::new(
+                "access-scheme-invalid",
+                "target.scheme",
+                "本机监听地址仅支持 HTTP",
+            ));
+        }
+        // Protocol changes only affect the shared access origin. Persist them
+        // with the selection so the running listener and DSH process stay put.
+        if host != self.authority() {
+            self.host_schemes.insert(host, requested.scheme);
+        }
+        let target = self.access_target(target, listeners)?;
+        self.preferred_host = (target.host != self.authority()).then_some(target);
+        Ok(())
+    }
+
+    /// Sharing can use any active Host without changing the saved selection.
+    /// The desktop, readiness checks, and firewall keep the LAN listener.
+    fn connection_url(
+        &self,
+        backend_url: &str,
+        target: Option<&PreferredHost>,
+        listeners: &[ListenerAddress],
+    ) -> Result<String, Error> {
+        check_ready(self, backend_url).map_err(Error::from)?;
+        let origin = if let Some(target) = target {
+            let target = self.access_target(target, listeners)?;
+            let resolved = self.resolved_access(&target, listeners);
+            format!("{}://{}/", resolved.scheme.as_str(), resolved.host)
+        } else {
+            self.access_origin(listeners)
+        };
+        let backend = tauri::Url::parse(backend_url)
+            .map_err(|_| Error::from("DSH 就绪地址无效".to_string()))?;
+        let mut url = tauri::Url::parse(&origin)
+            .map_err(|_| Error::new("access-host-invalid", "target.host", "访问 Host 无效"))?;
+        url.set_path(backend.path());
+        url.set_query(backend.query());
+        url.set_fragment(backend.fragment());
+        Ok(url.into())
+    }
+
+    pub fn validate(self, addresses: &[LanAddress]) -> Result<Self, Error> {
+        let mut config = self.validate_fields()?;
+        if config.enabled && !addresses.iter().any(|a| a.address == config.bind_address) {
+            return Err(Error::new(
+                "address-unavailable",
+                "bindAddress",
+                "所选局域网 IPv4 已不可用，请刷新并重新选择网卡",
+            ));
+        }
+        let listeners = config.listen_addresses(addresses);
+        if listeners.iter().any(|listener| listener.port == 0) {
+            return Err(Error::new(
+                "listen-port-invalid",
+                "trustedHosts",
+                "本机监听端口须为 1–65535",
+            ));
+        }
+        config.host_schemes = config
+            .trusted_hosts
+            .iter()
+            .map(|host| (host.clone(), config.access_scheme(host, &listeners)))
+            .collect();
+        if let Some(preferred) = config.preferred_host.clone() {
+            let scheme = config.access_scheme(&preferred.host, &listeners);
+            config.preferred_host.as_mut().unwrap().scheme = scheme;
+        }
+        Ok(config)
+    }
+
+    /// Keep a live saved choice; DHCP or a network change can invalidate its IP
+    /// between launches. Only startup may replace it, not an explicit apply.
+    fn for_startup(self, addresses: &[LanAddress]) -> Result<Self, Error> {
+        // Invalid settings must still fail closed, even if an adapter is found.
+        let mut config = self.validate_fields()?;
+        if config.enabled && !addresses.iter().any(|a| a.address == config.bind_address) {
+            let address = addresses.first().ok_or_else(|| {
+                Error::new(
+                    "address-unavailable",
+                    "bindAddress",
+                    "未检测到可用的局域网 IPv4，仅以本机模式启动",
+                )
+            })?;
+            config.bind_address.clone_from(&address.address);
+        }
+        config.validate(addresses)
+    }
+
+    fn validate_fields(mut self) -> Result<Self, Error> {
         if self.version != 1 {
             return Err(Error::new(
                 "config-version",
@@ -61,13 +339,6 @@ impl Config {
                 "port-invalid",
                 "port",
                 "端口须为 1–65535 的整数",
-            ));
-        }
-        if self.enabled && !addresses.iter().any(|a| a.address == self.bind_address) {
-            return Err(Error::new(
-                "address-unavailable",
-                "bindAddress",
-                "所选局域网 IPv4 已不可用，请刷新并重新选择网卡",
             ));
         }
         if !self.bind_address.is_empty()
@@ -89,7 +360,9 @@ impl Config {
                 "最多添加 32 个 Host",
             ));
         }
-        let mut seen = BTreeSet::new();
+        // The automatic LAN entry is never stored as an editable extra Host.
+        let authority = self.authority();
+        let mut seen = BTreeSet::from([authority.clone()]);
         let mut hosts = vec![];
         for (index, host) in self.trusted_hosts.iter().enumerate() {
             let host = validate_authority(host).map_err(|message| {
@@ -100,6 +373,45 @@ impl Config {
             }
         }
         self.trusted_hosts = hosts;
+        if let Some(preferred) = &mut self.preferred_host {
+            preferred.host = validate_authority(&preferred.host).map_err(|message| {
+                Error::new("preferred-host-invalid", "preferredHost", message)
+            })?;
+            if preferred.host == authority {
+                self.preferred_host = None;
+            } else if !self.trusted_hosts.contains(&preferred.host) {
+                return Err(Error::new(
+                    "preferred-host-untrusted",
+                    "preferredHost",
+                    "请选择 Host 白名单中的访问地址",
+                ));
+            }
+        }
+        if self.host_schemes.len() > MAX_HOSTS {
+            return Err(Error::new(
+                "hosts-limit",
+                "hostSchemes",
+                "最多添加 32 个 Host",
+            ));
+        }
+        let mut schemes = BTreeMap::new();
+        for (host, scheme) in std::mem::take(&mut self.host_schemes) {
+            let host = validate_authority(&host)
+                .map_err(|message| Error::new("host-invalid", "hostSchemes", message))?;
+            if self.trusted_hosts.contains(&host) {
+                schemes.insert(host, scheme);
+            }
+        }
+        for host in &self.trusted_hosts {
+            schemes.entry(host.clone()).or_insert_with(|| {
+                self.preferred_host
+                    .as_ref()
+                    .filter(|target| target.host == *host)
+                    .map(|target| target.scheme)
+                    .unwrap_or(AccessScheme::Https)
+            });
+        }
+        self.host_schemes = schemes;
         Ok(self)
     }
 }
@@ -370,6 +682,7 @@ pub struct Status {
     applying: bool,
     state: &'static str,
     address: Option<String>,
+    listeners: Vec<ListenerAddress>,
     error: Option<Error>,
     instance: u64,
     frontend_version: Option<String>,
@@ -384,6 +697,14 @@ pub fn remote_status(window: WebviewWindow, identity: Identity) -> Result<Status
     let r = &s.remote;
     let running = matches!(s.phase, Phase::Running { .. });
     let lan = running && r.active.as_ref().is_some_and(|c| c.enabled) && !r.applying;
+    let listeners = if lan {
+        s.process
+            .as_ref()
+            .map(|p| p.listeners.clone())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
     Ok(Status {
         saved: r.saved.clone(),
         active: r.active.clone(),
@@ -405,10 +726,11 @@ pub fn remote_status(window: WebviewWindow, identity: Identity) -> Result<Status
         address: if lan {
             r.active
                 .as_ref()
-                .map(|c| format!("http://{}/", c.authority()))
+                .map(|config| config.access_origin(&listeners))
         } else {
             None
         },
+        listeners,
         error: r.error.clone(),
         instance: s.ui.backend_instance,
         frontend_version: s.runtime.as_ref().and_then(|r| r.version.clone()),
@@ -427,22 +749,35 @@ pub async fn remote_lan_addresses(
     Ok(result)
 }
 pub fn precheck(config: &Config, current: Option<&Config>) -> Result<(), Error> {
-    if !config.enabled
-        || current.is_some_and(|old| {
-            old.enabled && old.bind_address == config.bind_address && old.port == config.port
-        })
-    {
+    if !config.enabled {
         return Ok(());
     }
-    TcpListener::bind((config.bind_address.as_str(), config.port))
-        .map(drop)
-        .map_err(|_| {
+    precheck_listeners(config, current, &lan_addresses()?)
+}
+fn precheck_listeners(
+    config: &Config,
+    current: Option<&Config>,
+    addresses: &[LanAddress],
+) -> Result<(), Error> {
+    let current = current
+        .map(|config| config.listen_addresses(addresses))
+        .unwrap_or_default();
+    for listener in config.listen_addresses(addresses) {
+        if current.contains(&listener) {
+            continue;
+        }
+        TcpListener::bind((listener.address.as_str(), listener.port)).map_err(|_| {
             Error::new(
                 "port-unavailable",
                 "port",
-                "目标地址或端口不可用（可能被其他程序占用），请更换端口或刷新网卡",
+                format!(
+                    "监听地址 {}:{} 不可用（可能被其他程序占用），请更换端口或移除对应 Host",
+                    listener.address, listener.port
+                ),
             )
-        })
+        })?;
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -599,17 +934,29 @@ async fn apply_backend(
 }
 
 pub fn cold_config(app: &AppHandle, shared: &Shared) -> Config {
-    let loaded = config_path(app).and_then(|path| load(&path));
-    let saved = loaded.clone().unwrap_or_default();
-    let validated = loaded
-        .and_then(|c| {
-            let addresses = if c.enabled { lan_addresses()? } else { vec![] };
-            c.validate(&addresses)
-        })
-        .and_then(|c| {
-            precheck(&c, None)?;
-            Ok(c)
-        });
+    let mut saved = Config::default();
+    let validated = config_path(app).and_then(|path| {
+        let config = load(&path)?;
+        saved = config.clone();
+        let addresses = if config.enabled {
+            lan_addresses()?
+        } else {
+            vec![]
+        };
+        let config = config.for_startup(&addresses)?;
+        precheck(&config, None)?;
+        if config != saved {
+            save(&path, &config).map_err(|_| {
+                Error::new(
+                    "config-write",
+                    "",
+                    "保存自动调整的远程控制配置失败，仅以本机模式启动",
+                )
+            })?;
+            saved = config.clone();
+        }
+        Ok(config)
+    });
     let mut s = shared.lock().unwrap();
     s.remote.saved = saved;
     match validated {
@@ -647,26 +994,83 @@ pub struct ConnectionInfo {
     qr_svg: String,
     instance: u64,
 }
+
+#[tauri::command]
+pub fn remote_select_connection(
+    app: AppHandle,
+    window: WebviewWindow,
+    identity: Identity,
+    target: PreferredHost,
+) -> Result<Status, Error> {
+    caller(&window, identity)?;
+    let path = config_path(&app)?;
+    {
+        let shared = app.state::<Shared>();
+        let mut s = shared
+            .lock()
+            .map_err(|_| Error::from("后台状态不可用".to_string()))?;
+        if self::identity(&s) != identity {
+            return Err(Error::from("页面已变化，请重试".to_string()));
+        }
+        if s.remote.applying || !matches!(s.phase, Phase::Running { .. }) {
+            return Err(Error::from("局域网服务尚未就绪".to_string()));
+        }
+        let mut active = s
+            .remote
+            .active
+            .clone()
+            .filter(|c| c.enabled)
+            .ok_or_else(|| Error::from("局域网服务尚未就绪".to_string()))?;
+        let listeners = s
+            .process
+            .as_ref()
+            .map(|p| p.listeners.as_slice())
+            .unwrap_or_default();
+        active.select_access(&target, listeners)?;
+        let mut saved = s.remote.saved.clone();
+        saved.select_access(&target, listeners)?;
+        if saved != s.remote.saved {
+            save(&path, &saved)?;
+        }
+        s.remote.saved = saved;
+        s.remote.active = Some(active);
+    }
+    remote_status(window, identity)
+}
+
 #[tauri::command]
 pub fn remote_connection_info(
     window: WebviewWindow,
     identity: Identity,
+    target: Option<PreferredHost>,
 ) -> Result<ConnectionInfo, Error> {
     caller(&window, identity)?;
     let shared = window.state::<Shared>();
     let s = shared
         .lock()
         .map_err(|_| Error::from("后台状态不可用".to_string()))?;
-    if s.remote.applying || !s.remote.active.as_ref().is_some_and(|c| c.enabled) {
+    if s.remote.applying {
         return Err(Error::from("局域网服务尚未就绪".to_string()));
     }
+    let config = s
+        .remote
+        .active
+        .as_ref()
+        .filter(|c| c.enabled)
+        .ok_or_else(|| Error::from("局域网服务尚未就绪".to_string()))?;
     let Phase::Running { url, .. } = &s.phase else {
         return Err(Error::from("局域网服务尚未就绪".to_string()));
     };
+    let listeners = s
+        .process
+        .as_ref()
+        .map(|p| p.listeners.as_slice())
+        .unwrap_or_default();
+    let url = config.connection_url(url, target.as_ref(), listeners)?;
     let code = qrcode::QrCode::new(url.as_bytes())
         .map_err(|_| Error::from("二维码生成失败".to_string()))?;
     Ok(ConnectionInfo {
-        url: url.clone(),
+        url,
         qr_svg: code
             .render::<qrcode::render::svg::Color>()
             .min_dimensions(256, 256)
@@ -679,10 +1083,31 @@ pub struct FirewallHelp {
     add: String,
     remove: String,
 }
-pub fn firewall_help(config: &Config) -> FirewallHelp {
-    let name = format!("DSH-LAN-{}-{}", config.bind_address, config.port);
-    FirewallHelp { add: format!("New-NetFirewallRule -DisplayName '{name}' -Direction Inbound -Action Allow -Protocol TCP -LocalAddress '{}' -LocalPort {} -Profile Private -RemoteAddress LocalSubnet", config.bind_address, config.port),
-        remove: format!("Get-NetFirewallRule -DisplayName '{name}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule") }
+pub fn firewall_help(config: &Config, listeners: &[ListenerAddress]) -> FirewallHelp {
+    let fallback = config.listen_addresses(&[]);
+    let listeners = if listeners.is_empty() {
+        &fallback
+    } else {
+        listeners
+    };
+    let mut add = vec![];
+    let mut remove = vec![];
+    for listener in listeners {
+        if !listener
+            .address
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_private())
+        {
+            continue;
+        }
+        let name = format!("DSH-LAN-{}-{}", listener.address, listener.port);
+        add.push(format!("New-NetFirewallRule -DisplayName '{name}' -Direction Inbound -Action Allow -Protocol TCP -LocalAddress '{}' -LocalPort {} -Profile Private -RemoteAddress LocalSubnet", listener.address, listener.port));
+        remove.push(format!("Get-NetFirewallRule -DisplayName '{name}' -ErrorAction SilentlyContinue | Remove-NetFirewallRule"));
+    }
+    FirewallHelp {
+        add: add.join("\n"),
+        remove: remove.join("\n"),
+    }
 }
 #[tauri::command]
 pub fn remote_firewall_help(
@@ -700,7 +1125,12 @@ pub fn remote_firewall_help(
         .as_ref()
         .filter(|c| c.enabled && !s.remote.applying)
         .ok_or_else(|| Error::from("局域网服务尚未就绪".to_string()))?;
-    Ok(firewall_help(config))
+    let listeners = s
+        .process
+        .as_ref()
+        .map(|p| p.listeners.as_slice())
+        .unwrap_or_default();
+    Ok(firewall_help(config, listeners))
 }
 
 /// Child diagnostics may contain URLs; never retain query strings or fragments.
@@ -789,6 +1219,646 @@ mod tests {
         let mut bad = config();
         bad.trusted_hosts = vec!["desktop.local".into(); 33];
         assert!(bad.validate(&addresses()).is_err());
+    }
+    #[test]
+    fn startup_keeps_the_saved_address_when_multiple_adapters_are_available() {
+        let mut available = vec![LanAddress {
+            name: "Ethernet".into(),
+            address: "10.0.0.2".into(),
+        }];
+        available.extend(addresses());
+        let expected = config().validate(&available).unwrap();
+        assert_eq!(config().for_startup(&available).unwrap(), expected);
+    }
+    #[test]
+    fn startup_replaces_a_stale_or_empty_address_without_changing_other_settings() {
+        let expected = config().validate(&addresses()).unwrap();
+        for address in ["192.168.1.170", "10.255.255.254", ""] {
+            let mut saved = config();
+            saved.bind_address = address.into();
+            // Applying an explicit selection still requires a live address.
+            assert_eq!(
+                saved.clone().validate(&addresses()).unwrap_err().code,
+                "address-unavailable"
+            );
+            let selected = saved.for_startup(&addresses()).unwrap();
+            assert_eq!(selected, expected);
+            assert_eq!(selected.effective_hosts()[0], "192.168.1.20:3080");
+        }
+    }
+    #[test]
+    fn startup_without_adapters_fails_but_disabled_lan_keeps_its_saved_choice() {
+        let error = config().for_startup(&[]).unwrap_err();
+        assert_eq!(error.code, "address-unavailable");
+        assert_eq!(error.field, "bindAddress");
+        let mut disabled = config().validate(&addresses()).unwrap();
+        disabled.enabled = false;
+        disabled.bind_address = "192.168.1.170".into();
+        for available in [vec![], addresses()] {
+            assert_eq!(disabled.clone().for_startup(&available).unwrap(), disabled);
+        }
+    }
+    #[test]
+    fn startup_does_not_repair_malformed_settings_by_selecting_an_adapter() {
+        for address in ["0.0.0.0", "127.0.0.1", "8.8.8.8", "::1", "invalid"] {
+            let mut bad = config();
+            bad.bind_address = address.into();
+            assert_eq!(
+                bad.for_startup(&addresses()).unwrap_err().code,
+                "address-invalid"
+            );
+        }
+        let mut bad = config();
+        bad.version = 2;
+        assert_eq!(
+            bad.for_startup(&addresses()).unwrap_err().code,
+            "config-version"
+        );
+        let mut bad = config();
+        bad.port = 0;
+        assert_eq!(
+            bad.for_startup(&addresses()).unwrap_err().code,
+            "port-invalid"
+        );
+        let mut bad = config();
+        bad.trusted_hosts = vec!["*".into()];
+        assert_eq!(
+            bad.for_startup(&addresses()).unwrap_err().code,
+            "host-invalid"
+        );
+    }
+    #[test]
+    fn old_settings_use_lan_and_a_preferred_host_round_trips() {
+        let legacy = serde_json::json!({
+            "version": 1, "enabled": true, "bindAddress": "192.168.1.20",
+            "port": 3080, "trustedHosts": ["desktop.local:443"]
+        });
+        let mut c: Config = serde_json::from_value(legacy).unwrap();
+        assert_eq!(c.preferred_host, None);
+        assert!(serde_json::to_value(&c)
+            .unwrap()
+            .get("preferredHost")
+            .is_none());
+        c.preferred_host = Some(PreferredHost {
+            host: "DESKTOP.local:443".into(),
+            scheme: AccessScheme::Https,
+        });
+        let c = c.validate(&addresses()).unwrap();
+        assert_eq!(c.preferred_host.as_ref().unwrap().host, "desktop.local:443");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("remote-control.json");
+        save(&path, &c).unwrap();
+        assert_eq!(load(&path).unwrap(), c);
+    }
+    #[test]
+    fn access_selection_persists_without_changing_hosts_or_listeners() {
+        let mut config = config().validate(&addresses()).unwrap();
+        let hosts = config.effective_hosts();
+        let listeners = config.listen_addresses(&addresses());
+        let target = PreferredHost {
+            host: "DESKTOP.local:443".into(),
+            scheme: AccessScheme::Https,
+        };
+        config.select_access(&target, &listeners).unwrap();
+        assert_eq!(
+            config.preferred_host.as_ref().unwrap().host,
+            "desktop.local:443"
+        );
+        assert_eq!(config.effective_hosts(), hosts);
+        assert_eq!(config.listen_addresses(&addresses()), listeners);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("remote-control.json");
+        save(&path, &config).unwrap();
+        let mut restored = load(&path).unwrap().for_startup(&addresses()).unwrap();
+        assert_eq!(
+            restored.access_origin(&listeners),
+            "https://desktop.local:443/"
+        );
+        for (target, code) in [
+            (
+                PreferredHost {
+                    host: "unlisted.example.com".into(),
+                    scheme: AccessScheme::Https,
+                },
+                "access-host-untrusted",
+            ),
+            (
+                PreferredHost {
+                    host: config.authority(),
+                    scheme: AccessScheme::Https,
+                },
+                "access-scheme-invalid",
+            ),
+        ] {
+            assert_eq!(
+                restored
+                    .select_access(&target, &listeners)
+                    .unwrap_err()
+                    .code,
+                code
+            );
+            assert_eq!(restored, config);
+        }
+        restored
+            .select_access(
+                &PreferredHost {
+                    host: config.authority(),
+                    scheme: AccessScheme::Http,
+                },
+                &listeners,
+            )
+            .unwrap();
+        assert_eq!(restored.preferred_host, None);
+        assert_eq!(restored.listen_addresses(&addresses()), listeners);
+        save(&path, &restored).unwrap();
+        assert_eq!(load(&path).unwrap().preferred_host, None);
+    }
+    #[test]
+    fn per_host_protocols_migrate_persist_and_follow_the_selected_host() {
+        let legacy = serde_json::json!({
+            "version": 1, "enabled": true, "bindAddress": "192.168.1.20",
+            "port": 3080, "trustedHosts": ["desktop.local", "remote.example.com", "localhost"],
+            "preferredHost": { "host": "desktop.local", "scheme": "http" }
+        });
+        let mut config = serde_json::from_value::<Config>(legacy)
+            .unwrap()
+            .validate(&addresses())
+            .unwrap();
+        assert_eq!(config.host_schemes["desktop.local"], AccessScheme::Http);
+        assert_eq!(
+            config.host_schemes["remote.example.com"],
+            AccessScheme::Https
+        );
+        assert_eq!(config.host_schemes["localhost"], AccessScheme::Http);
+        let listeners = config.listen_addresses(&addresses());
+        let backend = "http://192.168.1.20:3080/?token=fixture";
+        for (host, supplied, origin) in [
+            (
+                "desktop.local",
+                AccessScheme::Https,
+                "https://desktop.local/",
+            ),
+            (
+                "remote.example.com",
+                AccessScheme::Http,
+                "http://remote.example.com/",
+            ),
+            ("localhost", AccessScheme::Http, "http://localhost:3080/"),
+        ] {
+            let target = PreferredHost {
+                host: host.into(),
+                scheme: supplied,
+            };
+            config.select_access(&target, &listeners).unwrap();
+            assert_eq!(config.access_origin(&listeners), origin);
+            assert_eq!(
+                config
+                    .connection_url(backend, Some(&target), &listeners)
+                    .unwrap(),
+                format!("{origin}?token=fixture")
+            );
+            assert_eq!(
+                config.connection_url(backend, None, &listeners).unwrap(),
+                format!("{origin}?token=fixture")
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("remote-control.json");
+        save(&path, &config).unwrap();
+        let mut restored = load(&path).unwrap().for_startup(&addresses()).unwrap();
+        assert_eq!(restored, config);
+        restored
+            .host_schemes
+            .insert("desktop.local".into(), AccessScheme::Https);
+        restored
+            .host_schemes
+            .insert("localhost".into(), AccessScheme::Https);
+        restored.preferred_host = Some(PreferredHost {
+            host: "desktop.local".into(),
+            scheme: AccessScheme::Http,
+        });
+        let mut restored = restored.validate(&addresses()).unwrap();
+        assert_eq!(restored.access_origin(&listeners), "https://desktop.local/");
+        assert_eq!(
+            restored.preferred_host.as_ref().unwrap().scheme,
+            AccessScheme::Https
+        );
+        assert_eq!(restored.host_schemes["localhost"], AccessScheme::Http);
+        restored
+            .trusted_hosts
+            .retain(|host| host != "remote.example.com");
+        let restored = restored.validate(&addresses()).unwrap();
+        assert!(!restored.host_schemes.contains_key("remote.example.com"));
+        assert_eq!(restored.listen_addresses(&addresses()), listeners);
+    }
+    #[test]
+    fn host_protocol_settings_validate_keys_and_reject_unknown_protocols() {
+        let mut config = config();
+        config
+            .host_schemes
+            .insert("DESKTOP.local:80".into(), AccessScheme::Http);
+        config
+            .host_schemes
+            .insert("removed.example.com".into(), AccessScheme::Http);
+        let mut config = config.validate(&addresses()).unwrap();
+        assert_eq!(config.host_schemes["desktop.local:80"], AccessScheme::Http);
+        assert!(!config.host_schemes.contains_key("removed.example.com"));
+        let mut invalid = serde_json::to_value(&config).unwrap();
+        invalid["hostSchemes"]["desktop.local:80"] = serde_json::json!("file");
+        assert!(serde_json::from_value::<Config>(invalid).is_err());
+        config
+            .host_schemes
+            .insert("https://desktop.local".into(), AccessScheme::Http);
+        assert_eq!(
+            config.validate(&addresses()).unwrap_err().code,
+            "host-invalid"
+        );
+    }
+    #[test]
+    fn local_whitelist_entries_add_and_remove_only_their_own_listeners() {
+        let available = vec![
+            LanAddress {
+                address: "192.168.1.20".into(),
+                name: "Ethernet".into(),
+            },
+            LanAddress {
+                address: "192.168.1.21".into(),
+                name: "Wi-Fi".into(),
+            },
+        ];
+        let mut config = Config {
+            trusted_hosts: [
+                "127.0.0.1",
+                "localhost",
+                "127.0.0.1:4080",
+                "192.168.1.21:5080",
+                "192.168.1.20",
+                "203.0.113.10",
+                "remote.example.com",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            ..config()
+        }
+        .validate(&available)
+        .unwrap();
+        let expected: Vec<ListenerAddress> = [
+            ("192.168.1.20", 3080),
+            ("127.0.0.1", 3080),
+            ("127.0.0.1", 4080),
+            ("192.168.1.21", 5080),
+        ]
+        .into_iter()
+        .map(|(address, port)| ListenerAddress {
+            address: address.into(),
+            port,
+        })
+        .collect();
+        assert_eq!(config.listen_addresses(&available), expected);
+        config.trusted_hosts.retain(|host| host != "127.0.0.1");
+        assert_eq!(
+            config.listen_addresses(&available),
+            expected,
+            "localhost still owns the same listener"
+        );
+        config.trusted_hosts.retain(|host| host != "localhost");
+        assert_eq!(
+            config.listen_addresses(&available),
+            vec![
+                expected[0].clone(),
+                expected[2].clone(),
+                expected[3].clone()
+            ]
+        );
+        config.trusted_hosts.clear();
+        assert_eq!(
+            config.listen_addresses(&available),
+            vec![expected[0].clone()]
+        );
+        config.enabled = false;
+        assert!(config.listen_addresses(&available).is_empty());
+    }
+    #[test]
+    fn local_links_use_the_listening_port_and_http_without_changing_host_permissions() {
+        let config = Config {
+            trusted_hosts: vec!["127.0.0.1".into(), "localhost:4080".into()],
+            preferred_host: Some(PreferredHost {
+                host: "127.0.0.1".into(),
+                scheme: AccessScheme::Https,
+            }),
+            ..config()
+        }
+        .validate(&addresses())
+        .unwrap();
+        let listeners = config.listen_addresses(&addresses());
+        assert_eq!(
+            config.preferred_host.as_ref().unwrap().scheme,
+            AccessScheme::Http
+        );
+        assert_eq!(config.trusted_hosts, ["127.0.0.1", "localhost:4080"]);
+        let backend = "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=x#return";
+        assert_eq!(config.access_origin(&listeners), "http://127.0.0.1:3080/");
+        assert_eq!(
+            config.connection_url(backend, None, &listeners).unwrap(),
+            "http://127.0.0.1:3080/?token=fixture%2Bsecret%3D&keep=x#return"
+        );
+        let target = PreferredHost {
+            host: "localhost:4080".into(),
+            scheme: AccessScheme::Http,
+        };
+        assert_eq!(
+            config
+                .connection_url(backend, Some(&target), &listeners)
+                .unwrap(),
+            "http://localhost:4080/?token=fixture%2Bsecret%3D&keep=x#return"
+        );
+        let invalid = PreferredHost {
+            scheme: AccessScheme::Https,
+            ..target
+        };
+        assert_eq!(
+            config
+                .connection_url(backend, Some(&invalid), &listeners)
+                .unwrap_err()
+                .code,
+            "access-scheme-invalid"
+        );
+        let invalid_port = Config {
+            trusted_hosts: vec!["localhost:0".into()],
+            preferred_host: None,
+            ..config
+        };
+        assert_eq!(
+            invalid_port.validate(&addresses()).unwrap_err().code,
+            "listen-port-invalid"
+        );
+    }
+    #[test]
+    fn adding_a_listener_checks_its_port_even_when_the_main_listener_is_unchanged() {
+        let main = TcpListener::bind("127.0.0.1:0").unwrap();
+        let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
+        let current = Config {
+            bind_address: "127.0.0.1".into(),
+            port: main.local_addr().unwrap().port(),
+            trusted_hosts: vec![],
+            ..config()
+        };
+        let changed = Config {
+            trusted_hosts: vec![format!(
+                "127.0.0.1:{}",
+                occupied.local_addr().unwrap().port()
+            )],
+            ..current.clone()
+        };
+        assert_eq!(
+            precheck_listeners(&changed, Some(&current), &[])
+                .unwrap_err()
+                .code,
+            "port-unavailable"
+        );
+        assert!(precheck_listeners(&current, Some(&current), &[]).is_ok());
+        drop(occupied);
+        assert!(precheck_listeners(&changed, Some(&current), &[]).is_ok());
+    }
+    #[test]
+    fn preferred_host_must_match_an_existing_allowlist_entry() {
+        for host in ["outside.example", "desktop.local", "desktop.local:8080"] {
+            let mut c = config();
+            c.preferred_host = Some(PreferredHost {
+                host: host.into(),
+                scheme: AccessScheme::Https,
+            });
+            assert_eq!(
+                c.validate(&addresses()).unwrap_err().code,
+                "preferred-host-untrusted"
+            );
+        }
+        for host in [
+            "https://desktop.local",
+            "desktop.local/path",
+            "user@desktop.local",
+            "desktop.local?token=x",
+        ] {
+            let mut c = config();
+            c.preferred_host = Some(PreferredHost {
+                host: host.into(),
+                scheme: AccessScheme::Https,
+            });
+            assert_eq!(
+                c.validate(&addresses()).unwrap_err().code,
+                "preferred-host-invalid"
+            );
+        }
+        let mut invalid_scheme = serde_json::to_value(config()).unwrap();
+        invalid_scheme["preferredHost"] =
+            serde_json::json!({ "host": "desktop.local:443", "scheme": "file" });
+        assert!(serde_json::from_value::<Config>(invalid_scheme).is_err());
+    }
+    #[test]
+    fn preferred_link_preserves_credentials_and_uses_its_own_scheme_and_port() {
+        let backend = "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return";
+        for (scheme, host, origin) in [
+            (
+                AccessScheme::Https,
+                "remote.example.com",
+                "https://remote.example.com/",
+            ),
+            (
+                AccessScheme::Http,
+                "desktop.local:8080",
+                "http://desktop.local:8080/",
+            ),
+            (
+                AccessScheme::Https,
+                "remote.example.com:8443",
+                "https://remote.example.com:8443/",
+            ),
+            (
+                AccessScheme::Http,
+                "desktop.local:80",
+                "http://desktop.local/",
+            ),
+        ] {
+            let c = Config {
+                trusted_hosts: vec![host.into()],
+                preferred_host: Some(PreferredHost {
+                    host: host.into(),
+                    scheme,
+                }),
+                ..config()
+            }
+            .validate(&addresses())
+            .unwrap();
+            let url = c.connection_url(backend, None, &[]).unwrap();
+            assert_eq!(
+                url,
+                format!("{origin}?token=fixture%2Bsecret%3D&keep=a%2Fb#return")
+            );
+            assert_eq!(c.authority(), "192.168.1.20:3080");
+            assert_eq!(c.effective_hosts(), ["192.168.1.20:3080", host]);
+            assert!(check_ready(&c, backend).is_ok());
+            assert!(check_ready(&c, &url).is_err());
+            assert_eq!(
+                c.connection_url("http://192.168.1.20:3080/?token=next-launch", None, &[])
+                    .unwrap(),
+                format!("{origin}?token=next-launch")
+            );
+        }
+        assert_eq!(
+            config().connection_url(backend, None, &[]).unwrap(),
+            backend
+        );
+    }
+    #[test]
+    fn every_active_host_can_share_the_current_login_without_changing_the_default() {
+        let config = Config {
+            trusted_hosts: vec!["first.example.com".into(), "second.example.com:8443".into()],
+            preferred_host: Some(PreferredHost {
+                host: "first.example.com".into(),
+                scheme: AccessScheme::Https,
+            }),
+            ..config()
+        }
+        .validate(&addresses())
+        .unwrap();
+        let backend = "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return";
+        let original = config.clone();
+        for (host, scheme, origin) in [
+            (
+                "first.example.com",
+                AccessScheme::Https,
+                "https://first.example.com/",
+            ),
+            (
+                "SECOND.example.com:8443",
+                AccessScheme::Https,
+                "https://second.example.com:8443/",
+            ),
+            (
+                "second.example.com:8443",
+                AccessScheme::Http,
+                "https://second.example.com:8443/",
+            ),
+            (
+                "192.168.1.20:3080",
+                AccessScheme::Http,
+                "http://192.168.1.20:3080/",
+            ),
+        ] {
+            let target = PreferredHost {
+                host: host.into(),
+                scheme,
+            };
+            assert_eq!(
+                config.connection_url(backend, Some(&target), &[]).unwrap(),
+                format!("{origin}?token=fixture%2Bsecret%3D&keep=a%2Fb#return")
+            );
+        }
+        assert_eq!(config, original);
+        assert_eq!(
+            config.connection_url(backend, None, &[]).unwrap(),
+            "https://first.example.com/?token=fixture%2Bsecret%3D&keep=a%2Fb#return"
+        );
+    }
+    #[test]
+    fn connection_targets_require_an_active_exact_host_and_a_valid_scheme() {
+        let config = config().validate(&addresses()).unwrap();
+        let backend = "http://192.168.1.20:3080/?token=fixture";
+        for (host, code) in [
+            ("unlisted.example.com", "access-host-untrusted"),
+            ("desktop.local", "access-host-untrusted"),
+            ("desktop.local:8443", "access-host-untrusted"),
+            ("192.168.1.21:3080", "access-host-untrusted"),
+            ("https://desktop.local", "access-host-invalid"),
+            ("desktop.local?token=x", "access-host-invalid"),
+            ("user@desktop.local", "access-host-invalid"),
+        ] {
+            let target = PreferredHost {
+                host: host.into(),
+                scheme: AccessScheme::Https,
+            };
+            assert_eq!(
+                config
+                    .connection_url(backend, Some(&target), &[])
+                    .unwrap_err()
+                    .code,
+                code
+            );
+        }
+        let target = PreferredHost {
+            host: config.authority(),
+            scheme: AccessScheme::Https,
+        };
+        assert_eq!(
+            config
+                .connection_url(backend, Some(&target), &[])
+                .unwrap_err()
+                .code,
+            "access-scheme-invalid"
+        );
+        assert!(serde_json::from_value::<PreferredHost>(serde_json::json!({
+            "host": "desktop.local:443", "scheme": "file"
+        }))
+        .is_err());
+        assert!(config
+            .connection_url("http://192.168.1.21:3080/?token=fixture", None, &[])
+            .is_err());
+    }
+    #[test]
+    fn automatic_lan_host_cannot_be_duplicated_and_follows_the_adapter() {
+        let mut c = config();
+        let old_authority = c.authority();
+        c.trusted_hosts.push(old_authority.clone());
+        c.preferred_host = Some(PreferredHost {
+            host: old_authority.clone(),
+            scheme: AccessScheme::Http,
+        });
+        let mut c = c.validate(&addresses()).unwrap();
+        assert_eq!(c.preferred_host, None);
+        assert!(!c.trusted_hosts.contains(&old_authority));
+        c.port = 4080;
+        let c = c
+            .for_startup(&[LanAddress {
+                name: "Wi-Fi".into(),
+                address: "192.168.1.89".into(),
+            }])
+            .unwrap();
+        assert_eq!(c.access_origin(&[]), "http://192.168.1.89:4080/");
+        assert_eq!(c.effective_hosts()[0], "192.168.1.89:4080");
+        assert!(!c.effective_hosts().contains(&old_authority));
+    }
+    #[test]
+    fn custom_preference_survives_adapter_changes_and_removal_requires_lan_selection() {
+        let mut c = config();
+        c.preferred_host = Some(PreferredHost {
+            host: "desktop.local:443".into(),
+            scheme: AccessScheme::Https,
+        });
+        let mut c = c
+            .for_startup(&[LanAddress {
+                name: "Wi-Fi".into(),
+                address: "192.168.1.89".into(),
+            }])
+            .unwrap();
+        assert_eq!(c.preferred_host.as_ref().unwrap().host, "desktop.local:443");
+        c.trusted_hosts.clear();
+        let available = [LanAddress {
+            name: "Wi-Fi".into(),
+            address: "192.168.1.89".into(),
+        }];
+        assert_eq!(
+            c.clone().validate(&available).unwrap_err().code,
+            "preferred-host-untrusted"
+        );
+        c.preferred_host = None;
+        let c = c.validate(&available).unwrap();
+        assert_eq!(c.effective_hosts(), ["192.168.1.89:3080"]);
+        assert_eq!(
+            c.connection_url("http://192.168.1.89:3080/?token=fixture", None, &[])
+                .unwrap(),
+            "http://192.168.1.89:3080/?token=fixture"
+        );
     }
     #[test]
     fn atomic_settings_replace_and_corrupt_files_fail_closed() {
@@ -907,7 +1977,7 @@ mod tests {
     }
     #[test]
     fn firewall_commands_are_scoped_and_never_execute() {
-        let help = firewall_help(&config());
+        let help = firewall_help(&config(), &[]);
         for constraint in [
             "-LocalAddress '192.168.1.20'",
             "-LocalPort 3080",
@@ -918,6 +1988,34 @@ mod tests {
             assert!(help.add.contains(constraint));
         }
         assert!(help.remove.contains("DSH-LAN-192.168.1.20-3080"));
+    }
+    #[test]
+    fn firewall_help_covers_all_lan_listeners_without_opening_loopback_to_the_network() {
+        let listeners = vec![
+            ListenerAddress {
+                address: "192.168.1.20".into(),
+                port: 3080,
+            },
+            ListenerAddress {
+                address: "192.168.1.21".into(),
+                port: 4080,
+            },
+            ListenerAddress {
+                address: "127.0.0.1".into(),
+                port: 3080,
+            },
+        ];
+        let help = firewall_help(&config(), &listeners);
+        assert_eq!(help.add.lines().count(), 2);
+        assert_eq!(help.remove.lines().count(), 2);
+        assert!(help
+            .add
+            .contains("-LocalAddress '192.168.1.21' -LocalPort 4080"));
+        assert!(!help.add.contains("127.0.0.1"));
+        assert!(help
+            .add
+            .lines()
+            .all(|line| line.contains("-Profile Private -RemoteAddress LocalSubnet")));
     }
     #[test]
     fn same_listener_is_not_mistaken_for_an_external_conflict() {

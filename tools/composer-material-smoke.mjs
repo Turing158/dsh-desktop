@@ -30,7 +30,7 @@ await writeFile(join(probe, 'package.json'), JSON.stringify({
 await writeFile(join(probe, 'index.js'), 'export function apply() {}\n')
 await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({
   id: '@dsh-desktop/settings-smoke',
-  factory: () => ({ inject: ['configForms', 'slots'], apply(ctx) { window.__SETTINGS_SMOKE__ = ctx } }),
+  factory: () => ({ inject: ['configForms', 'slots', 'sessions', 'uiWorkspace'], apply(ctx) { window.__SETTINGS_SMOKE__ = ctx } }),
 })\n`)
 const originalPatch = await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')
 const patch = originalPatch.replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
@@ -215,6 +215,38 @@ try {
   const leaving=await editor.evaluate(n=>+getComputedStyle(n.closest('[data-dsh-desktop="composer"]'),'::before').opacity)
   assert.ok(leaving>0 && leaving<1,'focus retains its exit animation')
   pass('the previous focus fade remains intact')
+  const activeId = await page.evaluate(() => Object.values(window.__SETTINGS_SMOKE__.sessions.list.getSnapshot().byId)
+    .find(session => session.retainedBy.mainView > 0)?.id)
+  assert.ok(activeId, 'fixture has an editable session to compare')
+  await appearance()
+  for (const dark of [false, true]) {
+    await page.evaluate(dark => window.__SETTINGS_SMOKE__.configForms.get('ui-theme').set('preference', dark ? 'dark' : 'light'), dark)
+    await page.waitForFunction(dark => document.body.hasAttribute('data-ds-dark-theme') === dark, dark)
+    for (const [material, label] of [...controls, ['opaque', '不透明']]) {
+      await choose(material, label)
+      const normal = await surface()
+      await page.evaluate(() => window.__SETTINGS_SMOKE__.uiWorkspace.clearMain())
+      await page.waitForSelector('[data-composer-card][data-dsh-desktop="composer"] [data-phase="inert"]', { state: 'attached' })
+      const placeholder = await surface()
+      // Opaque retains the native workspace picker's dashed outline; glass and
+      // frosted supply their own shadow, while all four share surface settings.
+      for (const key of ['color', 'alpha', 'blur', 'filter', 'opacity', ...(material === 'opaque' ? [] : ['shadow'])]) {
+        assert.equal(placeholder[key], normal[key], (dark ? 'dark' : 'light') + '/' + material + ': placeholder shares ' + key)
+      }
+      assert.equal(await page.locator('[data-composer-card] [contenteditable="true"]').count(), 0, 'choosing a workspace is still required before editing')
+      if (material === 'glass') {
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(260)
+        await page.screenshot({ path: join(root, (dark ? 'dark' : 'light') + '-workspace-placeholder.png') })
+        await appearance()
+      }
+      await page.evaluate(id => window.__SETTINGS_SMOKE__.uiWorkspace.openSession(id), activeId)
+      await page.waitForSelector('[data-composer-card][data-dsh-desktop="composer"] [contenteditable="true"]', { state: 'attached' })
+    }
+  }
+  await choose('glass', '毛玻璃')
+  await page.keyboard.press('Escape')
+  pass('workspace placeholder matches all four composer materials in both themes')
   await ready(page,page.url())
   assert.deepEqual(await section(),expected)
   stop()

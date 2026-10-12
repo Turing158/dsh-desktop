@@ -36,7 +36,7 @@ test('bundled overlay paths match the runtime resource lookup and contain the st
   const config = JSON.parse(readFileSync(join(here, '../src-tauri/tauri.conf.json'), 'utf8'))
   const resources = config.bundle.resources
   assert.equal(Array.isArray(resources), false, 'explicit targets prevent ../ resources from being relocated under _up_')
-  for (const file of ['desktop-notify.patch.yml', 'ui-state/package.json', 'ui-state/index.js', 'ui-state/client.js', 'ui-state/bridge.js', 'ui-state/adapter.js',
+  for (const file of ['desktop-notify.patch.yml', 'llm-compat.mjs', 'ui-state/package.json', 'ui-state/index.js', 'ui-state/client.js', 'ui-state/bridge.js', 'ui-state/adapter.js',
     'plugin-control/prepare-boot.mjs', 'plugin-control/profile-model.mjs', 'plugin-control/profile-host.mjs', 'plugin-control/marketplace.mjs', 'plugin-control/hot-policy.json', 'plugin-control/protected-modules.json']) {
     assert.equal(resources['../dsh-plugin/' + file], 'dsh-plugin/' + file)
     assert.ok(readFileSync(join(here, file)).length > 0)
@@ -56,7 +56,7 @@ test('every client plugin the patch mounts is packaged complete', () => {
   const resources = config.bundle.resources
   const patch = readFileSync(join(here, 'desktop-notify.patch.yml'), 'utf8')
 
-  for (const plugin of ['i18n', 'title-bar', 'ui-client', 'sidebar-terminal', 'file-editor']) {
+  for (const plugin of ['i18n', 'title-bar', 'ui-client', 'sidebar-terminal', 'file-editor', 'directory-picker', 'sidebar-archive']) {
     assert.ok(
       patch.includes(`./${plugin}/index.js`),
       `${plugin} is not mounted by the patch, so nothing serves its browser half`,

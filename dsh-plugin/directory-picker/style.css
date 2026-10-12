@@ -1,0 +1,48 @@
+.dshDirectory.dshDirectory {
+  width: min(720px, 100%); height: min(560px, calc(100dvh - 32px)); min-height: 0;
+  padding: 0; gap: 0; overflow: hidden;
+}
+.dshDirectory__header { flex: none; padding: 20px 24px 12px; border-bottom: 1px solid var(--dsw-alias-border-l3); }
+.dshDirectory__header h2 { margin: 0 0 12px; font-size: 16px; font-weight: 510; color: var(--dsw-alias-label-primary); }
+.dshDirectory__toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 4px; }
+.dshDirectory__toolbar > button { flex: none; padding-inline: 10px; white-space: nowrap; }
+.dshDirectory__tool { width: 36px; padding: 0 !important; flex: none; }
+.dshDirectory__path { display: flex; align-items: center; gap: 8px; flex: 1 1 280px; min-width: min(280px, 100%); }
+.dshDirectory__path > input { flex: 1; }
+.dshDirectory__path > button { flex: none; white-space: nowrap; }
+.dshDirectory__input { box-sizing: border-box; width: 100%; min-width: 0; height: 36px; border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 8px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; padding: 6px 10px; }
+.dshDirectory__input::placeholder { color: var(--dsw-alias-label-tertiary); }
+.dshDirectory__input:focus-visible, .dshDirectory button:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: -2px; }
+.dshDirectory__crumbs { display: flex; align-items: center; gap: 6px; overflow-x: auto; min-height: 28px; margin-top: 6px; color: var(--dsw-alias-label-tertiary); }
+.dshDirectory__crumb { flex: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0;
+  background: transparent; color: var(--dsw-alias-label-secondary); padding: 4px 2px; font: inherit; font-size: 12px; cursor: pointer; }
+.dshDirectory__crumb[aria-current] { color: var(--dsw-alias-label-primary); }
+.dshDirectory__list { flex: 1 1 0; min-height: 0; overflow: auto; padding: 12px 20px; }
+.dshDirectory__list:focus { outline: none; }
+.dshDirectory__row { display: flex; align-items: center; gap: 8px; min-height: 34px; width: 100%; padding: 6px; text-align: left;
+  border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-primary); cursor: pointer; font: inherit; font-size: 13px; }
+.dshDirectory__row svg { flex: none; color: var(--dsw-alias-label-secondary); }
+.dshDirectory__row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dshDirectory__row:enabled:hover, .dshDirectory__crumb:enabled:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dshDirectory button:disabled { cursor: default; opacity: .45; }
+.dshDirectory__error { color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; font-size: 13px; margin: 8px 0; }
+.dshDirectory__status { color: var(--dsw-alias-label-secondary); font-size: 13px; }
+.dshDirectory__status:not(:empty) { padding: 8px 6px; }
+.dshDirectory__footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; flex: none; padding: 16px 24px; border-top: 1px solid var(--dsw-alias-border-l3); }
+.dshDirectory__hidden { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.dshDirectory__hidden input { accent-color: var(--dsw-alias-state-business-primary); }
+.dshDirectory__actions { display: flex; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.dshDirectory__actions button { min-width: 64px; }
+.dshDirectory__create.dshDirectory__create { width: min(380px, 100%); }
+.dshDirectory__createForm { display: flex; flex-direction: column; gap: 16px; }
+.dshDirectory__createPath { font-size: 13px; color: var(--dsw-alias-label-secondary); margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .dshDirectory__toolbar > .dshDirectory__home { width: 36px; padding: 0; }
+  .dshDirectory__homeText { display: none; }
+  .dshDirectory__header { padding: 16px 16px 8px; }
+  .dshDirectory__list { padding: 8px 12px; }
+  .dshDirectory__footer { padding: 12px 16px; gap: 10px; }
+  .dshDirectory__footer .dshDirectory__actions { width: 100%; }
+  .dshDirectory__row { min-height: 40px; }
+}

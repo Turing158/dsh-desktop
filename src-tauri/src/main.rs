@@ -126,6 +126,7 @@ fn main() {
                 remote_control::remote_apply,
                 remote_control::plugins_restart,
                 remote_control::remote_connection_info,
+                remote_control::remote_select_connection,
                 remote_control::remote_firewall_help,
                 terminal::terminal_profiles,
                 terminal::terminal_open,

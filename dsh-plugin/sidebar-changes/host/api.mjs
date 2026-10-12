@@ -42,7 +42,10 @@ export class ChangesApi {
       const key = this.key(scope, source) + data.revision
       this.cache.set(key, { ...data, time: Date.now() })
       while (this.cache.size > 4) this.cache.delete(this.cache.keys().next().value)
-      const summarize = ({ diff, before, after, operations, segments, ...entry }) => ({ ...entry, operationCount: operations?.length || 0 })
+      const summarize = ({ diff, before, after, operations, segments, ...entry }) => {
+        const absolutePath = entry.absolutePath || path.resolve(entry.root || scope.root, entry.path)
+        return { ...entry, absolutePath, directoryPath: path.dirname(absolutePath), operationCount: operations?.length || 0 }
+      }
       const totals = { session: { added: 0, removed: 0, files: 0 }, observed: { added: 0, removed: 0, files: 0 }, unavailable: 0 }
       for (const entry of data.entries) {
         if (entry.stats.added === null || entry.stats.removed === null) { totals.unavailable++; continue }

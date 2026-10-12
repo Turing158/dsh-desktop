@@ -45,6 +45,28 @@ test('background retention and missing summaries cannot enable session actions',
   assert.equal(currentSession({}), undefined)
 })
 
+test('copying a deep link omits the internal prefix and follows the selected session', async () => {
+  const list = { current: undefined, byId: {} }, ctx = context(list), copied = []
+  const copySource = source.slice(source.indexOf('      function copyDeepLink()'), source.indexOf('      /** Start a new session'))
+  const copy = vm.runInNewContext(copySource + '\ncopyDeepLink', {
+    ctx, currentSession, t, document: { dispatchEvent() {} }, CustomEvent: class {}, REPORT_EVENT: 'report',
+    invokeHost: async (command, args) => { assert.equal(command, 'clipboard_write_text'); copied.push(args.text) },
+    reportFailure: (_ctx, _action, error) => { throw error },
+  })
+  for (const [id, link] of [
+    ['session-b4899765-8e01-4e03-9221-0f4520dccc78', 'deepseekharness://session/b4899765-8e01-4e03-9221-0f4520dccc78'],
+    ['session-user-session-123', 'deepseekharness://session/user-session-123'],
+  ]) {
+    list.current = id; list.byId[id] = { title: 'Selected session' }
+    copy(); await new Promise(setImmediate)
+    assert.equal(copied.at(-1), link)
+    assert.equal(currentSession(ctx).id, id, 'copying leaves the internal id intact')
+  }
+  list.current = undefined
+  copy()
+  assert.equal(copied.length, 2, 'no link is copied without a selected session')
+})
+
 const contentSource = source.slice(source.indexOf('    async function sessionContent('), source.indexOf('    function hasSelection('))
 const sessionContent = vm.runInNewContext(contentSource + '\n sessionContent', { t })
 const messageEntry = (type, content, surfaceOp = 'append') => ({ type: 'event', event: {

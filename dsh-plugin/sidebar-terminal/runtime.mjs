@@ -835,8 +835,8 @@ export function createSettings(React, primitives, scope) {
 function settingsRows(React, primitives, preferences) {
   return {
     preferences,
-    ProfileRow: createSettingsRow(React, primitives, preferences, 'profileId', t('默认终端类型'), t('新建终端时使用的终端类型。'), SHELL_SELECT),
-    PositionRow: createSettingsRow(React, primitives, preferences, 'position', t('终端显示位置'), t('按 Ctrl+~ 打开终端时使用的位置。'), SHELL_SELECT),
+    ProfileRow: createSettingsRow(React, primitives, preferences, 'profileId', t('默认终端类型'), t('新建终端时使用的终端类型。')),
+    PositionRow: createSettingsRow(React, primitives, preferences, 'position', t('终端显示位置'), t('按 Ctrl+~ 打开终端时使用的位置。')),
     dispose: () => preferences.dispose(),
   }
 }

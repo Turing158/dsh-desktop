@@ -89,7 +89,7 @@ try {
  await copyMenu.waitFor({state:'visible'})
  assert.deepEqual(await copyMenu.getByRole('menuitem').allTextContents(),['复制深度链接','复制会话内容','保存会话内容'])
  await copyMenu.getByRole('menuitem',{name:'复制深度链接',exact:true}).click()
- await page.waitForFunction(id=>window.__menuCalls.some(x=>x.command==='clipboard_write_text' && x.args.text.endsWith(id)),ids[0])
+ await page.waitForFunction(link=>window.__menuCalls.some(x=>x.command==='clipboard_write_text' && x.args.text===link),'deepseekharness://session/'+ids[0].replace(/^session-/,''))
  await page.waitForTimeout(220)
  pass('copy submenu uses the same actions and the current session id')
  await page.evaluate(id=>{const c=window.__MOTION_SMOKE__;c.uiWorkspace.openSession(id);c.sessions.binding(id).session.beginSubmission({mode:'queue',text:'Header B',attachments:[]})},ids[1]);await page.waitForTimeout(300)

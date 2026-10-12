@@ -111,7 +111,7 @@ try {
   await c.evaluate(`[...document.querySelectorAll('${liveMenu} [role="menuitem"]')].find(n=>n.textContent==='复制...').click()`)
   await until(`[...document.querySelectorAll('${liveMenu} [role="menuitem"]')].some(n=>n.textContent==='复制深度链接')`)
   await c.evaluate(`[...document.querySelectorAll('${liveMenu} [role="menuitem"]')].find(n=>n.textContent==='复制深度链接').click()`)
-  assert.equal(await c.evaluate("window.__TAURI__.core.invoke('clipboard_read_text')"),'deepseekharness://session/'+id)
+  assert.equal(await c.evaluate("window.__TAURI__.core.invoke('clipboard_read_text')"),'deepseekharness://session/'+id.replace(/^session-/,''))
   pass('session action copies the selected session id')
   await bar('会话')
   await c.evaluate(`[...document.querySelectorAll('${liveMenu} [role="menuitem"]')].find(n=>n.textContent==='重命名').click()`)

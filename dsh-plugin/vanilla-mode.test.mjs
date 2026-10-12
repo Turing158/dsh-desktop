@@ -1077,9 +1077,11 @@ test('menus outrank the bar, so no menu item is ever painted under it', () => {
   // inside the bar's 44px strip. Verified live at exactly that geometry: the
   // menu's top edge hit-tests to `dshBoot__spacer` — the bar — leaving 重命名
   // unclickable until the pointer passed y=44.
-  const rule = /html body \[role='menu'\],\s*\nhtml body \[data-dockkit-tab-menu\] \{\s*\n\s*z-index:\s*(\d+);/
+  // The model picker's outer group owns the stacking context; raising only its
+  // inner menu still leaves the search field behind the title bar.
+  const rule = /html body \[role='menu'\],\s*\nhtml body \[data-menu-material\]\[role='group'\],\s*\nhtml body \[data-dockkit-tab-menu\] \{\s*\n\s*z-index:\s*(\d+);/
   const match = rule.exec(css)
-  assert.ok(match, 'the menu z-index rule must exist, and must cover both menu families')
+  assert.ok(match, 'the menu z-index rule must cover menus, model picker surfaces and dock menus')
 
   const menuZ = Number(match[1])
 

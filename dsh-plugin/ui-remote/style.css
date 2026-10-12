@@ -45,6 +45,8 @@
 .dshRemote__pill { box-sizing: border-box; appearance: none; flex: 0 1 auto; max-width: 220px; height: 36px; padding: 0 34px 0 14px; font: inherit; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary, #252830); background-color: var(--dsw-alias-bg-module-platform, #f2f3f5); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px 12px; border: none; border-radius: 18px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dshRemote__pill:hover:not(:disabled) { background-color: var(--dsw-alias-interactive-bg-hover, rgb(0 0 0 / 6%)); }
 .dshRemote__pill:disabled { opacity: .4; cursor: default; }
+.dshRemote__selector { display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 220px; }
+.dshRemote__selector > .dshRemote__pill { width: 100%; min-width: 0; max-width: none; }
 
 /* The app's button pair: 36px primary/secondary pills, and the 28px small
    ghost (the `addModelButton` idiom) that row-level commands wear. */
@@ -65,9 +67,13 @@
 .dshRemote__runtime { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 4px; }
 .dshRemote__sectionHead { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; font-weight: 500; line-height: 18px; }
 .dshRemote__text { margin: 6px 0 0; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
-.dshRemote__autojoin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--dsw-alias-label-tertiary, #8b9099); font-size: 12px; line-height: 18px; }
+.dshRemote__steps { margin: 0; padding-left: 20px; list-style: decimal; }
+.dshRemote__steps > li + li { margin-top: 6px; }
 .dshRemote__hostRow { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; }
+.dshRemote__hostScheme { flex: 0 0 98px; }
 .dshRemote__hostRow .dshRemote__input { flex: 1 1 160px; }
+.dshRemote__hostRow > .dshRemote__ghost, .dshRemote__hostRow > .dshRemote__tag { box-sizing: border-box; flex: 0 0 68px; text-align: center; }
+.dshRemote__hostRow .dshRemote__input[readonly] { color: var(--dsw-alias-label-secondary, #4a4f57); background: var(--dsw-alias-bg-module-platform, #f2f3f5); }
 .dshRemote__hostError { margin: 4px 0 0; }
 .dshRemote__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 0; }
 
@@ -102,6 +108,9 @@ html[data-dsh-desktop-animation='off'] .dshRemote__disclosure > summary::after {
 .dshRemote__kv { display: flex; gap: 12px; margin: 6px 0 0; font-size: 13px; line-height: 22px; }
 .dshRemote__kvKey { flex: none; color: var(--dsw-alias-label-secondary, #4a4f57); }
 .dshRemote__kvValue { min-width: 0; color: var(--dsw-alias-label-primary, #252830); overflow-wrap: anywhere; }
+.dshRemote__connectionTarget { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--dsw-alias-label-secondary, #4a4f57); font-size: 13px; line-height: 22px; }
+.dshRemote__connectionControls { display: flex; flex: 1 1 260px; align-items: center; gap: 8px; min-width: 0; }
+.dshRemote__connectionHost { flex: 1; min-width: 0; max-width: none; }
 
 /* The state tag reuses the terminal header's dot-and-word: one colour story
    for "what is the service doing" across both surfaces. */

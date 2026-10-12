@@ -113,8 +113,8 @@ export function createPreferences(scope, listProfiles, events = window) {
 }
 
 /** Two ordinary General rows using the same Menu primitive as the host. */
-export function createSettingsRow(React, primitives, preferences, field, label, hint, pillStyle) {
-  const h = React.createElement, Menu = primitives?.Menu
+export function createSettingsRow(React, primitives, preferences, field, label, hint) {
+  const h = React.createElement, Menu = primitives?.Menu, ChevronDown = primitives?.IconChevronDownOutlineRegular
   return function TerminalSettingsRow() {
       useLocale(React)
     const [, bump] = React.useReducer(n => n + 1, 0), [open, setOpen] = React.useState(false), trigger = React.useRef(null)
@@ -129,14 +129,14 @@ export function createSettingsRow(React, primitives, preferences, field, label, 
     if (!items.some(item => item.id === value)) items.push({ id: value, label: (PROFILE_NAMES[value] || value) + t('（不可用）') })
     const dismiss = () => { setOpen(false); trigger.current?.focus() }
     const select = id => { dismiss(); preferences.set(field, id) }
-    const style = { ...pillStyle, maxWidth: '100%' }
     const control = Menu ? h(Menu, {
       open, onClose: dismiss, items, selectedId: value, onSelect: select, align: 'end', portal: true,
-      anchor: h('button', { ref: trigger, type: 'button', className: 'dshTerminalSettings__selector', style, disabled,
+      anchor: h('button', { ref: trigger, type: 'button', className: 'dshTerminalSettings__selector', disabled,
         'aria-label': label, 'aria-haspopup': 'menu', 'aria-expanded': open,
         onClick: () => setOpen(!open), onKeyDown: e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setOpen(true) } },
-      }, items.find(item => item.id === value)?.label),
-    }) : h('select', { className: 'dshTerminalSettings__selector', style, disabled, 'aria-label': label, value, onChange: e => select(e.target.value) },
+      }, h('span', { className: 'dshTerminalSettings__value' }, items.find(item => item.id === value)?.label),
+      ChevronDown && h(ChevronDown, { className: 'dshTerminalSettings__chevron' })),
+    }) : h('select', { className: 'dshTerminalSettings__selector', disabled, 'aria-label': label, value, onChange: e => select(e.target.value) },
       items.map(item => h('option', { key: item.id, value: item.id }, item.label)))
     return h('div', { className: 'dshTerminalSettings__row', 'data-dsh-terminal-setting': field },
       h('div', { className: 'dshTerminalSettings__text' }, h('div', { className: 'dshTerminalSettings__title' }, label),

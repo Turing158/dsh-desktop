@@ -1,4 +1,5 @@
 import { VIEWS } from './shared/change-model.mjs'
+import { FILE_KIND, parseChangeAddress, changeTitle } from './file-resource.mjs'
 const PREFIX = 'dsh-resource://desktop-changes/'
 export function migrateFileIds(ids, entries) {
   return [...new Set(ids.flatMap(id => {
@@ -23,6 +24,7 @@ export function createViewStates(states, view) {
   }
 }
 export const isChanges = tab => tab?.kind === 'desktop-changes' && tab.contentId?.startsWith(PREFIX)
+  || tab?.kind === FILE_KIND && Boolean(parseChangeAddress(tab.contentId))
 function stores(ctx) {
   const handle = ctx.slots.entriesOfSlot('rightbar.session')[0]?.store
   if (!handle?.create) return []
@@ -49,7 +51,7 @@ export function createStateProvider(ctx, states) {
         const tabs = Object.values(layout.tabs).filter(isChanges)
         if (!tabs.length) continue
         // Geometry stays in the native sidebar store; only content state belongs here.
-        sides.push({ sessionId, expanded: Boolean(layout.expanded), tabs: tabs.map(tab => ({ address: tab.contentId, state: states.get(sessionId + '\0' + tab.contentId) || { source: 'session', fileId: null, listScroll: 0, detailScroll: 0 } })),
+        sides.push({ sessionId, expanded: Boolean(layout.expanded), tabs: tabs.map(tab => ({ address: tab.contentId, state: states.get(sessionId + '\0' + tab.contentId) || { source: parseChangeAddress(tab.contentId)?.source || 'session', fileId: null, listScroll: 0, detailScroll: 0 } })),
           active: tabs.find(tab => layout.nodes[layout.activePaneId]?.activeTabId === tab.id)?.contentId || null })
       }
       return sides.length ? { sides } : null
@@ -60,9 +62,11 @@ export function createStateProvider(ctx, states) {
         if (!store) throw Error('snapshot-session-missing')
         const tabs = () => Object.values(store.getSnapshot().bySession?.[side.sessionId]?.layout.tabs || {})
         for (const tab of side.tabs) {
-          if (!tab.address.startsWith(PREFIX) || !VIEWS.includes(tab.state.source)) throw Error('snapshot-panel-unsupported')
+          const file = parseChangeAddress(tab.address)
+          if ((!file && !tab.address.startsWith(PREFIX)) || !VIEWS.includes(tab.state.source)) throw Error('snapshot-panel-unsupported')
           states.set(side.sessionId + '\0' + tab.address, tab.state)
-          if (!tabs().some(value => value.contentId === tab.address)) store.actions.openContent(side.sessionId, { kind: 'desktop-changes', contentId: tab.address, title: '更改', revealIfOpened: false }, () => {})
+          if (!tabs().some(value => value.contentId === tab.address)) store.actions.openContent(side.sessionId,
+            { kind: file ? FILE_KIND : 'desktop-changes', contentId: tab.address, title: file ? changeTitle(tab.address) : '更改', revealIfOpened: false }, () => {})
         }
         const active = tabs().find(tab => tab.contentId === side.active)
         if (active) store.actions.focusTab(side.sessionId, active.id)

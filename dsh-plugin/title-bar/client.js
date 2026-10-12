@@ -2168,7 +2168,7 @@ var React = require('react')
       function copyDeepLink() {
         var session = currentSession(ctx)
         if (session === undefined) return
-        invokeHost('clipboard_write_text', { text: 'deepseekharness://session/' + session.id })
+        invokeHost('clipboard_write_text', { text: 'deepseekharness://session/' + session.id.replace(/^session-/, '') })
           .then(function () {
             try {
               document.dispatchEvent(

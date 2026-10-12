@@ -23,6 +23,10 @@
 - id: settings
   disabled: true
 
+# Extend model capabilities before the existing picker and request validation.
+- id: llm
+  disabled: true
+
 # This Tauri shell launches the Web profile, whose browser tab is opt-in.
 # Enable the shipped iframe browser in the right sidebar.
 - id: ui-sidebar-browser
@@ -50,6 +54,9 @@
 
     - id: desktop-settings
       name: ./settings-compat.mjs
+
+    - id: desktop-llm
+      name: ./llm-compat.mjs
 
     - id: desktop-webserver
       name: ./lan-webserver.mjs
@@ -129,6 +136,9 @@
       inject: [tools, sessions, typert]
       config: {}
 
+    - id: desktop-sidebar-archive
+      name: ./sidebar-archive/index.js
+
     - id: desktop-file-editor
       name: ./file-editor/index.js
       inject: [fs, sessions, typert]
@@ -137,6 +147,10 @@
     - id: desktop-remote-control
       name: ./ui-remote/index.js
       config: {}
+
+    - id: desktop-directory-picker
+      name: ./directory-picker/index.js
+      inject: [typert, directoryPicker]
 
     # Always present so all optional UI entries can be enabled again.
     - id: desktop-plugin-control
