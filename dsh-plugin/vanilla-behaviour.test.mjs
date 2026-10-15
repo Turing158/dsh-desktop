@@ -601,6 +601,10 @@ function createSandbox(document) {
 
   sandbox.window = sandbox
   sandbox.globalThis = sandbox
+  const windowEvents = new EventTarget()
+  sandbox.addEventListener = windowEvents.addEventListener.bind(windowEvents)
+  sandbox.removeEventListener = windowEvents.removeEventListener.bind(windowEvents)
+  sandbox.dispatchEvent = windowEvents.dispatchEvent.bind(windowEvents)
 
   /**
    * A `fetch` stub answering the app's launcher routes.
@@ -672,6 +676,21 @@ test('the overlay decorates the page when the mode is desktop', () => {
     'composer',
     'the composer must be tagged so the stylesheet can target it',
   )
+  assert.equal(document.documentElement.getAttribute('data-dsh-ready'), '1')
+})
+
+test('the composer is decorated when nested in a pruned chat subtree', () => {
+  const { document, composerCard } = createPage()
+  const center = composerCard.parentElement
+  center.removeChild(composerCard)
+  const chatFlow = new FakeElement('div')
+  chatFlow.setAttribute('data-chat-flow', 'true')
+  chatFlow.append(composerCard)
+  center.append(chatFlow)
+
+  runOverlay(document)
+
+  assert.equal(composerCard.getAttribute('data-dsh-desktop'), 'composer')
   assert.equal(document.documentElement.getAttribute('data-dsh-ready'), '1')
 })
 
@@ -1306,7 +1325,7 @@ test('the mutation pass uses the cheap candidate set and the sweep is the backst
     'the periodic pass must sweep, so a role-less layer is still caught',
   )
   assert.ok(
-    /markFullSurfaceLayers\(false\)/.test(dom),
+    /markFullSurfaceLayers\(false, records\)/.test(dom),
     'the mutation pass must use the candidate set',
   )
 

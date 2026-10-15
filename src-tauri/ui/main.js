@@ -49,7 +49,7 @@ const el = {
  * Served from Rust rather than written here so the instruction cannot drift
  * away from the command the app actually runs. The fallback is only for the
  * case where the status call itself failed. */
-let installCommand = 'npm install -g @deepseek-ai/dsh --legacy-peer-deps';
+let installCommand = 'npm install -g @deepseek-ai/dsh@latest';
 
 /** Keep the animated mark mounted while only the status content changes. */
 function render(node, state = 'loading') {

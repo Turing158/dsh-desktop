@@ -9,6 +9,40 @@
     globalThis.window?.__DSH_I18N__?.use(React);
   }
 
+  // dsh-plugin/observe-chrome.mjs
+  var CONTENT = '[data-conversation-region="chat"], [data-chat-flow], [data-code-block-content], [data-textpreview-plain], [data-document-markdown], .xterm-screen';
+  function observeChrome(selector, update, options = {}) {
+    const known = /* @__PURE__ */ new WeakSet();
+    const remember = (node) => {
+      if (node?.nodeType !== 1) return false;
+      if (node.matches(selector)) {
+        known.add(node);
+        return true;
+      }
+      if (node.matches(CONTENT)) return false;
+      const found = node.querySelector(selector);
+      if (found) known.add(found);
+      return Boolean(found);
+    };
+    const observer = new MutationObserver((records) => {
+      if (records.some((record) => {
+        const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+        const region = target?.closest(selector);
+        if (region) {
+          known.add(region);
+          return true;
+        }
+        if (target && known.has(target)) return true;
+        if (target?.closest(CONTENT)) return false;
+        if (record.type === "attributes") return remember(target);
+        return [...record.addedNodes, ...record.removedNodes].some(remember);
+      })) update(records);
+    });
+    document.querySelectorAll(selector).forEach((node) => known.add(node));
+    observer.observe(document.body, { childList: true, subtree: true, ...options });
+    return observer;
+  }
+
   // dsh-plugin/plugin-control/protocol.mjs
   var codec = (name) => ({
     mode: "strict",
@@ -430,8 +464,7 @@ html[data-dsh-desktop-animation=off] .dshPlugins *,html[data-dsh-desktop-animati
       root = createRoot(container);
       root.render(React.createElement(Prompt));
     };
-    const observer = new MutationObserver(update);
-    observer.observe(document.body, { childList: true, subtree: true });
+    const observer = observeChrome('[data-shortcut-modal="settings"]', update);
     update();
     return () => {
       observer.disconnect();
@@ -554,8 +587,7 @@ html[data-dsh-desktop-animation=off] .dshPlugins *,html[data-dsh-desktop-animati
           }
         }
       };
-      const observer = new MutationObserver(update);
-      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+      const observer = observeChrome('[data-shortcut-modal="settings"]', update, { characterData: true });
       update();
       return () => {
         observer.disconnect();

@@ -182,6 +182,85 @@
     return document.documentElement.getAttribute(MODE_ATTRIBUTE) === VANILLA
   }
 
+  // Transcript and preview content can contain hundreds of thousands of nodes.
+  // Chrome discovery must stop at those boundaries, while still admitting menus
+  // and dialogs mounted inside them (not every plugin uses a body portal).
+  var CONTENT_ROOTS = '[data-conversation-region="chat"], [data-chat-flow], [data-code-block-content], [data-textpreview-plain], [data-document-markdown], .xterm-screen'
+  var CONTENT_SURFACES = '[role="menu"], [role="dialog"], [role="alertdialog"], [role="presentation"], [role="status"], [role="tooltip"], [aria-modal="true"], [data-sidebar-right-panel], [data-sidebar-right-float-host], [data-trigger-menu], [data-testid="todo-panel"], [data-goal-bar], [style*="position: fixed"], [style*="position:fixed"]'
+  var contentSurfaces = new Set()
+
+  function rememberContentSurfaces(node) {
+    if (!node || node.nodeType !== 1) return false
+    var found = false
+    if (node.matches(CONTENT_SURFACES)) { contentSurfaces.add(node); found = true }
+    node.querySelectorAll(CONTENT_SURFACES).forEach(function (surface) {
+      contentSurfaces.add(surface)
+      found = true
+    })
+    return found
+  }
+
+  /** Classify changed subtrees before doing any document-level appearance work. */
+  function affectsOverlay(records) {
+    // Empty records are also used by the explicit reconciliation/test path.
+    if (!records || !records.length) return true
+    var relevant = false
+    records.forEach(function (record) {
+      var target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement
+      var content = target?.closest(CONTENT_ROOTS)
+      var surface = target?.closest(CONTENT_SURFACES)
+      if (!content || (surface && content.contains(surface))) relevant = true
+      // Attribute changes can turn an existing content node into a popup.
+      if (record.type === 'attributes' && target && (target.matches(CONTENT_SURFACES) || contentSurfaces.has(target))) {
+        contentSurfaces.add(target)
+        relevant = true
+      }
+      Array.prototype.forEach.call(record.addedNodes || [], function (node) {
+        if (rememberContentSurfaces(node)) relevant = true
+      })
+      Array.prototype.forEach.call(record.removedNodes || [], function (node) {
+        if (node.nodeType === 1 && (node.matches(CONTENT_SURFACES) || contentSurfaces.has(node) || node.querySelector(CONTENT_SURFACES))) relevant = true
+      })
+    })
+    return relevant
+  }
+
+  /** Walk UI controls, pruning content before visiting any of its descendants. */
+  function overlayElements() {
+    var nodes = [], seen = new Set()
+    function visit(root) {
+      var pending = [root]
+      while (pending.length) {
+        var node = pending.pop()
+        if (!node || node.nodeType !== 1 || seen.has(node)) continue
+        seen.add(node)
+        nodes.push(node)
+        if (node.matches(CONTENT_ROOTS)) continue
+        for (var i = node.children.length - 1; i >= 0; i--) pending.push(node.children[i])
+      }
+    }
+    for (var i = 0; i < document.body.children.length; i++) visit(document.body.children[i])
+    contentSurfaces.forEach(function (node) {
+      if (!node.isConnected) contentSurfaces.delete(node)
+      else visit(node)
+    })
+    return nodes
+  }
+
+  function overlayQueryAll(selector) {
+    return overlayElements().filter(function (node) { return node.matches(selector) })
+  }
+
+  function overlayQuery(selector) {
+    return overlayQueryAll(selector)[0] || null
+  }
+
+  // The composer may live inside a pruned chat subtree, so find this single
+  // control with its narrow selector instead of walking the overlay tree.
+  function composerElements() {
+    return document.querySelectorAll(COMPOSER_SELECTOR)
+  }
+
   /**
    * Remove every attribute this tier adds, so 原版 really is the frontend.
    *
@@ -195,8 +274,8 @@
    */
   function clearDecorations() {
     var changed = false
-    document.querySelectorAll('.dshPluginStatus').forEach(function (node) { node.remove() })
-    var tagged = document.querySelectorAll('[data-dsh-desktop], [data-dsh-relocated], [data-dsh-danger]')
+    overlayQueryAll('.dshPluginStatus').forEach(function (node) { node.remove() })
+    var tagged = overlayQueryAll('[data-dsh-desktop], [data-dsh-relocated], [data-dsh-danger]')
     for (var i = 0; i < tagged.length; i++) {
       var node = tagged[i]
       if (node.getAttribute('data-dsh-desktop') === 'nested-menu') {
@@ -259,7 +338,7 @@
    */
   function decorateComposer() {
     var found = false
-    document.querySelectorAll(COMPOSER_SELECTOR).forEach(function (node) {
+    composerElements().forEach(function (node) {
       var card = node.hasAttribute('data-composer-card') ? node : node.closest('[class*="_card"]') || node.parentElement
       if (!card) return
       found = true
@@ -284,7 +363,7 @@
    * against the live DOM rather than guessed.
    */
   function syncTitle() {
-    var sidebar = document.querySelector('[class*="_sidebarCol"]')
+    var sidebar = overlayQuery('[class*="_sidebarCol"]')
     if (!sidebar) return
 
     var project = sidebar.querySelector('[class*="_projectRow"]')
@@ -295,7 +374,7 @@
     // Reject empty or absurd values (a row containing half the tree).
     if (name.length === 0 || name.length > 48) return
 
-    var next = name + ' — DeepSeek Harness'
+    var next = name + ' — dsh desktop'
     if (document.title !== next) document.title = next
   }
 
@@ -356,7 +435,7 @@
    * @returns {boolean} whether any row needed tagging.
    */
   function markRelocatedRows() {
-    var wrapper = document.querySelector("[data-slot='settings.general.item']")
+    var wrapper = overlayQuery("[data-slot='settings.general.item']")
     if (!wrapper) return false
 
     var changed = false
@@ -378,7 +457,7 @@
    * slot. Mark our two fixed labels; CSS replaces only their decorative glyphs,
    * leaving React's nodes and the navigation's accessible names intact. */
   function markSettingsNavigationIcons() {
-    document.querySelectorAll('[role="dialog"] [class*="_navList"] > button').forEach(function (button) {
+    overlayQueryAll('[role="dialog"] [class*="_navList"] > button').forEach(function (button) {
       var label = button.querySelector('[class*="_navLabel"]')
       var icon = button.querySelector('[class*="_navIcon"]')
       var text = label ? label.textContent.trim() : ''
@@ -422,7 +501,7 @@
     // (a) The trigger buttons: the composer chip and the settings selector.
     // Only a button whose own visible label IS the preset qualifies, which
     // excludes the menus' wrapping elements (they contain the label too).
-    var buttons = document.querySelectorAll('button')
+    var buttons = overlayQueryAll('button')
     for (var i = 0; i < buttons.length; i++) {
       var button = buttons[i]
       var text = (button.textContent || '').replace(/\s+/g, ' ').trim()
@@ -446,7 +525,7 @@
 
     // (b) The 完全权限 entry inside an opened menu. Its text is the label, and a
     // menu item is identifiable by role or by living inside a [role="menu"].
-    var menus = document.querySelectorAll("[role='menu']")
+    var menus = overlayQueryAll("[role='menu']")
     for (var m = 0; m < menus.length; m++) {
       var items = menus[m].querySelectorAll('button, [role="menuitem"]')
       for (var j = 0; j < items.length; j++) {
@@ -486,7 +565,8 @@
   function watchRelocatedRows() {
     if (typeof MutationObserver !== 'function') return
     var scheduled = false
-    var observer = new MutationObserver(function () {
+    var observer = new MutationObserver(function (records) {
+      if (!affectsOverlay(records)) return
       // NOTE what is NOT here: a vanilla guard. It used to be the first line, and it
       // was a real bug — the frame callback below applies the LAYOUT tag (which both
       // modes need) as well as the appearance tags (which 原版 must not have), so
@@ -510,7 +590,7 @@
       markCollapseBodies()
       // Every batch can mount a dialog, including one arriving while an earlier
       // batch is waiting for its appearance frame. Never defer its first paint.
-      markFullSurfaceLayers(false)
+      markFullSurfaceLayers(false, records)
       if (scheduled) return
       scheduled = true
       syncRemotePanelChrome()
@@ -529,10 +609,15 @@
     })
     // A fullscreen toggle can change positioning without mounting any nodes.
     // Re-evaluate its chrome offset in the mutation microtask, before paint.
-    var options = { childList: true, subtree: true, attributes: true, attributeFilter: ['data-sidebar-right-panel'] }
+    var options = { childList: true, subtree: true, attributes: true, attributeFilter: ['data-sidebar-right-panel', 'role', 'aria-modal', 'class', 'style'] }
     if (isRemotePage()) {
       options.attributeFilter.push('data-sidebar-right-open', 'hidden', 'aria-selected')
       window.addEventListener('resize', syncRemotePanelChrome)
+      // Keyboard panning on iOS can move the header without resizing the layout
+      // viewport or mutating the DOM. Keep the fixed panel on the same row.
+      window.visualViewport?.addEventListener('resize', syncRemotePanelChrome)
+      window.visualViewport?.addEventListener('scroll', syncRemotePanelChrome)
+      window.addEventListener('pageshow', syncRemotePanelChrome)
     }
     observer.observe(document.body, options)
   }
@@ -568,7 +653,7 @@
    * @returns {boolean} whether the frame was found.
    */
   function decorateFrame() {
-    var layer = document.querySelector('[data-shell-overlay]')
+    var layer = overlayQuery('[data-shell-overlay]')
     if (!layer) return false
     var frame = layer.parentElement
     if (frame && !marked.has(frame)) {
@@ -581,9 +666,8 @@
   /**
    * Elements that can be a full-surface layer, as a cheap pre-filter.
    *
-   * WHY A ROLE SELECTOR. The alternative is `getComputedStyle` on every element
-   * in the document, which measured ~1–2.4 ms over ~740 nodes — affordable twice
-   * a second, but not on every mutation frame while the agent is streaming. Most
+   * WHY A ROLE SELECTOR. Reading every transcript node's computed style scales
+   * with the conversation, even when none of its content is visible. Most
    * full-screen layers this app renders carry their role as part of their
    * accessibility contract (the same reason `theme.css` keys menus on
    * `[role="menu"]`), so this set is both tiny and stable across builds:
@@ -595,9 +679,8 @@
    *   data-sidebar-right-panel  the sidebar, fixed in older frontend versions
    *
    * It is a PRE-filter, not the test: the real question is the computed inset
-   * (see {@link isFullSurfaceLayer}). A backstop sweep of the whole document runs
-   * on the periodic pass, so a future layer without a role is still caught within
-   * two seconds rather than never.
+   * (see {@link isFullSurfaceLayer}). The periodic backstop also checks role-less
+   * UI elements, but prunes transcript, code, document and terminal content.
    */
   var LAYER_CANDIDATES = '[role="presentation"], [role="dialog"], [aria-modal="true"], [role="status"], [data-sidebar-right-panel]'
 
@@ -618,8 +701,8 @@
    *   - **Not the size.** A `getBoundingClientRect()` height test misses a layer
    *     whose box is transiently short, and needs a layout read to answer.
    *
-   * `inset: 0` on all four sides is what "I am a full-screen layer" MEANS, it is
-   * readable from computed style without forcing layout, and it is self-selecting:
+   * `inset: 0` on all four sides identifies a full-screen layer. Reading computed
+   * edges can flush layout, so callers inspect only newly mounted/changed nodes:
    *
    *   - the bar is `inset: 0 0 auto 0`, so its `bottom` is `auto` — never matches,
    *     and no name-based exclusion is needed;
@@ -727,34 +810,73 @@
    * about the surface's PRESENT shape rather than its history. The tagged set is
    * a handful of layers, so the cost is a few computed-style reads per pass.
    *
-   * @param {boolean} sweep - also inspect every element, not just
-   *   {@link LAYER_CANDIDATES}. True on the slow periodic pass, false on the
-   *   mutation-driven one, where the cost would be paid per render.
+   * @param {boolean} sweep - also inspect role-less UI elements, not just
+   *   {@link LAYER_CANDIDATES}. Content descendants are excluded in both paths.
    * @returns {boolean} whether any tag was added or removed.
    */
-  function markFullSurfaceLayers(sweep) {
+  var layerSweepDone = false
+  var fullSurfaceLayers = new Set()
+  var layerChecks = new WeakMap()
+
+  function markFullSurfaceLayers(sweep, records) {
     var changed = false
-    // File previews can contain thousands of syntax/PDF nodes. On the phone,
-    // known semantic layers cover the UI; reading every node's computed style
-    // every two seconds stalls opening, closing and scrolling those previews.
-    var selector = sweep && !isRemotePage() ? 'body *' : LAYER_CANDIDATES
+    var selector = LAYER_CANDIDATES
     if (isRemotePage()) selector += ', [data-sidebar-right-panel], [data-sidebar-right-float-host]'
-    var nodes = document.querySelectorAll(selector)
+    var candidates = new Set()
+    function collect(node, inContent) {
+      if (!node || node.nodeType !== 1 || candidates.has(node)) return
+      if (!inContent || node.matches(selector)) candidates.add(node)
+      if (node.matches(CONTENT_ROOTS)) {
+        node.querySelectorAll(selector).forEach(function (surface) { candidates.add(surface) })
+        return
+      }
+      if (inContent) {
+        node.querySelectorAll(selector).forEach(function (surface) { candidates.add(surface) })
+      } else {
+        for (var child of node.children) collect(child, false)
+      }
+    }
+    if (records?.length) {
+      records.forEach(function (record) {
+        var target = record.target?.nodeType === 1 ? record.target : record.target?.parentElement
+        var inContent = Boolean(target?.closest(CONTENT_ROOTS))
+        if (record.type === 'attributes') {
+          if (target && layerChecks.get(target) !== layerStamp(target)) {
+            if (!inContent) collect(target, false)
+            else if (target.matches(selector) || fullSurfaceLayers.has(target)) candidates.add(target)
+          }
+        } else {
+          Array.prototype.forEach.call(record.addedNodes || [], function (node) { collect(node, inContent) })
+        }
+      })
+    } else {
+      // The mount pass discovers existing role-less layers. The periodic
+      // backstop only measures nodes whose relevant attributes have changed.
+      // Reading stable status/sidebar styles on each stream chunk forces layout
+      // of the whole growing transcript, even when only a few nodes are queried.
+      overlayElements().forEach(function (node) {
+        var stamp = layerStamp(node)
+        if (!layerSweepDone || records || layerChecks.get(node) !== stamp) candidates.add(node)
+      })
+      layerSweepDone = true
+    }
+    var nodes = Array.from(candidates)
+    var additions = [], removals = []
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i]
+      layerChecks.set(node, layerStamp(node))
       // A ghost is a fading clone of a surface that just unmounted, held only to
       // play its exit animation. It is inert by construction and must stay exactly
       // where its original was, so neither loop may touch it: a fresh tag here
       // would shift a not-yet-offset clone down by the bar's height mid-fade.
       if (node.getAttribute(GHOST_ATTRIBUTE)) continue
       // Already tagged: read the chrome family, which is the one this writes.
-      if (node.getAttribute(CHROME_ATTRIBUTE) === CHROME_LAYER) continue
+      if (node.getAttribute(CHROME_ATTRIBUTE) === CHROME_LAYER) { fullSurfaceLayers.add(node); continue }
       // Settings already clears the title bar through its semantic CSS rule.
       // Accept that inset on first discovery too, or it never gets an entrance
       // animation. Coordinate-positioned popups still fail the other edges.
       if (!isFullSurfaceLayer(node) && !(node.matches(LAYER_CANDIDATES) && isOffsetFullSurfaceLayer(node))) continue
-      node.setAttribute(CHROME_ATTRIBUTE, CHROME_LAYER)
-      changed = true
+      additions.push(node)
     }
 
     // Retirement. Keyed on the tag's VALUE so the frame's own `data-dsh-chrome`
@@ -762,21 +884,33 @@
     // touched. The question is the OFFSET shape ({@link
     // isOffsetFullSurfaceLayer}): the unoffset test would retire the tag it just
     // wrote, because the stylesheet's own offset changes the answer.
-    var tagged = document.querySelectorAll('[' + CHROME_ATTRIBUTE + "='" + CHROME_LAYER + "']")
+    // Only remeasure a known layer when its own positioning may have changed.
+    // Removed nodes leave the set without any style/layout reads.
+    var tagged = Array.from(fullSurfaceLayers)
     for (var j = 0; j < tagged.length; j++) {
       var stale = tagged[j]
+      if (!stale.isConnected) { fullSurfaceLayers.delete(stale); continue }
+      if (!candidates.has(stale)) continue
       if (stale.getAttribute(GHOST_ATTRIBUTE)) continue
       if (isOffsetFullSurfaceLayer(stale)) continue
-      stale.removeAttribute(CHROME_ATTRIBUTE)
-      changed = true
+      removals.push(stale)
     }
+    // Batch reads before writes; applying an offset must not invalidate the
+    // style/layout calculation for the next candidate in this same batch.
+    additions.forEach(function (node) { node.setAttribute(CHROME_ATTRIBUTE, CHROME_LAYER); fullSurfaceLayers.add(node); changed = true })
+    removals.forEach(function (node) { node.removeAttribute(CHROME_ATTRIBUTE); fullSurfaceLayers.delete(node); changed = true })
     return changed
+  }
+
+  function layerStamp(node) {
+    return ['class', 'style', 'role', 'aria-modal', 'data-sidebar-right-panel', 'data-sidebar-right-open']
+      .map(function (name) { return node.getAttribute(name) }).join('|')
   }
 
   /** Keep React's status nodes intact; the button already exposes the localized
    * state in its accessible name. Only our decorative sibling is owned here. */
   function decoratePluginStatuses() {
-    document.querySelectorAll('[data-plugin-module] > button[aria-label]').forEach(function (button) {
+    overlayQueryAll('[data-plugin-module] > button[aria-label]').forEach(function (button) {
       var trailing = button.querySelector('[class*="_cardTrailing"]')
       if (!trailing) return
       var name = button.getAttribute('aria-label') || ''
@@ -859,7 +993,7 @@
    * @returns {boolean} whether the composer was found.
    */
   function decorateComposerPresent() {
-    return document.querySelector(COMPOSER_SELECTOR) !== null
+    return composerElements().length > 0
   }
 
   /** Wait for the app to mount, then keep watching it. */
@@ -1000,6 +1134,13 @@
     // (Back/Reload/Save as…) is out of place, and the app provides its own.
     event.preventDefault()
 
+    var image = attachmentImageFor(event.target)
+    if (image) {
+      event.stopPropagation()
+      openAttachmentImageMenu(event, image)
+      return
+    }
+
     var button = actionsButtonFor(event.target)
     if (!button) {
       openTextMenu(event)
@@ -1026,6 +1167,149 @@
   }
 
   var dismissTextMenu = null
+  var contextMenuKeyboard = null
+
+  /** Attachment thumbnails and the original image in their body-portalled viewer.
+   * Module suffixes cover old composer versions; message variants are semantic. */
+  function attachmentImageFor(target) {
+    var image = target.closest?.('img') || target.closest?.('button[class*="_thumbnail"], button[data-variant]')?.querySelector('img')
+    if (!image || image.closest('[data-dsh-ghost]')) return null
+    return image.matches('[class*="_imageItem"] > button > img, [data-composer-card] button[class*="_thumbnail"] > img, button[data-variant="single"] > img, button[data-variant="tile"] > img, button[data-variant="thumbnail"] > img, [role="dialog"][aria-modal="true"] > img') ? image : null
+  }
+
+  /** Keep the attachment's name and original format, including animated images. */
+  function attachmentImageFilename(name, type) {
+    var safe = String(name || '').split(/[\\/]/).pop().replace(/[<>:"|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 180)
+    if (/\.(png|jpe?g|gif|webp|svg|avif|bmp|ico|tiff?|heic|heif)$/i.test(safe)) return safe
+    var extension = { 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/avif': 'avif', 'image/bmp': 'bmp', 'image/x-icon': 'ico', 'image/tiff': 'tiff' }[type] || 'png'
+    return (safe || 'image') + '.' + extension
+  }
+
+  async function readAttachmentImage(source, signal) {
+    var response = await fetch(source, { signal: signal })
+    if (!response.ok) throw new Error(t('图片读取失败（HTTP {status}）', { status: response.status }))
+    var blob = await response.blob()
+    if (!blob.size || (blob.type && !blob.type.startsWith('image/') && blob.type !== 'application/octet-stream')) {
+      throw new Error(t('无法读取图片数据'))
+    }
+    return blob
+  }
+
+  /** Clipboard image writes require PNG. Decode at natural size, not thumbnail size. */
+  async function attachmentImagePng(blob) {
+    if (blob.type === 'image/png') return blob
+    var url = URL.createObjectURL(blob)
+    try {
+      var image = new Image()
+      await new Promise(function (resolve, reject) {
+        image.onload = resolve
+        image.onerror = function () { reject(new Error(t('无法读取图片数据'))) }
+        image.src = url
+      })
+      var canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      var context = canvas.getContext('2d')
+      if (!context) throw new Error(t('无法读取图片数据'))
+      context.drawImage(image, 0, 0)
+      return await new Promise(function (resolve, reject) {
+        canvas.toBlob(function (png) {
+          if (png) resolve(png)
+          else reject(new Error(t('无法读取图片数据')))
+        }, 'image/png')
+      })
+    } finally { URL.revokeObjectURL(url) }
+  }
+
+  function attachmentImageHost() {
+    var api = window.__TAURI__?.core
+    return typeof api?.invoke === 'function' ? api : null
+  }
+
+  function attachmentImageBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader()
+      reader.onload = function () { resolve(reader.result.slice(reader.result.indexOf(',') + 1)) }
+      reader.onerror = function () { reject(reader.error || new Error(t('无法读取图片数据'))) }
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  async function copyAttachmentImage(blob) {
+    var api = attachmentImageHost()
+    if (api) {
+      var png = await attachmentImagePng(blob)
+      await api.invoke('clipboard_write_image', { data: await attachmentImageBase64(png) })
+    } else {
+      // Start the clipboard operation in the click gesture; conversion can finish
+      // later without losing user activation in browsers that require it.
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': attachmentImagePng(blob) })])
+    }
+    showDesktopToast(t('已复制图片'), false)
+  }
+
+  async function saveAttachmentImage(blob, name) {
+    var filename = attachmentImageFilename(name, blob.type)
+    var api = attachmentImageHost()
+    if (api) {
+      var saved = await api.invoke('save_attachment_image', { name: filename, data: await attachmentImageBase64(blob) })
+      if (saved) showDesktopToast(t('已保存图片'), false)
+      return
+    }
+    if (typeof window.showSaveFilePicker === 'function') {
+      var handle
+      try { handle = await window.showSaveFilePicker({ suggestedName: filename }) }
+      catch (error) { if (error?.name === 'AbortError') return; throw error }
+      var stream = await handle.createWritable()
+      try { await stream.write(blob); await stream.close() }
+      catch (error) { await stream.abort().catch(function () {}); throw error }
+      showDesktopToast(t('已保存图片'), false)
+      return
+    }
+    // Browsers without the file picker use their ordinary download flow.
+    var url = URL.createObjectURL(blob)
+    var anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.hidden = true
+    document.body.appendChild(anchor)
+    try { anchor.click() }
+    finally {
+      anchor.remove()
+      setTimeout(function () { URL.revokeObjectURL(url) }, 60000)
+    }
+  }
+
+  function openAttachmentImageMenu(event, image) {
+    var source = image.currentSrc || image.src
+    if (!source) return
+    var name = image.alt
+    var previousFocus = document.activeElement
+    var abort = new AbortController()
+    var closed = false, blob
+    var opened = showTextMenu(event, [
+      { label: t('复制图片'), enabled: false, run: function () { return copyAttachmentImage(blob) } },
+      { label: t('保存图片'), enabled: false, run: function () { return saveAttachmentImage(blob, name) } },
+    ], {
+      label: t('图片操作'), scope: image, minTop: titlebarHeight() + MENU_MARGIN,
+      restore: function () { if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) },
+      onDismiss: function () { closed = true; abort.abort() },
+      onError: function (error) { showDesktopToast(t('图片操作失败：') + String(error), true) },
+    })
+    if (!opened) return
+    opened.menu.setAttribute('data-dsh-image-menu', '')
+    // Prepare bytes while the menu is open so the file picker can start directly
+    // from its click, even for an attachment that takes time to fetch.
+    readAttachmentImage(source, abort.signal).then(function (value) {
+      if (closed) return
+      blob = value
+      var buttons = opened.menu.querySelectorAll('button')
+      buttons[0].disabled = !attachmentImageHost() && (!navigator.clipboard?.write || typeof ClipboardItem !== 'function')
+      buttons[1].disabled = false
+    }).catch(function (error) {
+      if (!closed) showDesktopToast(t('图片操作失败：') + String(error), true)
+    })
+  }
 
   /** Text operations preserve the selection that existed before the menu took focus. */
   function openTextMenu(event) {
@@ -1100,7 +1384,7 @@
     })
   }
 
-  /** One renderer for DOM text and terminal buffer actions. The terminal supplies
+  /** One renderer for image, DOM text and terminal buffer actions. The terminal supplies
    * its own clipboard actions and, when needed, a parent that retains input control. */
   function showTextMenu(point, entries, options) {
     if (isVanilla()) return null
@@ -1110,27 +1394,32 @@
     var menu = document.createElement('div')
     menu.className = 'dshTextMenu'
     menu.setAttribute('role', 'menu')
-    menu.setAttribute('aria-label', t('文字操作'))
+    menu.setAttribute('aria-label', options.label || t('文字操作'))
     menu.tabIndex = -1
     var closed = false
     var buttons = entries.map(function (entry) {
       var button = document.createElement('button')
       button.type = 'button'
       button.setAttribute('role', 'menuitem')
-      button.setAttribute('aria-keyshortcuts', 'Control+' + entry.key)
+      if (entry.key) button.setAttribute('aria-keyshortcuts', 'Control+' + entry.key)
       button.disabled = !entry.enabled
       var label = document.createElement('span')
       label.className = 'dshTextMenu__label'
       label.textContent = entry.label
-      var shortcut = document.createElement('span')
-      shortcut.className = 'dshTextMenu__shortcut'
-      shortcut.setAttribute('aria-hidden', 'true')
-      shortcut.textContent = 'Ctrl+' + entry.key
-      button.append(label, shortcut)
+      button.append(label)
+      if (entry.key) {
+        var shortcut = document.createElement('span')
+        shortcut.className = 'dshTextMenu__shortcut'
+        shortcut.setAttribute('aria-hidden', 'true')
+        shortcut.textContent = 'Ctrl+' + entry.key
+        button.append(shortcut)
+      }
       button.addEventListener('mousedown', function (e) { e.preventDefault() })
       button.addEventListener('click', function () {
         dismiss(true)
-        Promise.resolve().then(entry.run).catch(options.onError || function (error) { showDesktopToast(t('文字操作失败：') + String(error), true) })
+        var onError = options.onError || function (error) { showDesktopToast(t('文字操作失败：') + String(error), true) }
+        try { Promise.resolve(entry.run()).catch(onError) }
+        catch (error) { onError(error) }
       })
       menu.appendChild(button)
       return button
@@ -1141,7 +1430,7 @@
       menu.remove()
       observer.disconnect()
       document.removeEventListener('pointerdown', outside, true)
-      document.removeEventListener('keydown', keyboard, true)
+      contextMenuKeyboard = null
       document.removeEventListener('dsh-desktop:ui-mode', modeChanged)
       window.removeEventListener('resize', resized)
       dismissTextMenu = null
@@ -1153,18 +1442,18 @@
     function modeChanged() { if (isVanilla()) dismiss(false) }
     function keyboard(e) {
       if (e.key === 'Escape' || e.key === 'Tab') {
-        e.preventDefault(); e.stopPropagation(); dismiss(true); return
+        e.preventDefault(); e.stopImmediatePropagation(); dismiss(true); return
       }
       var enabled = buttons.filter(function (b) { return !b.disabled })
       var index = enabled.indexOf(document.activeElement)
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
-        e.preventDefault(); e.stopPropagation()
+        e.preventDefault(); e.stopImmediatePropagation()
         var next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1
           : index < 0 ? (e.key === 'ArrowUp' ? enabled.length - 1 : 0)
           : (index + (e.key === 'ArrowUp' ? -1 : 1) + enabled.length) % enabled.length
         enabled[next]?.focus()
       } else if ((e.key === 'Enter' || e.key === ' ') && index >= 0) {
-        e.preventDefault(); e.stopPropagation(); enabled[index].click()
+        e.preventDefault(); e.stopImmediatePropagation(); enabled[index].click()
       }
     }
     var observer = new MutationObserver(function () {
@@ -1175,9 +1464,9 @@
     ;(options.parent || document.body).appendChild(menu)
     var box = menu.getBoundingClientRect()
     menu.style.left = Math.max(8, Math.min(point.clientX, window.innerWidth - box.width - 8)) + 'px'
-    menu.style.top = Math.max(8, Math.min(point.clientY, window.innerHeight - box.height - 8)) + 'px'
+    menu.style.top = Math.max(options.minTop || 8, Math.min(point.clientY, window.innerHeight - box.height - 8)) + 'px'
     document.addEventListener('pointerdown', outside, true)
-    document.addEventListener('keydown', keyboard, true)
+    contextMenuKeyboard = keyboard
     document.addEventListener('dsh-desktop:ui-mode', modeChanged)
     window.addEventListener('resize', resized)
     dismissTextMenu = dismiss
@@ -1330,6 +1619,9 @@
     if (window.__dshDesktopContextMenu === true) return
     window.__dshDesktopContextMenu = true
     window.__DSH_TEXT_MENU__ = showTextMenu
+    // Register before a lightbox mounts its window-level Escape/Tab handlers.
+    // Menu keys must operate on the menu without dismissing its image viewer.
+    window.addEventListener('keydown', function (event) { contextMenuKeyboard?.(event) }, true)
     document.addEventListener('contextmenu', onContextMenu, true)
     // Registered on `document` in the CAPTURE phase, which is what puts it ahead
     // of the app's handler for the same event — see {@link onPointerOut}.
@@ -1441,6 +1733,136 @@
     mode.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
   }
 
+  /** Let a truncated goal wrap below its header without replacing React's text
+   * or action buttons. Track only mounted goal bars and their actual size. */
+  function watchGoalDisclosure() {
+    if (typeof MutationObserver !== 'function' || window.__dshGoalDisclosure) return
+    window.__dshGoalDisclosure = true
+    var entries = new Map(), scheduled = false, nextId = 0
+    var sizes = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null
+
+    function stopMotion(state) {
+      if (!state.animation) return
+      state.animation.onfinish = state.animation.oncancel = null
+      state.animation.cancel()
+      state.animation = null
+    }
+    function forget(bar, state) {
+      stopMotion(state)
+      if (sizes) sizes.unobserve(state.objective)
+      bar.removeEventListener('click', state.click)
+      bar.removeAttribute('data-dsh-goal-disclosure')
+      bar.removeAttribute('data-dsh-goal-expanded')
+      bar.removeAttribute('data-dsh-goal-overflow')
+      if (state.addedId) state.objective.removeAttribute('id')
+      state.button.remove()
+      entries.delete(bar)
+    }
+    function render(bar, state) {
+      // Keep the wrapped layout until the closing height animation finishes.
+      bar.setAttribute('data-dsh-goal-expanded', String(state.expanded || !!state.animation))
+      state.button.setAttribute('aria-expanded', String(state.expanded))
+      var label = t(state.expanded ? '收起目标' : '展开目标')
+      if (state.button.getAttribute('aria-label') !== label) {
+        state.button.setAttribute('aria-label', label)
+        state.button.title = label
+      }
+    }
+    function toggle(bar, state) {
+      var animate = animationsActive() && typeof bar.animate === 'function'
+      var from = animate ? getComputedStyle(bar).blockSize : null
+      stopMotion(state)
+      state.expanded = !state.expanded
+      render(bar, state)
+      if (animate) {
+        var style = getComputedStyle(bar)
+        var to = style.blockSize
+        var duration = parseFloat(style.getPropertyValue('--dsh-goal-motion')) || 0
+        if (from !== to && duration > 0) {
+          state.animation = bar.animate([{ blockSize: from }, { blockSize: to }], {
+            duration: duration, easing: 'ease-out'
+          })
+          render(bar, state)
+          state.animation.onfinish = state.animation.oncancel = function () {
+            state.animation = null
+            render(bar, state)
+            schedule()
+          }
+        }
+      }
+      schedule()
+    }
+    function sync() {
+      scheduled = false
+      entries.forEach(function (state, bar) {
+        if (isVanilla() || !bar.isConnected || state.objective.parentElement !== bar || state.button.parentElement !== bar) forget(bar, state)
+      })
+      if (isVanilla()) return
+      overlayQueryAll('[data-goal-bar] > [class*="_bar"]').forEach(function (bar) {
+        if (bar.closest('[data-dsh-ghost]')) return
+        var objective = bar.querySelector(':scope > span[class*="_objective"]')
+        var actions = bar.querySelector(':scope > [class*="_actions"]')
+        if (!objective || !actions) return
+        var state = entries.get(bar)
+        if (!state) {
+          var button = document.createElement('button')
+          button.type = 'button'
+          button.className = 'dshGoal__toggle'
+          button.hidden = true
+          button.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+          state = { objective: objective, button: button, expanded: false, animation: null, text: objective.textContent, addedId: !objective.id }
+          if (state.addedId) objective.id = 'dsh-goal-objective-' + (++nextId)
+          button.setAttribute('aria-controls', objective.id)
+          state.click = function (event) {
+            if (isVanilla() || button.hidden) return
+            if (!button.contains(event.target)) {
+              // Native actions and selecting/scrolling the full objective keep
+              // their original behavior. The remaining header opens/closes it.
+              if (event.target.closest('button, input, [role="alert"]') ||
+                  ((state.expanded || state.animation) && objective.contains(event.target)) ||
+                  window.getSelection()?.isCollapsed === false) return
+            }
+            toggle(bar, state)
+          }
+          bar.setAttribute('data-dsh-goal-disclosure', '')
+          bar.insertBefore(button, actions)
+          bar.addEventListener('click', state.click)
+          entries.set(bar, state)
+          if (sizes) sizes.observe(objective)
+        }
+        if (state.text !== objective.textContent) {
+          stopMotion(state)
+          state.text = objective.textContent
+          state.expanded = false
+          objective.scrollTop = 0
+        }
+        if (state.animation && !animationsActive()) stopMotion(state)
+        render(bar, state)
+        if (!state.expanded && !state.animation) {
+          // Measure against the space available WITHOUT our button, otherwise
+          // adding the disclosure can make a fitting goal look truncated.
+          var reserved = state.button.hidden ? 0 : state.button.offsetWidth + (parseFloat(getComputedStyle(bar).columnGap) || 0)
+          var overflow = objective.scrollWidth > objective.clientWidth + reserved + 1 || /\n/.test(state.text)
+          if (state.button.hidden === overflow) state.button.hidden = !overflow
+          bar.setAttribute('data-dsh-goal-overflow', String(overflow))
+        }
+      })
+    }
+    function schedule() {
+      if (scheduled) return
+      scheduled = true
+      requestAnimationFrame(sync)
+    }
+    var observer = new MutationObserver(function (records) { if (affectsOverlay(records)) schedule() })
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE, 'data-dsh-desktop-animation'] })
+    var reduced = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
+    if (reduced && reduced.addEventListener) reduced.addEventListener('change', schedule)
+    window.addEventListener('resize', schedule)
+    document.addEventListener('dsh-desktop:locale', schedule)
+    schedule()
+  }
+
   /** Reveal the filename when a preview opens, without resetting a user's scroll. */
   function watchPreviewPaths() {
     if (typeof MutationObserver !== 'function' || typeof ResizeObserver !== 'function') return
@@ -1471,7 +1893,7 @@
       scheduled = false
       paths.forEach(function (state, node) { if (!node.isConnected || isVanilla()) forget(node, state) })
       if (isVanilla()) return
-      document.querySelectorAll('[data-textpreview-path][data-path-label]').forEach(function (node) {
+      overlayQueryAll('[data-textpreview-path][data-path-label]').forEach(function (node) {
         if (node.closest('[data-dsh-ghost]')) return
         var state = paths.get(node)
         if (!state) {
@@ -1530,7 +1952,7 @@
       scheduled = true
       requestAnimationFrame(sync)
     }
-    var observer = new MutationObserver(schedule)
+    var observer = new MutationObserver(function (records) { if (affectsOverlay(records)) schedule() })
     observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['title', 'hidden', 'data-textpreview-url'] })
     observer.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
     schedule()
@@ -1974,9 +2396,10 @@
     if (window.__dshDesktopGhostWatcher === true) return
     window.__dshDesktopGhostWatcher = true
     var observer = new MutationObserver(function (records) {
+      if (!affectsOverlay(records)) return
       // A quick reopen replaces the closing scenery in the same microtask.
       // Resume from its visible height rather than rendering both full lists.
-      document.querySelectorAll('[data-plugin-scope] > [class*="_groupBody"]:not([data-dsh-ghost]), [data-testid="todo-panel"] > div > ul:not([data-dsh-ghost])').forEach(function (body) {
+      overlayQueryAll('[data-plugin-scope] > [class*="_groupBody"]:not([data-dsh-ghost]), [data-testid="todo-panel"] > div > ul:not([data-dsh-ghost])').forEach(function (body) {
         var parent = body.parentElement
         var ghosts = parent.querySelectorAll(':scope > [data-dsh-ghost="collapse"]')
         for (var g = 0; g < ghosts.length; g++) {
@@ -2016,7 +2439,7 @@
    * @returns {Element|null} the open menu, or null when none is open.
    */
   function openMenuElement() {
-    var menus = document.querySelectorAll('[role="menu"]')
+    var menus = overlayQueryAll('[role="menu"]')
     for (var i = 0; i < menus.length; i++) {
       if (!menus[i].getAttribute(GHOST_ATTRIBUTE)) return menus[i]
     }
@@ -2287,7 +2710,7 @@
    * @returns {boolean} whether any tag was added or removed.
    */
   function markUngroupedBucket() {
-    var rows = document.querySelectorAll('[role="treeitem"][class*="projectRow"]')
+    var rows = overlayQueryAll('[role="treeitem"][class*="projectRow"]')
     var changed = false
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i]
@@ -2347,7 +2770,7 @@
     //   - the ancestry test is the SAME question the retirement loop already asks
     //     ({@link isInsideOpenCard}), so writing it once means a node cannot be
     //     tagged by one rule and retired by another that disagrees with it.
-    var candidates = document.querySelectorAll('[class*="_body"], [data-plugin-module] > [class*="_cardDetails"], [data-plugin-scope] > [class*="_groupBody"], [data-testid="todo-panel"] > div > ul')
+    var candidates = overlayQueryAll('[class*="_body"], [data-plugin-module] > [class*="_cardDetails"], [data-plugin-scope] > [class*="_groupBody"], [data-testid="todo-panel"] > div > ul')
     for (var i = 0; i < candidates.length; i++) {
       var body = candidates[i]
       // A ghost is a fading clone of a body that just unmounted. It already
@@ -2361,7 +2784,7 @@
       changed = true
     }
 
-    var tagged = document.querySelectorAll('[' + COLLAPSE_ATTRIBUTE + "='" + COLLAPSE_BODY + "']")
+    var tagged = overlayQueryAll('[' + COLLAPSE_ATTRIBUTE + "='" + COLLAPSE_BODY + "']")
     for (var j = 0; j < tagged.length; j++) {
       var node = tagged[j]
       if (node.getAttribute(GHOST_ATTRIBUTE)) continue
@@ -3247,7 +3670,9 @@
    */
   function injectRevealItem() {
     if (isVanilla()) return
-    if (!window.__TAURI__?.core?.invoke) return
+    var hasHost = typeof window.__TAURI__?.core?.invoke === 'function'
+    // Directory launch uses the same HTTP routes on desktop and remote pages.
+    if (!hasHost && !isRemotePage()) return
 
     var menu = openMenuElement()
     if (!menu) return
@@ -3265,7 +3690,7 @@
     // the row's own fiber, needing no async catalog, and injecting here means
     // the row exists even when the reveal item's own directory walk below comes
     // up empty (the ungrouped bucket has no directory by definition).
-    if (isSession) {
+    if (isSession && hasHost) {
       injectDeepLinkItem(menu, headerSessionId || sessionIdFromRow(openRow))
     }
 
@@ -3540,7 +3965,7 @@
         nested.delete(menu)
       })
       if (isVanilla()) return
-      var menus = document.querySelectorAll('[role="menu"] [role="menu"]')
+      var menus = overlayQueryAll('[role="menu"] [role="menu"]')
       for (var i = 0; i < menus.length; i++) {
         var menu = menus[i]
         if (menu.closest('[data-dsh-ghost]')) continue
@@ -3578,11 +4003,11 @@
         fitNestedMenus()
       })
     }
-    var observer = new MutationObserver(schedule)
+    var observer = new MutationObserver(function (records) { if (affectsOverlay(records)) schedule() })
     observer.observe(document.body, { childList: true, subtree: true })
     observer.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
     if (typeof window.addEventListener === 'function') window.addEventListener('resize', schedule)
-    document.addEventListener('scroll', schedule, true)
+    document.addEventListener('scroll', function () { if (nested.size) schedule() }, true)
   }
 
   /**
@@ -3602,7 +4027,18 @@
     if (window.__dshDesktopModeListener === true) return
     window.__dshDesktopModeListener = true
     document.addEventListener('dsh-desktop:ui-mode', function () {
+      layerSweepDone = false
       pass()
+    })
+    var resizeFrame = 0
+    window.addEventListener('resize', function () {
+      if (resizeFrame) return
+      resizeFrame = requestAnimationFrame(function () {
+        resizeFrame = 0
+        // Media queries can change positioning without changing attributes.
+        layerSweepDone = false
+        markFullSurfaceLayers(true)
+      })
     })
   }
 
@@ -4066,6 +4502,9 @@
     if (media && media.addEventListener) media.addEventListener('change', function () { if (!animationsActive()) cancelAll() })
   }
 
+  // Usually this script precedes React. Also support evaluation after content
+  // mounted by discovering any existing inline surfaces once, outside the hot path.
+  document.querySelectorAll(CONTENT_SURFACES).forEach(function (node) { contentSurfaces.add(node) })
   begin()
   watchRelocatedRows()
   watchRowMenus()
@@ -4075,6 +4514,7 @@
   watchModelDisclosures()
   installFileReferenceSelection()
   installImagePreviewGestures()
+  watchGoalDisclosure()
   watchPreviewPaths()
   installContextMenu()
   installReportListener()

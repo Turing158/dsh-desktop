@@ -1,5 +1,24 @@
 html[data-dsh-browser] .dshTb__controls { display: none; }
 
+/* Use one visible viewport rectangle for the remote shell. Fixed positioning
+   and 100vh do not share a height on iOS when browser bars or the keyboard are
+   visible. Explicit height avoids a second bottom inset and works in landscape. */
+html[data-dsh-browser], html[data-dsh-browser] body {
+  height: 100%; min-height: 0; overflow: hidden;
+}
+html[data-dsh-browser] body #root {
+  top: calc(var(--dsh-mobile-top, 0px) + var(--dsh-desktop-titlebar-height, 44px));
+  bottom: auto;
+  height: max(0px, calc(var(--dsh-mobile-height, 100dvh) - var(--dsh-desktop-titlebar-height, 44px)));
+  min-width: 0; max-width: 100%;
+}
+html[data-dsh-browser] .dshTb { top: var(--dsh-mobile-top, 0px); }
+
+/* The remote session's Open actions live in its overflow menu. */
+html[data-dsh-browser]:not([data-dsh-ui='vanilla']) [data-slot='conversation.session.header.utilities'] [class*='_menuAnchor']:has([data-open-target='directory']) {
+  display: none;
+}
+
 /* ── the remote page's reduced title bar ────────────────────────────────────
  * The bar renders only the quick actions, the mark, and the theme switch on a
  * browser page (the title-bar plugin skips the menus and window controls
@@ -50,6 +69,11 @@ html[data-dsh-browser] body :is([role='menu'], [data-menu-material], [data-trigg
   -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 html[data-dsh-browser] [data-menu-material] > [class*='_material'] { display: none; }
+/* Background jobs use a labelled list rather than the shared menu primitive. */
+html[data-dsh-browser] [data-slot='conversation.session.header.actions'] ul[class*='_menu'][aria-label] {
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
 /* Inline menus keep their React event tree. Raise their containing header or
    composer above the chat, including the title row's container-query context. */
 html[data-dsh-browser] body :is(header, [class*='_titleRow']):has([role='menu'], [data-menu-material], [data-trigger-menu], [role='listbox']) {
@@ -164,7 +188,8 @@ html[data-dsh-browser] [class*='_rightbarCol'] { z-index: 70; }
 html[data-dsh-browser] body #root [data-sidebar-right-panel] {
   position: fixed;
   top: var(--dsh-mobile-right-top, 94px);
-  bottom: max(0px, calc(100vh - var(--dsh-mobile-height, 100vh)));
+  bottom: auto;
+  height: max(0px, calc(var(--dsh-mobile-top, 0px) + var(--dsh-mobile-height, 100dvh) - var(--dsh-mobile-right-top, 94px)));
   right: 0; width: 100vw !important;
   --dsh-sidebar-width: 100vw !important;
   visibility: hidden;
@@ -220,6 +245,17 @@ html[data-dsh-browser] :is([class*='_keys_'], [class*='_shortcut'], .dshTextMenu
 html[data-dsh-browser] :is([role='menu'], [role='tooltip'], button) kbd {
   display: none !important;
 }
+/* Leave room for full reasoning labels and the selected-state checkmark. */
+html[data-dsh-browser] body [role='menu']:has(> [role='menuitemradio']:not([class*='_modelOption']) [class*='_modelName']) {
+  min-width: min(160px, calc(100vw - 16px)) !important;
+}
+html[data-dsh-browser] body [role='menu'] [role='menuitemradio']:not([class*='_modelOption']) [class*='_modelName'] {
+  min-width: max-content;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
 html[data-dsh-browser] [class*='_sidebarCol'] button:has([data-slot='settings.trigger']) {
   display: none !important;
 }
@@ -235,9 +271,19 @@ html[data-dsh-browser] :is(button, [role='button'], [role='menuitem'], [role='op
 html[data-dsh-browser] :is([data-conversation-scroll], [class*='_sidebarCol'], [role='menu'], [role='listbox']) {
   overscroll-behavior: contain;
 }
-/* An invisible terminal textarea can use 16px without changing terminal cells;
-   this stops iOS zooming the whole page when the soft keyboard opens. */
+/* An invisible terminal textarea can use 16px without changing terminal cells. */
 html[data-dsh-browser] .xterm-helper-textarea { font-size: 16px !important; }
+/* Safari zooms focused editable text below 16px. Apply the floor before focus,
+   including the conversation editor and dialogs, while retaining pinch zoom. */
+@media (max-width: 700px), (pointer: coarse) {
+  html[data-dsh-browser] :is(input, textarea, select, [contenteditable='true']) {
+    font-size: max(16px, var(--dsh-content-font-size, 16px)) !important;
+  }
+  html[data-dsh-browser] [data-composer-card] [contenteditable='true'] {
+    max-height: calc(var(--dsh-mobile-height, 100dvh) * .3);
+    overflow-y: auto; overflow-wrap: anywhere;
+  }
+}
 html[data-dsh-browser] [data-dockkit-tab] [data-dockkit-tab-close] {
   opacity: 1; visibility: visible;
 }
@@ -275,8 +321,6 @@ html[data-dsh-browser]:is([data-dsh-ui='vanilla'], [data-dsh-desktop-animation='
 }
 
 @media (max-width: 700px) {
-  html[data-dsh-browser], html[data-dsh-browser] body { height: var(--dsh-mobile-height, 100dvh); min-height: 0; }
-  html[data-dsh-browser] #root { height: auto; min-width: 0; max-width: 100%; bottom: max(0px, calc(100vh - var(--dsh-mobile-height, 100vh))); }
   html[data-dsh-browser] .dshTb { padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right)); }
   html[data-dsh-browser] .dshTb__wordmark, html[data-dsh-browser] .dshTb__badge { display: none; }
   html[data-dsh-browser] .dshTb__brand { margin-right: 0; }
@@ -284,7 +328,7 @@ html[data-dsh-browser]:is([data-dsh-ui='vanilla'], [data-dsh-desktop-animation='
   html[data-dsh-browser] .dshTb__item { padding-inline: 8px; min-width: 44px; }
   html[data-dsh-browser] .dshTb__mark { min-width: 36px; }
   html[data-dsh-browser] [data-dsh-desktop= composer] { min-width: 0; max-width: 100%; padding-bottom: env(safe-area-inset-bottom); }
-  html[data-dsh-browser] [data-dsh-desktop= composer] [contenteditable] { overflow-wrap: anywhere; max-height: 30dvh; overflow-y: auto; }
+  html[data-dsh-browser] [data-dsh-desktop= composer] [contenteditable] { overflow-wrap: anywhere; max-height: calc(var(--dsh-mobile-height, 100dvh) * .3); overflow-y: auto; }
   html[data-dsh-browser] [role=dialog] { max-width: calc(100vw - 16px); max-height: calc(var(--dsh-mobile-height, 100dvh) - 20px); box-sizing: border-box; }
   html[data-dsh-browser] [role=dialog] :is(input,textarea,select) { min-width: 0; }
   html[data-dsh-browser] [data-slot='settings.section'] { min-width: 0; overflow-wrap: anywhere; }

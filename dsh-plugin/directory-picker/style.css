@@ -25,8 +25,21 @@
 .dshDirectory__row svg { flex: none; color: var(--dsw-alias-label-secondary); }
 .dshDirectory__row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshDirectory__row:enabled:hover, .dshDirectory__crumb:enabled:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dshDirectory__row[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-state-business-primary); }
+.dshDirectory__row .dshDirectory__check { flex: none; width: 18px; height: 18px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 4px; text-align: center; }
 .dshDirectory button:disabled { cursor: default; opacity: .45; }
 .dshDirectory__error { color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; font-size: 13px; margin: 8px 0; }
+.dshDirectory__placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  box-sizing: border-box; min-height: 100%; padding: 20px 12px; gap: 16px; text-align: center; }
+.dshDirectory__placeholderCopy { width: min(440px, 100%); min-width: 0; }
+.dshDirectory__placeholderIcon { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px;
+  margin: 0 auto 16px; border-radius: 16px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
+.dshDirectory__placeholderTitle { margin: 0; font-size: 15px; font-weight: 510; line-height: 1.5; color: var(--dsw-alias-label-primary); }
+.dshDirectory__placeholderHint { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.dshDirectory__reason { margin-top: 16px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l3); border-radius: 8px; text-align: left; }
+.dshDirectory__reasonLabel { margin: 0; font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.dshDirectory__reason .dshDirectory__error { margin: 4px 0 0; line-height: 1.6; white-space: pre-wrap; }
+.dshDirectory__placeholderActions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .dshDirectory__status { color: var(--dsw-alias-label-secondary); font-size: 13px; }
 .dshDirectory__status:not(:empty) { padding: 8px 6px; }
 .dshDirectory__footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; flex: none; padding: 16px 24px; border-top: 1px solid var(--dsw-alias-border-l3); }
@@ -45,4 +58,6 @@
   .dshDirectory__footer { padding: 12px 16px; gap: 10px; }
   .dshDirectory__footer .dshDirectory__actions { width: 100%; }
   .dshDirectory__row { min-height: 40px; }
+  .dshDirectory__placeholder { padding: 16px 4px; }
+  .dshDirectory__placeholderActions > button { min-height: 44px; }
 }

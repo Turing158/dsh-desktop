@@ -39,18 +39,18 @@ mod tests {
             for appearance in [true, false] {
                 let mut enabled = serde_json::json!({
                     "desktop-appearance": appearance, "desktop-title-bar": false,
-                    "desktop-ui-state": false, "desktop-remote-control": false, "desktop-i18n": false,
+                    "desktop-ui-state": false, "desktop-remote-control": false, "desktop-i18n": false, "desktop-session-links": false,
                     "desktop-sidebar-terminal": false
                 });
                 if let Some(value) = overlay { enabled["desktop-ui"] = value.into(); }
                 std::fs::write(&file, serde_json::to_vec(&serde_json::json!({"version":1,"enabled":enabled})).unwrap()).unwrap();
                 let patch = boot_patch(&file).unwrap();
                 let rows: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(patch.path()).unwrap()).unwrap();
-                assert_eq!(rows.len(), 9);
+                assert_eq!(rows.len(), 10);
                 for id in ["desktop-ui", "desktop-appearance"] {
                     assert_eq!(rows.iter().find(|row| row["id"] == id).unwrap()["disabled"], overlay == Some(false));
                 }
-                for id in ["desktop-title-bar", "desktop-ui-state", "desktop-remote-control", "desktop-i18n"] {
+                for id in ["desktop-title-bar", "desktop-ui-state", "desktop-remote-control", "desktop-i18n", "desktop-session-links"] {
                     assert_eq!(rows.iter().find(|row| row["id"] == id).unwrap()["disabled"], false);
                 }
                 assert_eq!(rows.iter().find(|row| row["id"] == "desktop-sidebar-terminal").unwrap()["disabled"], true);

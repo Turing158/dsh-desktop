@@ -116,7 +116,7 @@ test('the remote bar drops the menus and the wordmark, and keeps the mark', () =
   assert.ok(bar, 'the bar must render on a browser page')
   assert.equal(f.menus().length, 0, 'no menu may render: the desktop affordances are gone')
   assert.ok(
-    !JSON.stringify(bar).includes('deepseek') && !JSON.stringify(bar).includes('HARNESS'),
+    !JSON.stringify(bar).includes('dshTb__wordmark') && !JSON.stringify(bar).includes('dshTb__badge'),
     'the wordmark and badge stay off the remote bar',
   )
   assert.ok(

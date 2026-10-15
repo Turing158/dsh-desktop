@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Custom title bar for the DeepseekHarness desktop app",
+  "description": "Custom title bar for the dsh desktop app",
   "main": "index.js",
   "exports": {
     ".": {

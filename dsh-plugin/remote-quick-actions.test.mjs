@@ -45,6 +45,7 @@ function element(overrides = {}) {
   return {
     attrs: {},
     kids: [],
+    get children() { return this.kids },
     name: '',
     clickLog: null,
     listeners: {},
@@ -178,6 +179,10 @@ function fixture({ drawerClosed = true, pluginPanel = false } = {}) {
     clearInterval() {},
   }
   sandbox.window = sandbox
+  const windowEvents = new EventTarget()
+  sandbox.addEventListener = windowEvents.addEventListener.bind(windowEvents)
+  sandbox.removeEventListener = windowEvents.removeEventListener.bind(windowEvents)
+  sandbox.dispatchEvent = windowEvents.dispatchEvent.bind(windowEvents)
   vm.runInNewContext(source, sandbox)
 
   return {

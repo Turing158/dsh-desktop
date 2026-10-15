@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Desktop appearance settings section for DeepseekHarness",
+  "description": "Desktop appearance settings section for dsh desktop",
   "main": "index.js",
   "exports": {
     ".": {

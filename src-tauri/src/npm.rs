@@ -3,7 +3,7 @@
 //! Two design points, both learned from probing the real npm on this machine:
 //!
 //! * **The install is global, and the command is fixed.**
-//!   `npm install -g @deepseek-ai/dsh --legacy-peer-deps` is what the app runs
+//!   `npm install -g @deepseek-ai/dsh@latest` is what the app runs
 //!   when no `dsh` is found, so a machine with none ends up with one on `PATH`
 //!   that the user can also run from a terminal. The package set is measured
 //!   rather than the whole registry: [`install_argv`] is pinned by a test, so the
@@ -35,14 +35,6 @@ use crate::dsh::CommandExt;
 /// The package spec the app installs — global, and always the `latest` dist-tag.
 pub const INSTALL_SPEC: &str = "@deepseek-ai/dsh@latest";
 
-/// `--legacy-peer-deps`, because DSH's dependency graph does not satisfy npm's
-/// peer-dependency resolution.
-///
-/// This is part of the command the failure screen tells the user to run, not an
-/// implementation detail: the two must be the same string, which is why the
-/// button's command and the displayed one both come from [`install_command`].
-pub const LEGACY_PEER_DEPS: &str = "--legacy-peer-deps";
-
 /// The npm arguments for the automatic global install, after the entry script.
 ///
 /// Returned rather than inlined at the spawn site so a test can pin the exact
@@ -53,7 +45,6 @@ pub fn install_argv() -> Vec<String> {
         "install",
         "-g",
         INSTALL_SPEC,
-        LEGACY_PEER_DEPS,
         "--no-audit",
         "--no-fund",
         "--loglevel=info",
@@ -65,7 +56,7 @@ pub fn install_argv() -> Vec<String> {
 
 /// The command as the user would type it, for the failure screen and the clipboard.
 pub fn install_command() -> String {
-    format!("npm install -g {INSTALL_SPEC} {LEGACY_PEER_DEPS}")
+    format!("npm install -g {INSTALL_SPEC}")
 }
 
 /// A line of install progress streamed to the UI.
@@ -286,7 +277,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn installs_globally_with_legacy_peer_deps() {
+    fn installs_globally_with_peer_dependencies_enabled() {
         // Pinned because this is the command the app runs AND the command the
         // failure screen tells the user to run; the two must not drift.
         assert_eq!(
@@ -295,7 +286,6 @@ mod tests {
                 "install",
                 "-g",
                 "@deepseek-ai/dsh@latest",
-                "--legacy-peer-deps",
                 "--no-audit",
                 "--no-fund",
                 "--loglevel=info",
@@ -306,7 +296,7 @@ mod tests {
     #[test]
     fn the_displayed_command_matches_the_one_that_runs() {
         let displayed = install_command();
-        assert_eq!(displayed, "npm install -g @deepseek-ai/dsh@latest --legacy-peer-deps");
+        assert_eq!(displayed, "npm install -g @deepseek-ai/dsh@latest");
 
         // Everything the user is told to type must also be in the argv, minus the
         // two tokens that name npm itself.

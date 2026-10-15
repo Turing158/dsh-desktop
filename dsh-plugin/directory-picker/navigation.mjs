@@ -3,10 +3,11 @@ export const ROOTS = 'desktop:roots'
 /** History changes only after a successful scan; old requests cannot replace newer views. */
 export function createNavigation({ listDirectory, listRoots }) {
   let state = { location: null, history: [], index: -1, loading: false, error: null }
-  let generation = 0, controller
+  let generation = 0, controller, lastRequest
   const listeners = new Set()
   const update = changes => { state = { ...state, ...changes }; for (const listener of listeners) listener() }
   async function visit(target, { index, replace = false } = {}) {
+    lastRequest = { target, options: { index, replace } }
     const ticket = ++generation
     controller?.abort()
     controller = new AbortController()
@@ -38,6 +39,7 @@ export function createNavigation({ listDirectory, listRoots }) {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     visit,
+    retry: () => visit(lastRequest?.target, lastRequest?.options),
     back: () => move(-1), forward: () => move(1),
     parent: () => state.location?.kind === 'directory'
       ? visit(state.location.crumbs.at(-2)?.path ?? ROOTS) : Promise.resolve(false),

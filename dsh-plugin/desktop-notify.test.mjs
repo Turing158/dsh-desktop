@@ -160,6 +160,29 @@ test('labels a plan review distinctly from a plain question', () => {
   }
 })
 
+test('each question and completion carries the session that raised it', () => {
+  const first = { session: sessionWithAssistantText('session-first', 'first answer') }
+  const second = { session: sessionWithAssistantText('session-second', 'second answer') }
+  const h = harness([first, second])
+  try {
+    apply(h.ctx, {})
+    h.listener('user-questions/request').callback({
+      agent: second, questions: [{ header: '请选择' }],
+    }, () => Promise.resolve({}))
+    h.listener('agent/status').callback({ agent: first, status: 'running' })
+    h.listener('session/event').callback(first.session, {
+      type: 'turn/end', data: { reason: { kind: 'completed' } },
+    })
+    h.listener('agent/status').callback({ agent: first, status: 'idle' })
+    assert.deepEqual(h.notifications().map(({ kind, sessionId }) => ({ kind, sessionId })), [
+      { kind: 'question', sessionId: 'session-second' },
+      { kind: 'task-end', sessionId: 'session-first' },
+    ])
+  } finally {
+    h.restore()
+  }
+})
+
 test('never leaks reasoning text into a notification body', () => {
   const agent = { id: 's1', session: sessionWithAssistantText('s1', '这里是最终回答') }
   const h = harness([agent])

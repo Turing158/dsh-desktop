@@ -1,6 +1,7 @@
 //! Stream Session ZIPs through WebView2's authenticated download manager.
 //! Choose a native destination before starting WebView2's authenticated download.
 
+use crate::directory_picker::pick_directory;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -70,10 +71,12 @@ pub async fn prepare_session_export(
         crate::remote_control::identity(&state)
     };
     let owner = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
-    let directory = tauri::async_runtime::spawn_blocking(move || pick_directory(owner))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("无法选择 Session 日志保存文件夹：{e}"))?;
+    let directory = tauri::async_runtime::spawn_blocking(move || {
+        pick_directory(owner, "选择 Session 日志保存文件夹", "保存到此文件夹")
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| format!("无法选择 Session 日志保存文件夹：{e}"))?;
     let Some(directory) = directory else {
         return Ok(None);
     };
@@ -92,47 +95,6 @@ pub async fn prepare_session_export(
         .state::<ExportDestinations>()
         .prepare(session_id, page.origin().ascii_serialization(), path)
         .map(Some)
-}
-
-fn pick_directory(owner: usize) -> windows::core::Result<Option<PathBuf>> {
-    use std::os::windows::ffi::OsStringExt;
-    use windows::core::{w, HRESULT};
-    use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
-    };
-    use windows::Win32::UI::Shell::{
-        FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS,
-        SIGDN_FILESYSPATH,
-    };
-    struct Apartment;
-    impl Drop for Apartment {
-        fn drop(&mut self) {
-            unsafe { CoUninitialize() }
-        }
-    }
-    unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
-        let _apartment = Apartment;
-        let dialog: IFileOpenDialog =
-            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
-        dialog.SetOptions(
-            dialog.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST,
-        )?;
-        dialog.SetTitle(w!("选择 Session 日志保存文件夹"))?;
-        dialog.SetOkButtonLabel(w!("保存到此文件夹"))?;
-        if let Err(error) = dialog.Show(Some(HWND(owner as *mut _))) {
-            if error.code() == HRESULT::from_win32(ERROR_CANCELLED.0) {
-                return Ok(None);
-            }
-            return Err(error);
-        }
-        let name = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
-        let path = PathBuf::from(std::ffi::OsString::from_wide(name.as_wide()));
-        CoTaskMemFree(Some(name.0.cast()));
-        Ok(Some(path))
-    }
 }
 
 fn session_id(url: &tauri::Url) -> Option<String> {

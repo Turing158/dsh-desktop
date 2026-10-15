@@ -11,10 +11,12 @@
 
 mod locale;
 mod app_icon;
+mod attachment_images;
 mod boot_bar;
 mod bundled_runtime;
 mod clipboard;
 mod deep_link;
+mod directory_picker;
 mod drag_guard;
 mod dsh;
 mod builtin_plugins;
@@ -114,8 +116,11 @@ fn main() {
                 window_controls::window_close,
                 window_controls::clipboard_read_text,
                 window_controls::clipboard_write_text,
+                attachment_images::clipboard_write_image,
+                attachment_images::save_attachment_image,
                 window_controls::clipboard_edit_shortcut,
                 folder_focus::focus_folder_window,
+                directory_picker::pick_workspace_directory,
                 session_export::prepare_session_export,
                 ui_snapshot::submit_ui_snapshot,
                 ui_snapshot::request_ui_restore,
@@ -163,7 +168,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building the DeepseekHarness desktop app")
+        .expect("error while building the dsh desktop app")
         .run(|app, event| match event {
             tauri::RunEvent::ExitRequested {
                 code: None, api, ..
@@ -213,7 +218,7 @@ fn create_main_window(app: &AppHandle, restoring: bool) -> tauri::Result<()> {
         builder
     };
     let window = builder
-        .title("DeepseekHarness")
+        .title("dsh desktop")
         .visible(false)
         .inner_size(1280.0, 840.0)
         .min_inner_size(900.0, 600.0)
@@ -254,7 +259,13 @@ fn create_main_window(app: &AppHandle, restoring: bool) -> tauri::Result<()> {
             // does not leave the window unnamed.
             let trimmed = title.trim();
             if !trimmed.is_empty() {
-                let _ = window.set_title(trimmed);
+                // Keep the native window branded without changing upstream page text.
+                let title = if trimmed == "DeepSeek Harness" {
+                    "dsh desktop"
+                } else {
+                    trimmed
+                };
+                let _ = window.set_title(title);
             }
         })
         .build()?;
@@ -601,7 +612,6 @@ fn boot(app: AppHandle) {
         }
         // No dsh anywhere. This is the first-launch path, not an error: install
         // one globally and start it, with no page in between to click through.
-        None if cfg!(feature = "offline") => fail(&app, &state, "内置 DSH 不完整", "请重新解压完整的 portable 包"),
         None => auto_install(&app, &state, node_exe),
     }
 }
@@ -1121,7 +1131,8 @@ fn deliver(app: &AppHandle, state: &Shared, payload: dsh::NotifyPayload, instanc
         return;
     }
 
-    let notifier: Arc<dyn Notifier> = Arc::new(ToastNotifier::new(app.clone()));
+    let notifier: Arc<dyn Notifier> =
+        Arc::new(ToastNotifier::new(app.clone()).with_session(payload.session_id));
     match notifier.notify(
         &remote_control::redact(&payload.title),
         &remote_control::redact(&payload.body),
@@ -1466,7 +1477,7 @@ fn install_node(window: tauri::WebviewWindow) -> Result<(), String> {
         std::process::Command::new("cmd.exe")
             .args([
                 "/k",
-                "winget install --id OpenJS.NodeJS --exact --source winget && echo. && echo 安装完成，请回到 DeepseekHarness 点击「重新检测」。",
+                "winget install --id OpenJS.NodeJS --exact --source winget && echo. && echo 安装完成，请回到 dsh desktop 点击「重新检测」。",
             ])
             .spawn()
             .map_err(|error| format!("无法启动 winget：{error}"))?;

@@ -648,7 +648,7 @@ pub fn authorize_backend(app: &AppHandle, instance: u64, url: &str) -> Result<()
     let url = url.parse::<tauri::Url>().map_err(|_| "remote-origin")?;
     app.add_capability(serde_json::json!({ "identifier": format!("remote-control-{instance}"), "windows": ["main"], "local": false,
         "remote": { "urls": [format!("{}/*", url.origin().ascii_serialization())] },
-        "permissions": ["allow-desktop-locale", "allow-remote-control", "allow-window-controls", "allow-clipboard", "allow-edit-shortcut", "allow-folder-focus", "allow-session-export", "core:app:allow-version"]
+        "permissions": ["allow-desktop-locale", "allow-remote-control", "allow-window-controls", "allow-clipboard", "allow-edit-shortcut", "allow-folder-focus", "allow-workspace-directory", "allow-session-export", "allow-attachment-images", "core:app:allow-version"]
     }).to_string()).map_err(|_| "remote-permission".into())
 }
 pub fn page_load(window: &WebviewWindow, started: bool) {

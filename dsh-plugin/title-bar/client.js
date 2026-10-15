@@ -1,5 +1,5 @@
 /**
- * Custom title bar for the DeepseekHarness desktop app.
+ * Custom title bar for the dsh desktop app.
  *
  * The native caption is removed (the window is created with
  * `decorations(false)`), so this bar replaces it: the app mark, four menus
@@ -985,7 +985,7 @@ var React = require('react')
       var versions = update.versions
       if (!versions) return t('检测dsh更新')
       if (versions.current === versions.latest) return t('dsh 已是最新版')
-      if (versions.current === versions.next) return t('dsh 已是最新预览版')
+      if (versions.current === versions.preview) return t('dsh 已是最新预览版')
       return t('dsh 可更新')
     }
 
@@ -1306,7 +1306,7 @@ var React = require('react')
             h(
               'div',
               { className: 'dshTb__aboutIdent' },
-              h('div', { className: 'dshTb__aboutName' }, 'DeepseekHarness'),
+              h('div', { className: 'dshTb__aboutName' }, 'dsh desktop'),
               props.version
                 ? h('div', { className: 'dshTb__aboutVersion' }, t('版本 ') + props.version)
                 : null,
@@ -1324,7 +1324,7 @@ var React = require('react')
     function DshUpdateFooter(props) {
       var update = props.update
       var versions = update.versions
-      var sameVersion = versions && versions.latest === versions.next
+      var sameVersion = versions && versions.latest === versions.preview
       var blocked = Boolean(update.busy) || !versions
       return h(React.Fragment, null,
           h(Button, {
@@ -1334,8 +1334,8 @@ var React = require('react')
           }, t('最新稳定版')),
           sameVersion ? null : h(Button, {
             variant: 'outline',
-            disabled: blocked || versions.current === versions.next,
-            onClick: function () { props.onInstall('next') },
+            disabled: blocked || versions.current === versions.preview,
+            onClick: function () { props.onInstall('preview') },
           }, t('最新预览版')),
       )
     }
@@ -1343,7 +1343,7 @@ var React = require('react')
     function DshUpdatePanel(props) {
       var update = props.update
       var versions = update.versions
-      var sameVersion = versions && versions.latest === versions.next
+      var sameVersion = versions && versions.latest === versions.preview
       return h('div', { className: 'dshTb__dialogField dshTb__update', 'aria-busy': Boolean(update.busy) },
         h('div', { className: 'dshTb__updateHeader' },
           h('div', { role: 'status', 'aria-live': 'polite' }, updateLabel(update)),
@@ -1356,7 +1356,7 @@ var React = require('react')
           h('dd', null, h('code', { className: 'dshTb__versionTag' }, versions.latest)),
           sameVersion ? null : h(React.Fragment, null,
             h('dt', null, t('最新预览版')),
-            h('dd', null, h('code', { className: 'dshTb__versionTag' }, versions.next)),
+            h('dd', null, h('code', { className: 'dshTb__versionTag' }, versions.preview)),
           ),
         ) : null,
         update.busy && update.busy !== 'check'
@@ -1387,7 +1387,7 @@ var React = require('react')
           h('div', { className: 'dshTb__aboutMark', 'aria-hidden': 'true' }, h(Logo)),
           h('div', { className: 'dshTb__desktopStatusText' },
             h('strong', { role: 'status', 'aria-live': 'polite' }, desktopUpdateLabel(update)),
-            h('span', null, 'DeepseekHarness Desktop'),
+            h('span', null, 'dsh desktop'),
           ),
         ),
         h('dl', { className: 'dshTb__versions dshTb__desktopVersions' },
@@ -1420,7 +1420,7 @@ var React = require('react')
       var release = props.desktopUpdate.result && props.desktopUpdate.result.release
       var tabs = [
         { id: 'desktop', label: t('软件更新'), busy: props.desktopUpdate.busy === 'check', available: !props.desktopUpdate.error && release && release.updateAvailable },
-        { id: 'dsh', label: t('dsh 更新'), busy: Boolean(props.update.busy), available: !props.update.error && props.update.versions && props.update.versions.current !== props.update.versions.latest && props.update.versions.current !== props.update.versions.next },
+        { id: 'dsh', label: t('dsh 更新'), busy: Boolean(props.update.busy), available: !props.update.error && props.update.versions && props.update.versions.current !== props.update.versions.latest && props.update.versions.current !== props.update.versions.preview },
       ]
       function onTabKey(event) {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -1692,8 +1692,8 @@ var React = require('react')
       }, [])
 
       /**
-       * Cycle system → light → dark → system through the theme owner, whose
-       * browser settings scope keeps this choice local to the remote page.
+       * Cycle system → light → dark → system through the theme owner. The
+       * remote theme adapter keeps its preference in this browser's storage.
        */
       function toggleTheme() {
         var theme = ctx.theme
@@ -1747,7 +1747,7 @@ var React = require('react')
         try {
           if (!hasHost()) throw new Error(t('请在桌面应用中检测 dsh 更新。'))
           var versions = await invokeHost('check_dsh_update')
-          if (!versions || !versions.current || !versions.latest || !versions.next) throw new Error(t('未能读取 dsh 版本，请重新检测。'))
+          if (!versions || !versions.current || !versions.latest || !versions.preview) throw new Error(t('未能读取 dsh 版本，请重新检测。'))
           setDshUpdate(function (previous) {
             return { attempted: true, busy: null, versions: versions, error: null, message: previous.message }
           })
@@ -1761,18 +1761,20 @@ var React = require('react')
       }
 
       async function installDshUpdate(channel) {
-        if (updatePending.current || !dshUpdate.versions || !['latest', 'next'].includes(channel)) return
-        if (channel === 'next' && dshUpdate.versions.latest === dshUpdate.versions.next) return
+        if (updatePending.current || !dshUpdate.versions || !['latest', 'preview'].includes(channel)) return
+        if (channel === 'preview' && dshUpdate.versions.latest === dshUpdate.versions.preview) return
         if (dshUpdate.versions.current === dshUpdate.versions[channel]) return
         updatePending.current = true
         var previousVersions = dshUpdate.versions
         setDshUpdate({ attempted: true, busy: channel, versions: previousVersions, error: null, message: null })
         try {
           if (!hasHost()) throw new Error(t('请在桌面应用中安装 dsh 更新。'))
-          var installed = await invokeHost('install_dsh_update', { channel: channel })
+          var request = { channel: channel }
+          if (channel === 'preview') request.targetVersion = previousVersions.preview
+          var installed = await invokeHost('install_dsh_update', request)
           if (typeof installed !== 'string' || !installed) throw new Error(t('安装后未能读取版本，请重新检测。'))
-          // Tags can move between checking and installing. The verified installed
-          // version is the selected tag's result, not the earlier registry read.
+          // The stable tag can move; preview installs are pinned to the checked
+          // version and verified by the host before it reports success.
           var versions = Object.assign({}, previousVersions, { current: installed })
           versions[channel] = installed
           setDshUpdate({ attempted: true, busy: null, versions: versions, error: null,
@@ -2294,8 +2296,8 @@ var React = require('react')
           ),
           // The wordmark stays a desktop affordance: the remote bar carries the
           // quick actions and the mark only, per the reduced-bar contract.
-          remote ? null : h('span', { className: 'dshTb__wordmark' }, 'deepseek'),
-          remote ? null : h('span', { className: 'dshTb__badge' }, 'HARNESS'),
+          remote ? null : h('span', { className: 'dshTb__wordmark' }, 'dsh'),
+          remote ? null : h('span', { className: 'dshTb__badge' }, 'desktop'),
         )
       }
 
@@ -2546,7 +2548,8 @@ var React = require('react')
       /**
        * The theme switch, for the remote bar's right end.
        *
-       * The glyph and accessible name describe the next step of the cycle.
+       * The glyph shows the current preference; the accessible name describes
+       * the next step of the cycle.
        *
        * @returns the button element.
        */
@@ -2565,7 +2568,7 @@ var React = require('react')
             onMouseDown: function (event) { event.preventDefault() },
             onClick: toggleTheme,
           },
-          h('span', { 'aria-hidden': 'true' }, h(next === 'system' ? SystemThemeIcon : next === 'light' ? SunIcon : MoonIcon)),
+          h('span', { 'aria-hidden': 'true' }, h(themePreference === 'system' ? SystemThemeIcon : themePreference === 'light' ? SunIcon : MoonIcon)),
         )
       }
 
@@ -2697,6 +2700,90 @@ var React = require('react')
           if (window.__DSH_SESSION_ACTIONS__ === actions) delete window.__DSH_SESSION_ACTIONS__
         }
       }, 'desktop session menu actions')
+    }
+
+    function headerRenameTarget(ctx, sessionId) {
+      var list = ctx.sessions.list.getSnapshot()
+      var summary = list.byId[sessionId]
+      if (!summary || list.currentAddress || summary.origin === 'subagent'
+        || ctx.sessions.subagentAddress?.(sessionId)
+        || ctx.sessions.binding(sessionId)?.session.getSnapshot().subagent) return
+      return { id: sessionId, title: summary.displayTitle ?? summary.title ?? '' }
+    }
+
+    // Keep the upstream header and its lineage controls. Only its single root
+    // breadcrumb gains an action, using the sidebar's own rename request/dialog.
+    function bindHeaderSessionTitle(ctx) {
+      if (typeof ctx.slots.entriesOfSlot !== 'function') return
+      var actionSlot = 'conversation.session.header.actions'
+      var renameSlot = 'sidebar.workspaces.session.menu.item'
+      ctx.slots.inject(renameSlot, function () {
+        return ctx.slots.inject(actionSlot, function () {
+          function renameRequest() {
+            var entry = ctx.slots.entriesOfSlot(renameSlot).find(function (entry) { return entry.options.id === 'rename' })
+            return entry?.inject?.()?.requestSessionRename
+          }
+          function HeaderSessionTitle(props) {
+            useLocale(React)
+            var marker = React.useRef(null)
+            var summary = props.useSessions(function (state) { return state.byId[props.sessionId] })
+            var address = props.useSessions(function (state) { return state.currentAddress })
+            React.useLayoutEffect(function () {
+              var root = marker.current?.closest('[data-slot="conversation.session.header"]')
+              if (!root) return
+              var title, saved
+              function activate() {
+                var target = headerRenameTarget(ctx, props.sessionId)
+                if (target && document.documentElement.getAttribute(MODE_ATTRIBUTE) !== VANILLA) renameRequest()?.(target.id, target.title)
+              }
+              function keydown(event) {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                if (!event.repeat) activate()
+              }
+              function release() {
+                if (!title) return
+                title.removeEventListener('click', activate)
+                title.removeEventListener('keydown', keydown)
+                title.removeAttribute('data-dsh-session-title-rename')
+                saved.forEach(function (value, key) { if (value === null) title.removeAttribute(key); else title.setAttribute(key, value) })
+                title = undefined
+              }
+              function scan() {
+                // A root header has one breadcrumb segment. Ancestor buttons and
+                // subagent lineage controls must never become rename triggers.
+                var next = document.documentElement.getAttribute(MODE_ATTRIBUTE) !== VANILLA
+                  && headerRenameTarget(ctx, props.sessionId) && typeof renameRequest() === 'function'
+                  ? root.querySelector('nav > span:only-child > span:first-child') : undefined
+                if (next === title) return
+                release()
+                if (!next) return
+                title = next
+                saved = new Map(['role', 'tabindex', 'title'].map(function (key) { return [key, title.getAttribute(key)] }))
+                title.setAttribute('role', 'button')
+                title.setAttribute('tabindex', '0')
+                title.setAttribute('title', t('重命名会话'))
+                title.setAttribute('data-dsh-session-title-rename', '')
+                title.addEventListener('click', activate)
+                title.addEventListener('keydown', keydown)
+              }
+              // The upstream header can render its breadcrumb after our layout
+              // effect as its own session/store subscriptions settle.
+              var observer = new MutationObserver(scan)
+              observer.observe(root, { childList: true, subtree: true })
+              var modeObserver = new MutationObserver(scan)
+              modeObserver.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
+              var offRename = ctx.slots.subscribe(renameSlot, scan)
+              scan()
+              return function () { observer.disconnect(); modeObserver.disconnect(); offRename(); release() }
+            // Token/step counters replace the summary during streaming. They
+            // do not change this binding; activate() reads the current title.
+            }, [props.sessionId, Boolean(summary), summary?.origin, address, t('重命名会话')])
+            return h('span', { ref: marker, hidden: true })
+          }
+          return ctx.slots.register({ name: actionSlot, id: 'desktop-title-rename' }, HeaderSessionTitle)
+        })
+      })
     }
 
     // Mirror the sidebar's live slot entries, including their injected services,
@@ -2900,6 +2987,11 @@ var React = require('react')
 
     /** Mount the bar into the frame-wide overlay slot. */
     function apply(ctx) {
+      if (window.__DSH_REMOTE_THEME__ && typeof ctx.inject === 'function') {
+        ctx.inject(['configForms'], function (child) {
+          window.__DSH_REMOTE_THEME__.bind(child, child.configForms.get('ui-theme'))
+        })
+      }
       // The frame must leave room for the bar, so the height is published as a
       // custom property the stylesheet reads. Set here rather than hard-coded in
       // CSS so the two cannot drift.
@@ -2910,6 +3002,7 @@ var React = require('react')
       trackEditableFocus()
       bindSessionActions(ctx)
       bindSessionExport(ctx)
+      bindHeaderSessionTitle(ctx)
       bindHeaderSessionMenu(ctx)
 
       ctx.slots.inject('shell.overlay', function () {

@@ -38,24 +38,26 @@ impl Drop for Operation {
     }
 }
 
-/// Only these two package specs can cross the IPC boundary.
+/// Stable installs use latest; preview installs require an exact version.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Channel {
     Latest,
-    Next,
+    Preview,
 }
 
 impl Channel {
-    fn args(self) -> Vec<String> {
+    fn args(self, target_version: Option<&str>) -> Result<Vec<String>, String> {
         let spec = match self {
-            Self::Latest => "@deepseek-ai/dsh@latest",
-            Self::Next => "@deepseek-ai/dsh@next",
+            Self::Latest => "@deepseek-ai/dsh@latest".to_string(),
+            Self::Preview => {
+                let version = target_version.ok_or("缺少预览版版本号，请重新检测")?;
+                // IPC must not accept npm tags, ranges, URLs or command options.
+                semver::Version::parse(version).map_err(|_| "预览版必须使用完整的版本号")?;
+                format!("@deepseek-ai/dsh@{version}")
+            }
         };
-        ["install", "-g", spec]
-            .into_iter()
-            .map(String::from)
-            .collect()
+        Ok(vec!["install".into(), "-g".into(), spec])
     }
 }
 
@@ -63,13 +65,12 @@ impl Channel {
 pub struct Versions {
     pub current: String,
     pub latest: String,
-    pub next: String,
+    pub preview: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct Tags {
     latest: String,
-    next: String,
 }
 
 fn version(text: &str) -> Result<String, String> {
@@ -99,16 +100,22 @@ fn parse_tags(text: &str) -> Result<Tags, String> {
         List(Vec<Tags>),
     }
     let parsed = serde_json::from_str::<Response>(text)
-        .map_err(|_| "npm 未返回有效的 latest 和 next 版本，请重新检测".to_string())?;
+        .map_err(|_| "npm 未返回有效的 latest 版本，请重新检测".to_string())?;
     let tags = match parsed {
         Response::Object(tags) => tags,
         Response::List(mut tags) if tags.len() == 1 => tags.remove(0),
-        _ => return Err("npm 返回了多组版本，无法确定 latest 和 next".into()),
+        _ => return Err("npm 返回了多组版本，无法确定 latest".into()),
     };
-    Ok(Tags {
-        latest: version(&tags.latest)?,
-        next: version(&tags.next)?,
-    })
+    Ok(Tags { latest: version(&tags.latest)? })
+}
+
+fn parse_preview(text: &str) -> Result<String, String> {
+    let versions: Vec<String> = serde_json::from_str(text)
+        .map_err(|_| "npm 未返回有效的版本列表，请重新检测".to_string())?;
+    // Use the registry's final entry as-is, regardless of its prerelease label.
+    let last = versions.last().ok_or("npm 返回的版本列表为空，请重新检测")?;
+    semver::Version::parse(last).map_err(|_| "npm 返回了无效的预览版版本号")?;
+    Ok(last.clone())
 }
 
 /// Drain both pipes while waiting, so verbose npm errors cannot fill a pipe
@@ -207,10 +214,15 @@ fn check(node: &Path) -> Result<Versions, String> {
         Duration::from_secs(60),
     )?;
     let tags = parse_tags(&text)?;
+    let published = output(
+        npm_command(node)?.args(["view", "@deepseek-ai/dsh", "versions", "--json"]),
+        "npm view @deepseek-ai/dsh versions",
+        Duration::from_secs(60),
+    )?;
     Ok(Versions {
         current,
         latest: tags.latest,
-        next: tags.next,
+        preview: parse_preview(&published)?,
     })
 }
 
@@ -233,9 +245,6 @@ fn caller(window: &WebviewWindow) -> Result<std::path::PathBuf, String> {
         || state.ui.phase == crate::ui_snapshot::UiPhase::Exiting
     {
         return Err("仅允许在当前 dsh 窗口中更新".into());
-    }
-    if cfg!(feature = "offline") {
-        return Err("此便携版使用随包提供的 DSH；更新时请替换完整 portable 包。".into());
     }
     state
         .runtime
@@ -266,12 +275,17 @@ pub async fn check_dsh_update(window: WebviewWindow) -> Result<Versions, String>
 }
 
 #[tauri::command]
-pub async fn install_dsh_update(window: WebviewWindow, channel: Channel) -> Result<String, String> {
+pub async fn install_dsh_update(
+    window: WebviewWindow,
+    channel: Channel,
+    target_version: Option<String>,
+) -> Result<String, String> {
     let node = caller(&window)?;
+    let args = channel.args(target_version.as_deref())?;
     let operation = window.state::<UpdateManager>().begin()?;
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = operation;
-        let mut installer = npm::Installer::start_with_args(&node, &channel.args())?;
+        let mut installer = npm::Installer::start_with_args(&node, &args)?;
         let events = installer.take_events().ok_or("无法读取安装输出")?;
         let transcript = std::thread::spawn(move || {
             let mut tail = VecDeque::new();
@@ -292,6 +306,9 @@ pub async fn install_dsh_update(window: WebviewWindow, channel: Channel) -> Resu
         let installed = crate::dsh::probe_version(&node, &bin)
             .ok_or("安装命令已完成，但 dsh --version 校验失败，请重新检测")?;
         let installed = version(&installed)?;
+        if matches!(channel, Channel::Preview) && target_version.as_deref() != Some(installed.as_str()) {
+            return Err(format!("安装后的 dsh 版本为 {installed}，与选择的预览版不一致，请重新检测"));
+        }
         let current = current_version()?;
         if installed != current {
             return Err(format!("已安装 dsh {installed}，但 PATH 中的 dsh 仍为 {current}。请检查 npm 全局目录与 PATH 后重新检测。"));
@@ -305,23 +322,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn accepts_object_and_single_result_array() {
+    fn reads_latest_from_object_or_single_result_array_without_requiring_other_tags() {
         for text in [
             r#"{"latest":"0.1.7-rc.2","next":"0.2.0-rc.1","alpha":"old"}"#,
-            r#"[{"latest":"0.1.7-rc.2","next":"0.2.0-rc.1"}]"#,
+            r#"[{"latest":"0.1.7-rc.2"}]"#,
         ] {
             let tags = parse_tags(text).unwrap();
             assert_eq!(tags.latest, "0.1.7-rc.2");
-            assert_eq!(tags.next, "0.2.0-rc.1");
         }
         for text in [
             "[]",
-            r#"{"latest":"1.0.0"}"#,
+            r#"{"next":"1.0.0"}"#,
             r#"{"latest":"oops","next":"1.0.0"}"#,
             r#"[{"latest":"1.0.0","next":"2.0.0"},{"latest":"3.0.0","next":"4.0.0"}]"#,
             "npm error",
         ] {
             assert!(parse_tags(text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn preview_uses_the_last_published_version_without_sorting_or_filtering() {
+        for (text, expected) in [
+            (r#"["0.2.0-rc.2","0.2.1-alpha.1","0.2.1-alpha.2"]"#, "0.2.1-alpha.2"),
+            (r#"["1.0.0-alpha.1","1.0.0"]"#, "1.0.0"),
+            (r#"["2.0.0","1.0.0-beta.2"]"#, "1.0.0-beta.2"),
+            (r#"["1.0.0"]"#, "1.0.0"),
+        ] {
+            assert_eq!(parse_preview(text).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn preview_rejects_empty_or_invalid_registry_results() {
+        for text in [
+            "[]", "null", "npm error", r#"{"versions":["1.0.0"]}"#,
+            r#"["1.0.0","next"]"#, r#"["1.0.0",null]"#, r#"["1.0.0",123]"#,
+            r#"["1.0.0","^2.0.0"]"#, r#"["1.0.0","2.0.0-alpha..1"]"#,
+        ] {
+            assert!(parse_preview(text).is_err(), "{text}");
         }
     }
 
@@ -334,16 +373,32 @@ mod tests {
     }
 
     #[test]
-    fn channel_only_allows_the_two_requested_install_commands() {
+    fn stable_uses_latest_and_preview_installs_the_exact_version() {
         assert_eq!(
-            Channel::Latest.args(),
+            Channel::Latest.args(None).unwrap(),
             ["install", "-g", "@deepseek-ai/dsh@latest"]
         );
-        assert_eq!(
-            Channel::Next.args(),
-            ["install", "-g", "@deepseek-ai/dsh@next"]
-        );
-        assert!(serde_json::from_str::<Channel>("\"latest --force\"").is_err());
+        for version in ["0.2.1-alpha.2", "1.0.0-beta.1", "1.0.0-rc.1", "1.0.0", "1.0.0+build.1"] {
+            assert_eq!(
+                Channel::Preview.args(Some(version)).unwrap(),
+                ["install".to_string(), "-g".into(), format!("@deepseek-ai/dsh@{version}")]
+            );
+        }
+    }
+
+    #[test]
+    fn preview_rejects_tags_ranges_and_other_package_specs() {
+        assert!(Channel::Preview.args(None).is_err());
+        for version in [
+            "", "latest", "next", "alpha", "beta", "^1.0.0", "~1.0.0", ">=1.0.0", "1.x",
+            "v1.0.0", "1.0.0 --force", "1.0.0;whoami", "1.0.0-alpha..1", "1.0.0-alpha.01",
+            "https://example.com/dsh.tgz", "file:../dsh", "npm:other-package@1.0.0",
+        ] {
+            assert!(Channel::Preview.args(Some(version)).is_err(), "{version}");
+        }
+        for channel in ["next", "alpha", "beta", "latest --force"] {
+            assert!(serde_json::from_value::<Channel>(serde_json::json!(channel)).is_err());
+        }
     }
 
     #[test]
@@ -417,7 +472,7 @@ mod tests {
 
     #[test]
     #[ignore = "read-only integration check against the configured npm registry"]
-    fn reads_installed_version_and_live_dist_tags() {
+    fn reads_installed_version_and_live_registry_versions() {
         let node = crate::dsh::resolve_node().expect("Node.js required");
         let versions = check(&node).expect("dsh and npm registry must be available");
         println!("{}", serde_json::to_string(&versions).unwrap());

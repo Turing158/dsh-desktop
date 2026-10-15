@@ -54,7 +54,7 @@ export class SnapshotStore {
       try {
       const index = await this.read(scope)
       index.eventSequence = (index.eventSequence || 0) + 1
-      await update(index)
+      if (await update(index) === false) return
       index.revision++
       const bytes = Buffer.byteLength(JSON.stringify(index))
       let previous = 0
@@ -145,7 +145,12 @@ export class SnapshotStore {
   }
   final(scope, token, status) {
     return this.enqueue(scope, index => {
-      for (const operation of index.operations) if (operation.execution === token) operation.finalStatus = status
+      let changed = false
+      for (const operation of index.operations) if (operation.execution === token && operation.finalStatus !== status) {
+        operation.finalStatus = status
+        changed = true
+      }
+      return changed
     })
   }
   async list(scope, allRoots = false) {

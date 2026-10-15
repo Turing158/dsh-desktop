@@ -42,8 +42,6 @@ pub const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DshSource {
-    /// A complete runtime distributed with the portable app.
-    Bundled,
     /// Explicit user configuration.
     Configured,
     /// The app's own private install prefix.
@@ -259,9 +257,8 @@ pub fn global_dsh_bin() -> Option<PathBuf> {
 /// task) may still need.
 pub fn resolve_node() -> Option<PathBuf> {
     if cfg!(feature = "offline") {
-        return crate::bundled_runtime::root()
-            .map(|root| root.join("node/node.exe"))
-            .filter(|path| path.is_file());
+        if let Some(node) = crate::bundled_runtime::node() { return Some(node); }
+        if !crate::bundled_runtime::allows_system_node() { return None; }
     }
     if let Some(explicit) = std::env::var_os(ENV_NODE) {
         let path = PathBuf::from(explicit);
@@ -305,12 +302,6 @@ pub fn node_major(node_exe: &Path) -> Option<u32> {
 /// self-consistent once the user has chosen a version, while the global
 /// fallback avoids duplicating a runtime the user already has.
 pub fn resolve_dsh(prefer_private: bool) -> Option<(PathBuf, DshSource)> {
-    if cfg!(feature = "offline") {
-        return crate::bundled_runtime::root()
-            .map(|root| root.join("dsh/node_modules/@deepseek-ai/dsh/lib/bin.js"))
-            .filter(|path| path.is_file())
-            .map(|path| (path, DshSource::Bundled));
-    }
     if let Some(explicit) = std::env::var_os(ENV_DSH) {
         let path = PathBuf::from(explicit);
         if is_file(&path) {
@@ -768,6 +759,42 @@ pub fn read_to_string(mut reader: impl Read) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_dsh_lookup_also_works_with_bundled_node() {
+        const CHILD: &str = "DSH_TEST_EXTERNAL_LOOKUP_ROOT";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            assert_eq!(resolve_dsh(false), None);
+
+            let private = root.join("DeepseekHarness/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js");
+            let global = root.join("npm/node_modules/@deepseek-ai/dsh/lib/bin.js");
+            let configured = root.join("configured.js");
+            for path in [&private, &global, &configured] {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, b"test fixture").unwrap();
+                let source = if path == &private { DshSource::Private }
+                    else if path == &global { DshSource::Global }
+                    else { DshSource::Configured };
+                assert_eq!(resolve_dsh(false), Some((path.clone(), source)));
+                if path == &global {
+                    assert_eq!(resolve_dsh(true), Some((private.clone(), DshSource::Private)));
+                }
+            }
+            return;
+        }
+
+        // Isolate APPDATA and the explicit override from other parallel tests
+        // and from any real DSH installed on the developer's machine.
+        let root = tempfile::tempdir().unwrap();
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "dsh::tests::external_dsh_lookup_also_works_with_bundled_node", "--nocapture"])
+            .env(CHILD, root.path())
+            .env("APPDATA", root.path())
+            .env(ENV_DSH, root.path().join("configured.js"))
+            .output().unwrap();
+        assert!(result.status.success(), "{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    }
 
     #[test]
     fn node_main_scripts_accept_tauri_resource_paths() {

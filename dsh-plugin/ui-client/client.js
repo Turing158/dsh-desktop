@@ -252,6 +252,289 @@ var React = require('react')
       { id: 'off', get label() { return t('关闭') } },
     ]
 
+    var REASONING_CONTROL_OPTIONS = [
+      { id: 'select', get label() { return t('选择列表') } },
+      { id: 'slider', get label() { return t('滑块') } },
+    ]
+    function reasoningControl(section) { return section?.reasoningControl === 'slider' ? 'slider' : 'select' }
+
+    // Replace the root menu's effort row with an inline panel. Read and write
+    // through the same session directory as the original model picker.
+    function installReasoningMenu(store, ctx) {
+      if (typeof MutationObserver === 'undefined') return function () {}
+      var entry = null, disposed = false, frame = 0, directory = null, offDirectory = function () {}
+      var triggerSelector = '[data-slot="conversation.input.model"] button[aria-expanded="true"][aria-controls]'
+      function activeSessionId() {
+        var list = ctx.sessions.list.getSnapshot()
+        if (list.current != null) return list.current
+        return Object.keys(list.byId || {}).find(function (id) { return (list.byId[id].retainedBy?.mainView || 0) > 0 })
+      }
+      function modelState() {
+        var sessionId = activeSessionId()
+        if (!sessionId || ctx.sessions.subagentAddress?.(sessionId) !== undefined) return null
+        var owner = ctx.modelDirectories.directoryFor(sessionId)
+        var state = owner.store.getSnapshot(), selection = state.current
+        if (!selection) return null
+        var group = state.groups.find(function (group) { return group.id === selection.provider })
+        var model = group?.models.find(function (model) { return model.id === selection.model })
+        if (!model?.reasoning) return null
+        var reasoning = model.reasoning
+        var options = reasoning.efforts.map(function (level) { return { id: level.id, name: level.name } })
+        if (reasoning.defaultEffort === undefined) options.unshift({ id: undefined, name: t('提供商默认') })
+        var effective = selection.reasoningEffort ?? reasoning.defaultEffort
+        return { owner: owner, sessionId: sessionId, selection: selection, options: options,
+          selected: options.findIndex(function (option) { return option.id === effective }),
+          // Like the native effort rows, a background catalog refresh must not
+          // discard a drag while the current model's known levels remain valid.
+          busy: state.pending !== null }
+      }
+      function watchDirectory(next) {
+        if (directory === next) return
+        offDirectory()
+        directory = next
+        offDirectory = next ? next.store.subscribe(schedule) : function () {}
+      }
+      function element(tag, className, text) {
+        var node = document.createElement(tag)
+        if (className) node.className = className
+        if (text !== undefined) node.textContent = text
+        return node
+      }
+      function clear() {
+        if (!entry) return
+        var previous = entry
+        entry = null
+        previous.menu.removeEventListener('focusin', previous.onFocus)
+        previous.menu.removeEventListener('keydown', previous.onKeyDown, true)
+        previous.menu.removeAttribute('data-dsh-reasoning-slider')
+        previous.effortRow.removeAttribute('data-dsh-reasoning-row')
+        previous.modelRow.removeAttribute('data-dsh-reasoning-model')
+        previous.modelRow.setAttribute('role', 'menuitem')
+        if (!previous.menu.querySelector(':scope > [role="menu"]')) previous.menu.setAttribute('role', previous.role)
+        if (previous.root.contains(document.activeElement) && previous.effortRow.isConnected) {
+          previous.effortRow.focus({ preventScroll: true })
+        }
+        previous.root.remove()
+        if (previous.menu.isConnected) previous.menu.dispatchEvent(new Event('scroll'))
+      }
+      function attach(menu, trigger, rows) {
+        clear()
+        var root = element('div', 'dshReasoning')
+        root.setAttribute('role', 'group')
+        var heading = element('div', 'dshReasoning__heading')
+        var title = element('span', 'dshReasoning__title', t('推理等级'))
+        var value = element('output', 'dshReasoning__value')
+        var track = element('div', 'dshReasoning__track')
+        track.setAttribute('aria-hidden', 'true')
+        var range = element('div', 'dshReasoning__range')
+        var thumb = element('div', 'dshReasoning__thumb')
+        thumb.setAttribute('aria-hidden', 'true')
+        var input = element('input')
+        input.type = 'range'
+        input.min = '0'
+        input.step = '1'
+        input.setAttribute('aria-label', t('推理等级'))
+        input.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight Home End')
+        var labels = element('div', 'dshReasoning__labels')
+        labels.setAttribute('aria-hidden', 'true')
+        var error = element('p', 'dshReasoning__error')
+        error.setAttribute('role', 'alert')
+        error.hidden = true
+        heading.append(title, value)
+        range.append(track, input, thumb)
+        root.append(heading, range, labels, error)
+        menu.append(root)
+        entry = { menu: menu, trigger: trigger, root: root, modelRow: rows[0], effortRow: rows[1],
+          input: input, value: value, title: title, error: error,
+          track: track, labels: labels, selected: -1, signature: '', editing: false, saving: false,
+          role: menu.getAttribute('role') || 'menu' }
+        var current = entry
+        function preview() {
+          var index = Number(input.value)
+          var name = current.options[index]?.name || ''
+          if (value.textContent !== name) {
+            var text = element('span', 'dshReasoning__valueText', name)
+            if (current.previewIndex !== undefined) {
+              text.setAttribute('data-changing', '')
+              text.style.setProperty('--dsh-reasoning-value-offset', index < current.previewIndex ? '-6px' : '6px')
+            }
+            value.replaceChildren(text)
+          }
+          current.previewIndex = index
+          input.setAttribute('aria-valuetext', name)
+          // Match the native 28px thumb's center, including both endpoints.
+          var progress = index / Math.max(1, current.options.length - 1)
+          root.style.setProperty('--dsh-reasoning-position', String(progress))
+          root.style.setProperty('--dsh-reasoning-progress', 'calc(' + (progress * 100) + '% + ' + (14 - 28 * progress) + 'px)')
+          Array.from(track.children).forEach(function (tick, i) { tick.dataset.filled = i <= index ? 'true' : 'false' })
+          Array.from(labels.children).forEach(function (label, i) { label.dataset.selected = i === index ? 'true' : 'false' })
+        }
+        current.preview = preview
+        function beginEditing(event) {
+          // A save can settle before its scheduled paint. Start from the live
+          // selection so that paint cannot mistake a new drag for stale input.
+          var latest = modelState()
+          if (!latest || latest.owner !== current.owner || latest.busy || current.saving
+            || latest.selection.provider !== current.selection.provider || latest.selection.model !== current.selection.model) {
+            event.preventDefault()
+            schedule()
+            return false
+          }
+          current.selected = latest.selected
+          current.busy = false
+          current.editing = true
+          return true
+        }
+        async function commit() {
+          current.editing = false
+          root.removeAttribute('data-dragging')
+          if (entry !== current || input.disabled || current.saving) return
+          var latest = modelState(), option = current.options[Number(input.value)]
+          if (!latest || latest.owner !== current.owner || latest.busy || !option
+            || latest.selection.provider !== current.selection.provider || latest.selection.model !== current.selection.model
+            || !latest.options.some(function (item) { return item.id === option.id })) { schedule(); return }
+          if (latest.options[latest.selected]?.id === option.id) return
+          current.saving = true
+          current.error.hidden = true
+          root.setAttribute('aria-busy', 'true')
+          input.setAttribute('aria-disabled', 'true')
+          try {
+            var selection = { provider: latest.selection.provider, model: latest.selection.model }
+            if (option.id !== undefined) selection.reasoningEffort = option.id
+            var result = await latest.owner.select(selection)
+            if (!result?.ok) throw new Error(result?.error?.message || 'Reasoning selection refused')
+          } catch (error) {
+            if (entry === current) {
+              current.error.textContent = t('推理等级保存失败，请重试。')
+              current.error.hidden = false
+            }
+          } finally {
+            current.saving = false
+            schedule()
+          }
+        }
+        input.addEventListener('pointerdown', function (event) {
+          if (!beginEditing(event)) return
+          root.setAttribute('data-dragging', '')
+          input.setPointerCapture(event.pointerId)
+        })
+        input.addEventListener('input', preview)
+        // Native change fires once on pointer release; keyboard commits on keyup.
+        input.addEventListener('change', function () { if (!current.editing) commit() })
+        input.addEventListener('pointerup', commit)
+        input.addEventListener('pointercancel', function () {
+          current.editing = false
+          root.removeAttribute('data-dragging')
+          input.value = String(current.selected)
+          preview()
+        })
+        input.addEventListener('keydown', function (event) {
+          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+            event.stopPropagation()
+            beginEditing(event)
+          } else if (event.key === 'Escape') {
+            current.editing = false
+          } else if (event.key === 'Enter') {
+            event.preventDefault(); event.stopPropagation(); commit()
+          }
+        })
+        input.addEventListener('keyup', function () { if (current.editing) commit() })
+        input.addEventListener('blur', function () { if (current.editing) commit() })
+        current.onFocus = function (event) {
+          if (event.target === current.effortRow && !input.disabled) input.focus({ preventScroll: true })
+        }
+        current.onKeyDown = function (event) {
+          if (event.target === current.modelRow && ['Tab', 'ArrowDown', 'ArrowUp'].includes(event.key)) {
+            event.preventDefault(); event.stopPropagation(); input.focus({ preventScroll: true })
+          } else if (event.target === input && event.key === 'Tab') {
+            event.preventDefault(); event.stopPropagation()
+            if (event.shiftKey) current.modelRow.focus({ preventScroll: true })
+            else trigger.click()
+          }
+        }
+        menu.addEventListener('keydown', current.onKeyDown, true)
+        menu.addEventListener('focusin', current.onFocus)
+        current.effortRow.setAttribute('data-dsh-reasoning-row', '')
+        current.modelRow.setAttribute('data-dsh-reasoning-model', '')
+        current.modelRow.setAttribute('role', 'button')
+        menu.setAttribute('data-dsh-reasoning-slider', '')
+        menu.setAttribute('role', 'group')
+      }
+      function sync() {
+        frame = 0
+        if (disposed) return
+        var state = store.getState()
+        if (state.ui === VANILLA || state.reasoningControl !== 'slider') { clear(); watchDirectory(null); return }
+        var trigger = document.querySelector(triggerSelector)
+        var menu = trigger && document.getElementById(trigger.getAttribute('aria-controls'))
+        var rows = menu && !menu.closest('[data-dsh-ghost]') ? Array.from(menu.querySelectorAll(':scope > button[role="menuitem"], :scope > button[data-dsh-reasoning-model]')) : []
+        var model = menu && rows.length === 2 ? modelState() : null
+        watchDirectory(model?.owner || null)
+        // Keep the native list for unknown selections or unsupported upstream
+        // shapes; the model submenu is left entirely to the original picker.
+        if (!model || model.selected < 0 || !model.options.length) { clear(); return }
+        if (!entry || entry.menu !== menu || entry.effortRow !== rows[1] || entry.owner !== model.owner) attach(menu, trigger, rows)
+        var current = entry
+        var signature = JSON.stringify([model.selection.provider, model.selection.model, model.options])
+        if (signature !== current.signature) {
+          current.editing = false
+          current.signature = signature
+          current.error.hidden = true
+          current.track.replaceChildren()
+          current.labels.replaceChildren()
+          model.options.forEach(function (option, i) {
+            var tick = element('span', 'dshReasoning__tick')
+            var progress = i / Math.max(1, model.options.length - 1)
+            tick.style.left = 'calc(' + (progress * 100) + '% + ' + (14 - 28 * progress) + 'px)'
+            current.track.append(tick)
+            current.labels.append(element('span', '', option.name))
+          })
+        }
+        if (current.selected !== model.selected) current.editing = false
+        current.owner = model.owner
+        current.options = model.options
+        current.selection = model.selection
+        current.busy = model.busy
+        current.title.textContent = t('推理等级')
+        current.root.setAttribute('aria-label', t('推理等级'))
+        current.input.setAttribute('aria-label', t('推理等级'))
+        current.selected = model.selected
+        current.input.max = String(Math.max(1, model.options.length - 1))
+        current.input.disabled = trigger.disabled || model.options.length < 2
+        current.input.setAttribute('aria-disabled', String(current.input.disabled || model.busy || current.saving))
+        current.root.setAttribute('aria-busy', String(model.busy || current.saving))
+        if (!current.editing && !current.saving) current.input.value = String(model.selected)
+        current.preview()
+        // Upstream positioning measures the native list before we adapt it.
+        // Its capturing scroll listener remeasures this menu after the swap.
+        var measure = signature + current.error.hidden
+        if (current.measured !== measure) {
+          current.measured = measure
+          menu.dispatchEvent(new Event('scroll'))
+        }
+      }
+      function schedule() {
+        if (!disposed && !frame) frame = requestAnimationFrame(sync)
+      }
+      var observer = new MutationObserver(function (records) {
+        if (records.some(function (record) {
+          var target = record.target.nodeType === 1 ? record.target : record.target.parentElement
+          if (target?.closest('.dshReasoning')) return false
+          if (target?.closest('[data-slot="conversation.input.model"]')) return true
+          if (target === entry?.menu && record.type === 'childList') return true
+          return Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).some(function (node) {
+            return node.nodeType === 1 && (node === entry?.menu || node.matches('[role="menu"], [role="menuitemradio"]') || node.querySelector('[role="menu"]'))
+          })
+        })) schedule()
+      })
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true,
+        attributes: true, attributeFilter: ['aria-expanded', 'aria-controls', 'aria-checked', 'aria-label', 'disabled'] })
+      var off = store.subscribe(schedule)
+      var offSessions = ctx.sessions.list.subscribe(schedule)
+      schedule()
+      return function () { disposed = true; observer.disconnect(); off(); offSessions(); offDirectory(); cancelAnimationFrame(frame); clear() }
+    }
+
     var COMPOSER_MATERIAL_ATTRIBUTE = 'data-dsh-composer-material'
     var COMPOSER_MATERIAL_OPTIONS = [
       { id: 'glass', get label() { return t('毛玻璃') } },
@@ -783,7 +1066,7 @@ var React = require('react')
      */
     var BACKGROUND_REGIONS = [['Titlebar', t('标题栏')], ['Left', t('左边导航栏')], ['Right', t('侧边栏区域')], ['Chat', t('中间会话区域')]]
     function backgroundSettings(section) {
-      var result = { backgroundImage: '', backgroundTransparency: 40 }
+      var result = { backgroundImage: '', backgroundTransparency: 40, backgroundBlur: 0 }
       var surfaceDefaults = { Titlebar: 2, Left: 15, Right: 15, Chat: 40 }
       BACKGROUND_REGIONS.forEach(function (region) {
         result['background' + region[0]] = true
@@ -849,6 +1132,8 @@ var React = require('react')
         state.backgroundImage ? h('img', { className: 'dshAppearance__backgroundPreview', src: state.backgroundImage, alt: t('当前背景图片预览') }) : null,
         state.backgroundError ? h('p', { role: 'alert' }, state.backgroundError) : null,
         slider(t('图片总透明度'), 'backgroundTransparency', !state.backgroundImage),
+        slider(t('图片模糊程度'), 'backgroundBlur', !state.backgroundImage),
+        h('p', null, t('0% 保持原图清晰，100% 模糊最强。')),
         BACKGROUND_REGIONS.map(function (region) {
           var field = 'background' + region[0]
           return h('div', { key: field, className: 'dshAppearance__backgroundRegion' },
@@ -887,7 +1172,9 @@ var React = require('react')
           },
           h(OptionGroup, {
             title: t('主题'),
-            note: t('选择界面配色；跟随系统会随 Windows 外观自动切换'),
+            note: window.__DSH_REMOTE_THEME__
+              ? t('主题选择仅保存在当前浏览器；跟随系统会随当前设备的外观自动切换')
+              : t('选择界面配色；跟随系统会随 Windows 外观自动切换'),
             options: THEME_OPTIONS,
             value: state.preference,
             onChange: function (id) {
@@ -905,6 +1192,12 @@ var React = require('react')
               preview: deps.previewComposerSetting, save: deps.saveComposerSetting }),
           }),
           state.composerMaterialError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.composerMaterialError) : null,
+          h(OptionGroup, {
+            title: t('推理等级控件'),
+            note: t('选择列表保留二级菜单；滑块直接在模型菜单中调整，档位和配色跟随当前模型与主题。'),
+            options: REASONING_CONTROL_OPTIONS, value: state.reasoningControl, onChange: deps.setReasoningControl, compact: true,
+          }),
+          state.reasoningControlError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.reasoningControlError) : null,
           h(BackgroundSettings, { state: state, preview: deps.previewBackground, save: deps.saveBackground, error: deps.backgroundError }),
           h(FontSizeRow, {
             // The override leads: it is what the page is actually showing. The
@@ -937,7 +1230,91 @@ var React = require('react')
      *
      * @param ctx - the client root context.
      */
+    // Keep native React instances and searchable text resident, while excluding
+    // distant transcript bodies from layout. A normal `display:none` would make
+    // history unsearchable; until-found lets Chromium reveal it before scrolling.
+    function bindTranscriptViewport(ctx) {
+      if (!window.IntersectionObserver || !window.ResizeObserver || !('onbeforematch' in document.documentElement)
+        || typeof ctx.slots.entries !== 'function') return
+      var slot = 'conversation.chat.node'
+      ctx.slots.inject(slot, function () {
+        var states = new Map(), mounted = new Map(), wrappers = new Set(), syncing = false
+        function reveal(node) { node.removeAttribute('hidden') }
+        function reconcile(node, state) {
+          if (!node.isConnected || !state.height) return
+          var selection = window.getSelection()
+          var selected = selection && !selection.isCollapsed && selection.rangeCount
+            && selection.getRangeAt(0).intersectsNode(node)
+          if (state.visible || selected || node.contains(document.activeElement)) { reveal(node); return }
+          node.style.containIntrinsicBlockSize = state.height + 'px'
+          if (!node.hasAttribute('hidden')) node.setAttribute('hidden', 'until-found')
+        }
+        var sizes = new ResizeObserver(function (entries) {
+          entries.forEach(function (entry) {
+            var state = states.get(entry.target)
+            if (!state || entry.target.hasAttribute('hidden')) return
+            if (entry.contentRect.height > 0) state.height = entry.contentRect.height
+            reconcile(entry.target, state)
+          })
+        })
+        var visibility = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            var state = states.get(entry.target)
+            if (!state) return
+            state.visible = entry.isIntersecting
+            reconcile(entry.target, state)
+          })
+        }, { rootMargin: '400px 0px' })
+        function attach(node) {
+          states.set(node, { visible: true, height: 0 })
+          // Native find-in-page removes until-found after this event; keep the
+          // wrapper visible until the resulting intersection notification.
+          function found() { states.get(node).visible = true; reveal(node) }
+          node.addEventListener('beforematch', found)
+          sizes.observe(node); visibility.observe(node)
+          return function () {
+            sizes.unobserve(node); visibility.unobserve(node); states.delete(node)
+            node.removeEventListener('beforematch', found); reveal(node)
+          }
+        }
+        function sync() {
+          if (syncing) return
+          syncing = true
+          try {
+            var entries = ctx.slots.entries(slot).filter(function (entry) {
+              return !wrappers.has(entry.component) && ['assistant-step', 'unknown'].includes(entry.options.key)
+            }).slice().sort(function (a, b) { return (a.options.priority || 0) - (b.options.priority || 0) })
+            var chosen = new Map()
+            entries.forEach(function (entry) { if (!chosen.has(entry.options.key)) chosen.set(entry.options.key, entry) })
+            mounted.forEach(function (value, key) { if (chosen.get(key) !== value.entry) { value.remove(); mounted.delete(key) } })
+            chosen.forEach(function (entry, key) {
+              if (mounted.has(key)) return
+              function ViewportBody(props) {
+                var root = React.useRef(null)
+                return React.createElement('div', { ref: root, 'data-dsh-chat-viewport': '', style: { display: 'flow-root', contentVisibility: 'auto', containIntrinsicBlockSize: 'auto 80px' } },
+                  React.createElement(entry.component, props))
+              }
+              ViewportBody.__dshTranscriptViewport = true
+              wrappers.add(ViewportBody)
+              mounted.set(key, { entry: entry, remove: ctx.slots.register(Object.assign({}, entry.options, {
+                name: slot, priority: (entry.options.priority || 0) - 10,
+                inject: entry.inject, store: entry.store, locale: entry.locale,
+              }), ViewportBody) })
+            })
+          } finally { syncing = false }
+        }
+        var off = ctx.slots.subscribe(slot, sync)
+        sync()
+        return function () {
+          off(); sizes.disconnect(); visibility.disconnect()
+          states.forEach(function (_, node) { reveal(node) }); states.clear()
+          mounted.forEach(function (value) { value.remove() }); mounted.clear(); wrappers.clear()
+        }
+      })
+    }
+
     function apply(ctx) {
+      bindTranscriptViewport(ctx)
       if (Tooltip) {
         var TriggerMenuTooltips = createTriggerMenuTooltips()
         ctx.slots.inject('shell.overlay', function () {
@@ -945,6 +1322,9 @@ var React = require('react')
         })
       }
       ctx.inject(['configForms'], function (child) {
+        // Settings still owns the same device preference if the title bar's
+        // client contribution is temporarily unmounted or reloaded.
+        window.__DSH_REMOTE_THEME__?.bind(child, child.configForms.get('ui-theme'))
         applySettings(child, child.configForms.get('desktop-appearance'))
       })
       ctx.inject(['settingsScope'], function (child) {
@@ -1025,6 +1405,8 @@ var React = require('react')
         fontSize: first && typeof first.fontSize === 'number' ? first.fontSize : 14,
         fontSizeOverride: readFontSizeOverride(),
         animation: readAnimation(),
+        reasoningControl: reasoningControl(loadedSection()),
+        reasoningControlError: '',
         ...composerSettings(loadedSection()),
         composerMaterialError: '',
         ...backgroundSettings(loadedSection()),
@@ -1056,6 +1438,32 @@ var React = require('react')
         }
       }
       ctx.on('theme/change', sync)
+
+      var reasoningVersion = 0, reasoningPending = false, reasoningDisposed = false
+      var reasoningQueue = Promise.resolve()
+      function setReasoningControl(next) {
+        if (!REASONING_CONTROL_OPTIONS.some(function (option) { return option.id === next }) || reasoningDisposed) return
+        var version = ++reasoningVersion
+        reasoningPending = true
+        store.update({ reasoningControl: next, reasoningControlError: '' })
+        reasoningQueue = reasoningQueue.then(function () { return scope.set('reasoningControl', next) }).then(checkSaved).catch(function () {
+          if (!reasoningDisposed && version === reasoningVersion) store.update({ reasoningControlError: t('推理控件设置保存失败，请重试。') })
+        }).finally(function () {
+          if (reasoningDisposed || version !== reasoningVersion) return
+          reasoningPending = false
+          store.update({ reasoningControl: reasoningControl(loadedSection()) })
+        })
+        return reasoningQueue
+      }
+      ctx.effect(function () {
+        var off = scope.subscribe(function () {
+          if (!reasoningPending && loadedSection() !== undefined) store.update({ reasoningControl: reasoningControl(loadedSection()) })
+        })
+        return function () { reasoningDisposed = true; off() }
+      }, 'desktop-appearance: reasoning control preference')
+      ctx.inject(['sessions', 'modelDirectories'], function (child) {
+        child.effect(function () { return installReasoningMenu(store, child) }, 'desktop-appearance: inline reasoning panel')
+      })
 
       // Keep each field's preview until its own save settles. Other settings
       // acknowledgements must not reset an active drag or a newer selection.
@@ -1308,6 +1716,9 @@ var React = require('react')
           }
         }
         document.body.style.setProperty('--dsh-background-image-opacity', String(1 - state.backgroundTransparency / 100))
+        document.body.style.setProperty('--dsh-background-blur', (state.backgroundBlur * 0.4) + 'px')
+        if (backgroundObjectUrl && state.backgroundImage && state.backgroundBlur > 0) root.setAttribute('data-dsh-background-blur', '')
+        else root.removeAttribute('data-dsh-background-blur')
         BACKGROUND_REGIONS.forEach(function (region) {
           var field = 'background' + region[0]
           var attr = 'data-dsh-background-' + region[0].toLowerCase()
@@ -1355,6 +1766,8 @@ var React = require('react')
             document.body.style.removeProperty('--dsh-background-' + region[0].toLowerCase() + '-opacity')
           })
           document.body.style.removeProperty('--dsh-background-image-opacity')
+          document.body.style.removeProperty('--dsh-background-blur')
+          document.documentElement.removeAttribute('data-dsh-background-blur')
           document.body.style.removeProperty('--dsh-background-image')
         }
       }, 'desktop-appearance: background preference')
@@ -1366,6 +1779,7 @@ var React = require('react')
         },
         setFontSize: setFontSize,
         setAnimation: setAnimation,
+        setReasoningControl: setReasoningControl,
         setComposerMaterial: setComposerMaterial,
         previewComposerSetting: previewComposerSetting,
         saveComposerSetting: saveComposerSetting,

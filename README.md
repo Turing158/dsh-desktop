@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="src-tauri/icons/128x128.png" alt="DeepseekHarness Desktop" width="112" height="112" />
+<img src="src-tauri/icons/128x128.png" alt="dsh desktop" width="112" height="112" />
 
-# DeepseekHarness Desktop
+# dsh desktop
 
 **把 DeepSeek Harness 装进桌面，让对话、终端、文件编辑和更改审阅在同一个窗口里完成。**
 
@@ -10,7 +10,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/平台-Windows_x64-0078D4?style=flat-square" alt="Windows x64" />
-  <img src="https://img.shields.io/badge/桌面版本-0.1.1-4C8BF5?style=flat-square" alt="桌面版本 0.1.1" />
+  <img src="https://img.shields.io/badge/桌面版本-0.1.2-4C8BF5?style=flat-square" alt="桌面版本 0.1.2" />
   <img src="https://img.shields.io/badge/技术-Rust_%2B_Tauri_2-DEA584?style=flat-square" alt="Rust + Tauri 2" />
   <img src="https://img.shields.io/badge/界面-中文_%2F_English-2EA043?style=flat-square" alt="中文 / English" />
 </p>
@@ -25,7 +25,7 @@
 
 如果你在用 **DeepSeek Harness（dsh）** 写代码，可能希望它用起来更像一个完整的桌面工作台：任务完成时主动提醒你，改完代码后直接看差异，需要运行命令时展开终端，发现一处小问题就顺手编辑文件。
 
-DeepseekHarness Desktop 就是围绕这些日常操作做的增强。它启动 dsh 的 Web 服务，通过独立桌面窗口呈现原有界面，再加载本项目的桌面插件，补充通知、终端停靠、更改面板、文本编辑、插件开关和手机访问等能力。
+dsh desktop 就是围绕这些日常操作做的增强。它启动 dsh 的 Web 服务，通过独立桌面窗口呈现原有界面，再加载本项目的桌面插件，补充通知、终端停靠、更改面板、文本编辑、插件开关和手机访问等能力。
 
 **AI 对话、模型调用、工具执行和会话管理仍由 dsh 提供；本项目主要完善桌面操作体验，并为缺少相关功能的旧版补充入口与实现。** 模型、API 和权限策略继续通过 dsh 配置。
 
@@ -36,7 +36,7 @@ DeepseekHarness Desktop 就是围绕这些日常操作做的增强。它启动 d
 | 能力 | 原版基础 / 使用场景 | 本项目增加的内容 |
 | --- | --- | --- |
 | 🪟 **桌面窗口与托盘** | `dsh web` 通过浏览器访问 | 独立 Windows 窗口、自定义标题栏、窗口控制、系统托盘与单实例处理；关闭窗口后可留在后台继续工作。 |
-| 🔔 **系统通知** | 需要关注会话中的任务与提问状态 | 将任务完成、运行错误、待回答问题和计划待确认转成 Windows 通知，离开主界面也能收到提醒。 |
+| 🔔 **系统通知** | 需要关注会话中的任务与提问状态 | 将任务完成、运行错误、待回答问题和计划待确认转成 Windows 通知；点击通知自动显示主界面，并跳转到对应会话。 |
 | 💻 **终端与底部面板** | 较早版本没有原生终端；新版已提供终端 | 缺少原生终端时提供本项目的交互式终端；已有原生终端时复用它，并增加底部停靠、多标签、默认 Shell 与打开位置设置。 |
 | 📝 **更改审阅** | 需要知道“这次会话究竟改了哪些文件” | 增加“当前会话 / 未提交 / 暂存区 / 提交记录”四种视图，查看累计差异、增删行数、操作历史和 Git 提交图。 |
 | ✏️ **直接编辑文件** | 在右侧栏查看文本或代码后，还想顺手修改 | 在原有文本、代码预览位置接入编辑器，支持语法高亮、查找替换、撤销重做和 `Ctrl+S` 保存。 |
@@ -44,7 +44,7 @@ DeepseekHarness Desktop 就是围绕这些日常操作做的增强。它启动 d
 | 🧩 **可视化插件开关** | dsh 已有插件系统和插件清单 | 增加内置增强开关、可管理插件的持久化启停、运行状态与重启提示；宿主支持安装服务时提供 `dshmarket` 安装入口。 |
 | 🎨 **外观定制** | dsh 已有主题与基础外观设置 | 扩展字号范围，增加背景图片、输入框材质与透明度、动画偏好，以及完整 / 简洁标题栏。 |
 | 🔗 **桌面快捷操作** | 会话与项目已在 dsh 中管理 | 增加本机会话深链接、项目打开方式，并为支持会话导出的 dsh 接入原生保存文件夹选择与下载完成反馈。 |
-| 📦 **分发与启动** | 运行 dsh 需要准备环境并启动服务 | 提供安装包、离线便携包和单文件版；启动时检测运行环境、显示启动或安装进度，缺少 dsh 时可自动安装。 |
+| 📦 **分发与启动** | 运行 dsh 需要准备环境并启动服务 | 提供安装包、便携包和单文件版；启动时检测运行环境、显示启动或安装进度，缺少 dsh 时可自动安装。 |
 
 ## 对低版本 dsh，补齐了哪些能力？
 
@@ -59,7 +59,7 @@ DeepseekHarness Desktop 就是围绕这些日常操作做的增强。它启动 d
 | **缺少桌面提醒、托盘和本机会话链接** | 由桌面宿主与插件补充，无需旧版先实现这些桌面功能。 | 仍依赖可用的 dsh 事件与会话接口，具体行为以运行时能力为准。 |
 | **新旧设置、导航接口不一致** | 适配旧版设置注册方式与新版配置方式，兼容两代会话导航接口，保存桌面外观及终端偏好。 | 恢复草稿、附件和布局前检查所需接口；缺少必要能力时提示原因并取消操作。 |
 
-版本需要分开看：**`0.1.1` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，离线运行时清单也固定为该版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
+版本需要分开看：**`0.1.2` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
 
 ## 日常使用体验优化了什么？
 
@@ -111,7 +111,7 @@ HTML / HTM 文件支持在右侧栏切换编辑与预览：编辑时点击 **预
 - **动画可控**：可跟随系统，也可手动开启或关闭，菜单和侧栏提供相应的过渡处理。
 - **中文 / English**：桌面新增界面、启动页、通知和托盘文案跟随 dsh 的语言偏好。
 - **项目打开方式**：可在资源管理器或已检测到的编辑器中打开项目，如 VS Code、Cursor 等。
-- **会话深链接**：复制 `deepseekharness://session/<id>`（省略会话 ID 的 `session-` 前缀），在本机直接回到对应会话；旧格式链接仍可打开。它不是分享会话内容的网页链接。
+- **会话深链接**：复制 `deepseekharness://session/<id>`（省略会话 ID 的 `session-` 前缀），在本机直接回到对应会话；旧格式链接仍可打开。将链接粘贴到对话中并发送，例如“读取这个会话并总结：`deepseekharness://session/<id>`”，AI 会通过 dsh 的跨会话引用能力读取对应会话的用户与助手文本。正文中的深链接显示为可点击链接，点击即可跳转。读取要求运行中的 dsh 提供 `sessionReferenceResolver`（已验证 `0.2.0-rc.2`），默认每条消息最多引用 3 个不同会话；长内容按上游预算生成预览，并在可用时提供完整快照的读取位置。只能读取当前 dsh 数据目录中可访问的会话，它不是公开分享网页。
 - **后台继续运行**：关闭主窗口后留在托盘，需要完全结束程序时使用托盘菜单中的“退出”。
 
 设置中的 **“切换成原版”** 用于切换外观，不是回退 dsh 版本，也不是卸载全部桌面插件。需要关闭某项可选增强时，在插件设置中操作。
@@ -122,23 +122,27 @@ HTML / HTM 文件支持在右侧栏切换编辑与预览：编辑时点击 **预
 
 | 分发形式 | 适合谁 | 运行环境 |
 | --- | --- | --- |
-| **离线便携包** `DeepseekHarness-portable-win-x64.zip` | 希望解压后直接启动，不单独准备 Node.js / WebView2 的用户 | 自带 Node.js、npm、dsh 及其依赖、固定版 WebView2。必须完整保留解压目录中的 `runtime` 和 `dsh-plugin`。 |
-| **Windows 安装包** `DeepseekHarness_*-setup.exe` | 希望通过安装程序使用的用户 | 使用系统运行环境；需要 Node.js 22+ / npm 和 WebView2，缺少 dsh 时进入自动安装流程。 |
-| **单文件版** `deepseek-harness-desktop.exe` | 已有运行环境，希望只携带一个 EXE 的用户 | 桌面插件内嵌，启动时释放到应用缓存；仍需要系统 Node.js 22+ / npm 和 WebView2。 |
+| **便携包** `dsh-desktop-v<版本>-portable-win-<架构>.zip` | 希望解压后启动，不单独准备 Node.js / WebView2 的用户 | 自带 Node.js、npm 和固定版 WebView2；不包含 dsh 及其依赖，缺少 dsh 时联网安装。必须完整保留解压目录中的 `runtime` 和 `dsh-plugin`。 |
+| **Windows 安装包** `dsh-desktop-v<版本>-installer-win-<架构>.exe` | 希望使用更小安装包、复用已有环境的用户 | 仅包含应用和桌面插件；安装时检测 Node.js 22+ / npm 与 WebView2。缺失组件默认勾选、联网下载；已检测到的组件取消勾选且无法勾选。不包含 dsh，缺少 dsh 时在首次启动中联网安装。 |
+| **单文件版** `dsh-desktop-v<版本>-win-<架构>.exe` | 已有运行环境，希望只携带一个 EXE 的用户 | 桌面插件内嵌，启动时释放到应用缓存；仍需要系统 Node.js 22+ / npm 和 WebView2。 |
 
 当前目标平台是 **Windows 10 / 11 x64**，终端需要系统支持 ConPTY。Git 和 PowerShell 7 不随包提供；使用对应能力时请自行安装。
 
-**“离线便携”指启动所需运行环境随包提供，不包含 AI 模型。** 调用在线模型、安装社区插件等操作仍可能需要网络和对应配置。
+**便携包和安装包均不内置 dsh，也不包含 AI 模型。** 启动时优先使用已安装的 dsh，未找到时通过 npm 联网安装。调用在线模型、安装社区插件等操作也可能需要网络和对应配置。
+
+安装器的运行环境页允许取消勾选缺失的组件；跳过后需自行准备相应环境才能运行应用。勾选的 Node.js/npm 与固定版 WebView2 会下载到应用目录供本应用使用，不修改系统安装。下载文件须通过 SHA-256 校验；已有且可用的系统环境会被直接复用。仅有 Node.js 旧版本、缺少 npm 或只有普通 Edge 浏览器，不会被误判为环境齐全。
 
 ### 2. 启动并配置 dsh
 
-解压便携包后运行其中的 EXE，或安装后启动应用。启动页会显示环境检测与服务启动状态；使用系统运行环境的版本若未找到 dsh，会显示自动安装进度。
+解压便携包后运行其中的 EXE，或安装后启动应用。启动页会显示环境检测与服务启动状态；所有版本若未找到 dsh，都会显示自动安装进度。
 
 进入界面后，按 dsh 的正常流程配置模型服务、API 信息和工作目录，创建或打开会话即可使用。桌面增强会随本应用加载，无需另外安装通知 Hook。
 
 自定义供应商的模型也可在输入框原有的模型菜单中选择 **推理等级**：`Off / Low / Medium / High / Xhigh / Max`，默认选中 `High`（已配置为这六档之一的默认值仍沿用）。这些档位固定提供，不预先检测模型能力；选择后按配置的 API 协议发送，接口拒绝会显示原有错误，接口忽略参数时则可能不生效。选择按会话保存，内置供应商仍使用原有的模型能力目录。
 
-系统通知会在首次启动时自动创建当前用户的 `DeepseekHarness Desktop` 开始菜单快捷方式，单文件版也无需先安装。后续启动只检查通知身份、EXE 路径和图标；快捷方式正确时不会重写，缺失、损坏或 EXE 移动后才修复。通知仍遵循 Windows 的通知开关和勿扰设置。
+系统通知会在首次启动时自动创建当前用户的 `dsh desktop` 开始菜单快捷方式，单文件版也无需先安装。后续启动只检查通知身份、EXE 路径和图标；快捷方式正确时不会重写，缺失、损坏或 EXE 移动后才修复。通知仍遵循 Windows 的通知开关和勿扰设置。
+
+点击会话通知的横幅或通知中心中的记录，会自动恢复主窗口并打开该通知对应的会话；窗口最小化、隐藏到托盘或处于极简模式时也适用。界面尚未加载完成时会等待加载后跳转。已删除或归档的会话会显示无法找到会话的提示。
 
 ### 3. 使用常用增强
 
@@ -147,7 +151,7 @@ HTML / HTM 文件支持在右侧栏切换编辑与预览：编辑时点击 **预
 - 在会话顶部打开 **底部终端**，或从右侧栏进入 **终端 / 更改 / 文件**。
 - 需要在后台运行时关闭窗口；通过系统托盘重新显示主界面或退出应用。
 
-使用系统 dsh 的版本还提供 `latest` / `next` 通道检查与安装入口。该更新操作通过 npm 更新全局 dsh，完成后需退出并重新启动；如果应用使用单独指定或私有安装的 dsh，应核对实际运行路径。离线便携版使用随包 dsh，更新时替换完整便携包。
+所有版本均提供 dsh 稳定版（`latest`）和预览版检查与安装入口。最新预览版取 `npm view @deepseek-ai/dsh versions` 返回列表的最后一个版本；若与最新稳定版相同，则隐藏预览版入口。安装预览版时使用检测到的确切版本号（`@deepseek-ai/dsh@版本号`）。该更新操作通过 npm 更新全局 dsh，完成后需退出并重新启动；如果应用使用单独指定或私有安装的 dsh，应核对实际运行路径。
 
 ## 用手机或平板连接
 
@@ -179,8 +183,8 @@ HTML / HTM 文件支持在右侧栏切换编辑与预览：编辑时点击 **预
 | [`src-tauri/ui/`](src-tauri/ui/) | 环境检测、安装进度与启动页面。 |
 | [`dsh-plugin/`](dsh-plugin/) | 外观、标题栏、终端、更改面板、文件编辑、插件管理与语言适配。 |
 | [`dsh-plugin/desktop-notify.patch.yml`](dsh-plugin/desktop-notify.patch.yml) | 桌面应用加载的 dsh 覆盖层。 |
-| [`tools/`](tools/) | 前端资源构建、集成检查和离线运行时准备工具。 |
-| [`tools/offline-runtime.json`](tools/offline-runtime.json) | 离线包固定使用的运行时版本与下载信息。 |
+| [`tools/`](tools/) | 前端资源构建、集成检查和随包运行时准备工具。 |
+| [`tools/offline-runtime.json`](tools/offline-runtime.json) | 便携包与安装包固定使用的 Node.js / WebView2 版本与下载信息。 |
 | [`dev.ps1`](dev.ps1) / [`pack.ps1`](pack.ps1) | 开发启动与 Windows 分发打包。 |
 
 ### 本地开发
@@ -215,21 +219,25 @@ Windows 原生通知可单独验证（会发送一条测试通知，临时开始
 cargo test --manifest-path src-tauri/Cargo.toml --features single live_windows_notification -- --ignored --nocapture --test-threads=1
 ```
 
-关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/single/deepseek-harness-desktop.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
+关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v0.1.2-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
 
 设置环境变量 `DSH_DESKTOP_DEBUG` 为日志文件路径后启动 EXE，可查看通知注册、提交与失败记录。`[notify/registration] unchanged` 表示复用了已有注册，`[notify/submitted]` 表示系统接受了提交；是否显示横幅仍由 Windows 决定。
 
 ### 生成分发包
 
 ```powershell
-.\pack.ps1                         # 离线便携包 + 单文件版 + NSIS 安装包
+.\pack.ps1                         # x64 + x86：便携包 + 单文件版 + 安装包（均不包含 dsh）
 .\pack.ps1 -Target Single          # 只构建单文件版
 .\pack.ps1 -Target Portable        # 构建便携包与安装包，不构建单文件版
-.\pack.ps1 -SkipBundle             # 跳过 NSIS 安装包
-.\pack.ps1 -PortableMode Thin      # 便携目录使用系统运行环境
+.\pack.ps1 -SkipBundle             # 跳过安装包
+.\pack.ps1 -Arch x86               # 只构建 x86（需先 rustup target add i686-pc-windows-msvc）
 ```
 
-产物默认收集到 `pack/portable/`、`pack/single/` 和 `pack/installer/`；完整离线 ZIP 位于 `pack/DeepseekHarness-portable-win-x64.zip`。离线运行时首次准备需要联网，后续构建会校验并复用缓存。
+产物平铺收集到 `pack/`，靠文件名区分类型与架构：`dsh-desktop-v<版本>-portable-win-<架构>.zip`、`dsh-desktop-v<版本>-installer-win-<架构>.exe`、`dsh-desktop-v<版本>-win-<架构>.exe`。安装包将应用和桌面插件打成 TAR 后使用 NSIS 的 solid LZMA 压缩，不内嵌 portable ZIP 或运行时归档。安装时用系统 `tar.exe` 解压到 `%LOCALAPPDATA%\dsh-desktop`，按复选框选择下载缺失的 Node.js/npm、WebView2，并登记开始菜单快捷方式与卸载项。编译安装包需要 NSIS 3.x，优先复用 tauri 已下载的 `%LOCALAPPDATA%\tauri\NSIS`。
+
+安装器逐文件校验应用内容，并校验下载归档及组件解压结果；失败时以非 0 退出码结束，详细输出中保留原因。静默安装 `/S` 采用相同检测规则：复用已有组件，自动下载缺失组件。安装选择写入 `runtime/installed.json`，使应用支持全部使用系统环境、全部使用应用目录内环境，或两者混合。便携包仍要求自身运行时完整。
+
+x64 与 x86 的便携包携带各自的 Node.js/npm 和固定版 WebView2；安装包按需下载相同的组件（x86 用 Node.js 22，因为 Node.js 24 起不再发布 32 位 Windows 版本）。所有版本都不打包 dsh 及其依赖。dsh 原生依赖的架构支持取决于上游发布。构建机首次准备运行时需要联网，后续构建会校验并复用缓存。
 
 ## 上游项目
 

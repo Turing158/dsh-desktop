@@ -31,9 +31,13 @@ export async function readEndpoint(root, file, options = {}) {
     if (stat.isSymbolicLink()) return { exists: true, text: null, hash: hash(await readlink(absolute)), reason: 'symlink', mode: '120000' }
     if (!stat.isFile()) return { exists: true, text: null, hash: null, reason: 'submodule', mode: '160000' }
     const mode = stat.mode & 0o111 ? '100755' : '100644'
-    const fingerprint = hash(`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}`)
+    const fingerprint = hash(`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}:${stat.mode}`)
     if (stat.size > LIMITS.bytes) return { exists: true, text: null, hash: fingerprint, fingerprint, reason: 'large', mode }
     if (stat.size > (options.maxBytes ?? Infinity)) return { exists: true, text: null, hash: fingerprint, fingerprint, reason: 'scan-content', mode }
+    // Still stat every path, but share unchanged immutable endpoints with the
+    // baseline instead of reading/hashing/allocating their contents again.
+    const previous = options.previous
+    if (previous?.fingerprint === fingerprint && previous.reason !== 'scan-content') return previous
     const data = await readFile(absolute), again = await lstat(absolute)
     if (stat.size !== again.size || stat.mtimeMs !== again.mtimeMs || stat.ino !== again.ino) throw Error('stale')
     return { exists: true, ...decode(data), fingerprint, mode }

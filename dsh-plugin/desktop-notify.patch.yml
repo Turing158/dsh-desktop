@@ -131,6 +131,10 @@
       name: ./ui-state/index.js
       config: {}
 
+    # Read pasted desktop session links through DSH's native reference resolver.
+    - id: desktop-session-links
+      name: ./session-links/index.js
+
     - id: desktop-sidebar-changes
       name: ./sidebar-changes/index.js
       inject: [tools, sessions, typert]

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Right-sidebar terminal interface for DeepseekHarness desktop",
+  "description": "Right-sidebar terminal interface for dsh desktop",
   "main": "index.js",
   "exports": {
     ".": { "default": "./index.js" },

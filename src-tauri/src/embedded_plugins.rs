@@ -45,7 +45,7 @@ pub fn check_webview() -> bool {
     if tauri::webview_version().is_ok() {
         return true;
     }
-    let text = "single 版需要 Microsoft Edge WebView2 Runtime。\n请先安装 WebView2 Evergreen Runtime，再重新启动 DeepseekHarness。\n\n下载地址：https://developer.microsoft.com/microsoft-edge/webview2/";
+    let text = "single 版需要 Microsoft Edge WebView2 Runtime。\n请先安装 WebView2 Evergreen Runtime，再重新启动 dsh desktop。\n\n下载地址：https://developer.microsoft.com/microsoft-edge/webview2/";
     #[cfg(windows)]
     unsafe {
         use windows::core::HSTRING;
@@ -53,7 +53,7 @@ pub fn check_webview() -> bool {
         let _ = MessageBoxW(
             None,
             &HSTRING::from(text),
-            &HSTRING::from("DeepseekHarness"),
+            &HSTRING::from("dsh desktop"),
             MB_OK | MB_ICONERROR,
         );
     }

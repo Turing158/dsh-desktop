@@ -19,6 +19,10 @@ export function readTitleBarStyles() {
 function apply(ctx) {
   ctx.on('webserver/index-inject', table => {
     table.push({ kind: 'style', placement: 'head', text: readTitleBarStyles() })
+    const theme = readFileSync(new URL('../ui-overlay/remote-theme.js', import.meta.url), 'utf8')
+    table.push({ kind: 'script', placement: 'head', text: theme.replace(/<\/script/gi, '<\\/script') })
+    // Runs after upstream's body bootstrap, before the client modules mount.
+    table.push({ kind: 'script', placement: 'body', text: 'window.__DSH_REMOTE_THEME__?.boot()' })
   })
 }
 

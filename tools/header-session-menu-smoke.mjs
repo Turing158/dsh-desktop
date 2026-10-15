@@ -36,7 +36,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 const report = { root, checks: [] }
 function pass(name) { report.checks.push(name); console.log('PASS: ' + name) }
 
-const errors=[]
+const errors=[], launches=[]
 try {
  let url
  for(let i=0;i<300;i++){url=output.match(/dsh web: (http:\/\/[^\s\u001b]+)/)?.[1];if(url)break;if(child.exitCode!==null)throw Error(output.slice(-2000));await sleep(100)}
@@ -44,7 +44,9 @@ try {
  browser=await chromium.launch({channel:'msedge',headless:true})
  page=await browser.newPage({viewport:{width:1280,height:840}})
  page.on('pageerror',e=>errors.push(e.message))
+ page.on('console',message=>{if(message.type()==='error'&&message.text().includes('slot entry crashed'))errors.push(message.text())})
  await page.route('**/open-in-app/apps',route=>route.fulfill({json:{apps:['explorer','vscode']}}))
+ await page.route('**/open-in-app/open',route=>{launches.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
  await page.goto(url)
  await page.waitForFunction(()=>window.__MOTION_SMOKE__?.configForms.get('desktop-appearance').getSnapshot().status==='ready')
  await page.getByRole('button',{name:'继续',exact:true}).waitFor()
@@ -83,6 +85,23 @@ try {
  assert.equal(await dialog.locator('input').inputValue(),'Header A')
  await page.keyboard.press('Escape');await page.waitForTimeout(220)
  pass('rename uses the real sidebar dialog with the current session title')
+ const title=page.locator('[data-dsh-session-title-rename]')
+ await title.waitFor({timeout:5000})
+ assert.equal(await title.textContent(),'Header A')
+ await title.click()
+ await dialog.waitFor()
+ assert.equal(await dialog.locator('input').inputValue(),'Header A')
+ await dialog.locator('input').fill('Header A renamed')
+ await dialog.getByRole('button',{name:'重命名',exact:true}).click()
+ await dialog.waitFor({state:'hidden'})
+ await page.waitForFunction(id=>window.__MOTION_SMOKE__.sessions.list.getSnapshot().byId[id].displayTitle==='Header A renamed',ids[0])
+ assert.equal(await title.textContent(),'Header A renamed')
+ await title.focus();await page.keyboard.press('Enter');await dialog.waitFor()
+ assert.equal(await dialog.locator('input').inputValue(),'Header A renamed')
+ await page.keyboard.press('Escape');await page.waitForTimeout(220)
+ await title.focus();await page.keyboard.press('Space');await dialog.waitFor()
+ await page.keyboard.press('Escape');await page.waitForTimeout(220)
+ pass('click, Enter and Space on the session title use the native rename dialog and update the displayed title')
  await open()
  await menu.getByRole('menuitem',{name:'复制...',exact:true}).click()
  const copyMenu=page.locator('[data-dsh-desktop="copy-submenu"]')
@@ -101,6 +120,35 @@ try {
  assert.equal(await page.getByRole('menuitem',{name:'文件资源管理器',exact:true}).isVisible(),true)
  await close()
  pass('switching sessions updates actions and keeps the open-app submenu available')
+ await title.click();await dialog.waitFor()
+ assert.equal(await dialog.locator('input').inputValue(),'Header B')
+ await page.keyboard.press('Escape');await page.waitForTimeout(220)
+ // Exercise the upstream breadcrumb renderer with a projected child summary.
+ // No subagent or model turn is created by this UI-only fixture.
+ await page.evaluate(ids=>{
+  const c=window.__MOTION_SMOKE__,state=c.sessions.list.getSnapshot()
+  window.__rootHeaderSummary=state.byId[ids[1]]
+  window.__rootHeaderProjection=state.projectionsBySession[ids[0]]
+  c.sessions.list.set({...state,
+   byId:{...state.byId,[ids[1]]:{...state.byId[ids[1]],origin:'subagent',parentId:ids[0]}},
+   projectionsBySession:{...state.projectionsBySession,[ids[0]]:{...state.projectionsBySession[ids[0]],state:'idle',values:{...state.projectionsBySession[ids[0]]?.values,subagentCatalog:[{id:ids[1],createdAt:Date.now(),mode:'one-shot',label:'Header B'}]}}}
+  })
+ },ids)
+ await title.waitFor({state:'detached'})
+ const hierarchy=page.getByRole('navigation',{name:'会话层级',exact:true})
+ await hierarchy.getByText('Header B',{exact:true}).click()
+ assert.equal(await dialog.count(),0)
+ await page.getByRole('tree').waitFor()
+ await page.keyboard.press('Escape')
+ await hierarchy.getByRole('button',{name:'Header A renamed',exact:true}).click()
+ await page.waitForFunction(id=>window.__MOTION_SMOKE__.sessions.list.getSnapshot().byId[id].retainedBy.mainView>0,ids[0])
+ await page.evaluate(ids=>{
+  const c=window.__MOTION_SMOKE__,state=c.sessions.list.getSnapshot()
+  c.sessions.list.set({...state,byId:{...state.byId,[ids[1]]:window.__rootHeaderSummary},projectionsBySession:{...state.projectionsBySession,[ids[0]]:window.__rootHeaderProjection}})
+  c.uiWorkspace.openSession(ids[1]);c.sessions.binding(ids[1]).session.beginSubmission({mode:'queue',text:'Header B',attachments:[]})
+ },ids)
+ await title.waitFor()
+ pass('subagent titles keep their switcher, ancestor titles navigate, and returning to a root session restores rename')
  await page.evaluate(()=>{
   const c=window.__MOTION_SMOKE__,React=window.__MENU_REACT__,p=window.__MENU_PRIMITIVES__
   window.__removeMenuContribution=c.slots.register({name:'sidebar.workspaces.session.menu.item',id:'header-smoke',order:250},function Extra(props){const [,close]=props.useMenuOpenState();return React.createElement(p.MenuItemButton,{onSelect(){window.__menuCalls.push({command:'extra',id:props.sessionId});close(false)}},'扩展会话操作')})
@@ -122,20 +170,47 @@ try {
  const box=await menu.boundingBox();assert.ok(box.x>=0 && box.x+box.width<=390 && box.y+box.height<=844)
  await page.screenshot({path:join(root,'header-menu-mobile.png')});await close()
  pass('keyboard traversal and light/dark/mobile layouts include the complete menu')
+ await page.evaluate(()=>{delete window.__TAURI__})
+ const openTarget=page.locator('[data-slot="conversation.session.header.utilities"] [data-open-target="directory"]')
+ assert.equal(await openTarget.count(),1)
+ for(const width of [390,1280]){
+  await page.setViewportSize({width,height:844})
+  assert.equal(await openTarget.isVisible(),false)
+  await open()
+  assert.equal(await menu.locator('[data-dsh-desktop="link-item"]').count(),0)
+  await menu.getByRole('menuitem',{name:'打开…',exact:true}).click()
+  const apps=page.locator('[data-dsh-desktop="reveal-submenu"]:visible')
+  assert.deepEqual(await apps.getByRole('menuitem').allTextContents(),['文件资源管理器','VS Code'])
+  await page.screenshot({path:join(root,'header-menu-remote-'+width+'.png')})
+  await Promise.all([
+   page.waitForResponse(response=>response.url().endsWith('/open-in-app/open') && response.ok()),
+   apps.getByRole('menuitem',{name:'VS Code',exact:true}).click(),
+  ])
+  assert.deepEqual(launches.at(-1),{app:'vscode',path:root})
+  await close()
+ }
+ pass('remote wide and mobile pages hide the header launcher and launch from Open without a native bridge')
  await page.setViewportSize({width:1280,height:840})
  await page.evaluate(()=>window.__MOTION_SMOKE__.configForms.get('desktop-appearance').set('ui','vanilla'))
  await page.waitForTimeout(250);await trigger.click()
+ assert.equal(await title.count(),0)
  assert.equal(await page.locator('[data-dsh-header-menu-items]').count(),0)
+ assert.equal(await openTarget.isVisible(),true)
  await close()
  await page.evaluate(()=>window.__MOTION_SMOKE__.configForms.get('desktop-appearance').set('ui','desktop'))
  await page.waitForTimeout(250);await open()
+ await title.waitFor()
  assert.equal(await menu.locator('[data-dsh-header-menu-divider]').count(),1)
  await close()
+ await page.evaluate(()=>document.documentElement.removeAttribute('data-dsh-browser'))
+ assert.equal(await openTarget.isVisible(),true)
  assert.equal(await page.locator('[data-slot-error]').count(),0)
  assert.deepEqual(errors,[])
  pass('vanilla round trip restores the original menu and reapplies the shared menu without duplicates or errors')
 } catch(error) {
  report.error=error.stack
+ report.pageErrors=errors
+ if(page)report.header=await page.locator('[data-slot="conversation.session.header"] nav').evaluateAll(nodes=>nodes.map(node=>node.outerHTML)).catch(()=>null)
  if(page)await page.screenshot({path:join(root,'failure.png')}).catch(()=>{})
  throw error
 } finally {

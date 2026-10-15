@@ -1,4 +1,5 @@
 import { t } from '../i18n/api.mjs'
+import { observeChrome } from '../observe-chrome.mjs'
 
 const REGION = '[data-slot="sidebar.workspaces"]'
 const ROW = '[role="treeitem"]:is([data-row-key^="session:"], [class*="_searchResultRow"])'
@@ -49,7 +50,7 @@ export function mountArchiveSessionMenu(React, slots, workspaces) {
 export function mountArchiveSidebar(React, createRoot, Toggle, navigation, onOpen = () => {}) {
   let mount = null, root = null, actions = null, dead = false, queued = false
   const labels = new Map(), rows = new Map(), filterRows = new Map()
-  const clearButton = () => { root?.unmount(); mount?.remove(); actions?.classList.remove('dshArchive__headerActions'); root = mount = actions = null }
+  const clearButton = () => { root?.unmount(); mount?.remove(); root = mount = actions = null }
   const update = () => {
     queued = false
     if (dead) return
@@ -70,7 +71,7 @@ export function mountArchiveSidebar(React, createRoot, Toggle, navigation, onOpe
     if (!mount?.isConnected || actions !== next) {
       clearButton()
       if (next) {
-        actions = next; actions.classList.add('dshArchive__headerActions')
+        actions = next
         mount = document.createElement('span'); mount.className = 'dshArchive__toggleMount'; actions.append(mount)
         root = createRoot(mount); root.render(React.createElement(Toggle))
       }
@@ -104,8 +105,8 @@ export function mountArchiveSidebar(React, createRoot, Toggle, navigation, onOpe
     event.preventDefault(); event.stopImmediatePropagation()
     if (event.type !== 'dblclick' && navigation.open(id)) onOpen()
   }
-  const observer = new MutationObserver(schedule)
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'data-row-key'] })
+  const observer = observeChrome(REGION + ', [role="menu"][class*="_viewOptionsMenu"]', schedule,
+    { characterData: true, attributes: true, attributeFilter: ['class', 'data-row-key'] })
   for (const type of ['click', 'keydown', 'dblclick']) document.addEventListener(type, activate, true)
   const off = navigation.subscribe(schedule)
   update()

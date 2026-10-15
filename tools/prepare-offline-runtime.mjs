@@ -1,6 +1,6 @@
 /** Build-time only. Download/verify a pinned Windows runtime; never run in the app. */
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -10,10 +10,34 @@ import { pipeline } from 'node:stream/promises'
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const cache = join(project, 'src-tauri/target/offline-runtime')
-const recipeFile = join(project, 'tools/offline-runtime.json')
-const lockFile = join(project, 'tools/offline-dsh/package-lock.json')
+// Only Node.js/npm and WebView2 are distributed. DSH is resolved or installed
+// on the user's machine by the normal startup flow.
+const argv = process.argv.slice(2)
+// Both "--arch x86" and "--arch=x86" are accepted: a mistyped flag must not
+// silently build the default architecture instead.
+const flag = name => {
+  const inline = argv.find(value => value.startsWith(name + '='))
+  if (inline) return inline.slice(name.length + 1)
+  const index = argv.indexOf(name)
+  if (index < 0) return null
+  const value = argv[index + 1]
+  if (value === undefined || value.startsWith('--')) throw Error(`${name} needs a value`)
+  return value
+}
+const verifyTarget = flag('--verify') ? resolve(flag('--verify')) : null
+// A payload is verified against the recipe its own manifest was built from, so
+// --verify needs no arch flag. A build run defaults to x64.
+const arch = verifyTarget
+  ? JSON.parse(await readFile(join(verifyTarget, 'runtime.json'), 'utf8')).arch
+  : (flag('--arch') ?? 'x64')
+// The recipes this repository ships; a typo must fail loudly rather than pick a
+// missing file or the wrong architecture.
+if (!['x64', 'x86'].includes(arch)) throw Error(`Unknown architecture: ${arch}`)
+const recipeFile = join(project, arch === 'x64' ? 'tools/offline-runtime.json' : `tools/offline-runtime-${arch}.json`)
 const recipe = JSON.parse(await readFile(recipeFile, 'utf8'))
-const recipeDigest = createHash('sha256').update(await readFile(recipeFile)).update(await readFile(lockFile)).digest('hex')
+if (recipe.arch !== arch) throw Error(`Recipe ${recipeFile} describes ${recipe.arch}, not ${arch}`)
+// Include the payload format so caches containing DSH can never be reused.
+const recipeDigest = createHash('sha256').update('node-webview2-user-npm-v1\n').update(await readFile(recipeFile)).digest('hex')
 const runtime = join(cache, recipeDigest.slice(0, 16))
 const windows = process.env.SystemRoot || 'C:\\Windows'
 const tar = join(windows, 'System32/tar.exe')
@@ -74,16 +98,25 @@ async function download(asset) {
 async function unpack(key, archive, stage) {
   console.log('Extracting ' + key)
   const scratch = await mkdtemp(join(cache, 'extract-'))
-  if (key === 'webview2') {
-    await run(join(windows, 'System32/expand.exe'), ['-F:*', archive, scratch])
-  } else {
-    await run(tar, ['-xf', archive, '-C', scratch])
+  try {
+    if (key === 'webview2') {
+      await run(join(windows, 'System32/expand.exe'), ['-F:*', archive, scratch])
+    } else {
+      await run(tar, ['-xf', archive, '-C', scratch])
+    }
+    const entries = await readdir(scratch, { withFileTypes: true })
+    const nested = entries.length === 1 && entries[0].isDirectory()
+    const source = nested ? join(scratch, entries[0].name) : scratch
+    await rename(source, join(stage, key))
+    return
+  } finally {
+    // Either the payload was moved out of the scratch directory, or the
+    // extraction failed: in both cases what is left here is disposable. Left
+    // behind, one failed download would cost hundreds of megabytes forever.
+    if (await exists(scratch)) {
+      await removeCacheEntry(scratch).catch(error => console.log('Cleanup failed: ' + error.message))
+    }
   }
-  const entries = await readdir(scratch, { withFileTypes: true })
-  const nested = entries.length === 1 && entries[0].isDirectory()
-  const source = nested ? join(scratch, entries[0].name) : scratch
-  await rename(source, join(stage, key))
-  if (nested) await removeCacheEntry(scratch)
 }
 
 function runtimeEnv(root) {
@@ -97,19 +130,44 @@ function runtimeEnv(root) {
   return env
 }
 
-async function verifyPrograms(root) {
+// A recipe that pointed at the other architecture's download would still install
+// and still pass every version check, because a 64-bit host happily launches a
+// 64-bit node.exe; the payload would only fail on the target machine. The PE
+// header is the one piece of evidence the manifest itself cannot fake.
+const PE_MACHINE = { x64: 0x8664, x86: 0x14c }
+async function peMachine(file) {
+  const handle = await open(file, 'r')
+  try {
+    const dos = Buffer.alloc(64)
+    await handle.read(dos, 0, 64, 0)
+    if (dos.toString('ascii', 0, 2) !== 'MZ') throw Error('Not a PE image: ' + file)
+    const header = Buffer.alloc(6)
+    await handle.read(header, 0, 6, dos.readUInt32LE(0x3c))
+    if (header.toString('ascii', 0, 4) !== 'PE\0\0') throw Error('Not a PE image: ' + file)
+    return header.readUInt16LE(4)
+  } finally {
+    await handle.close()
+  }
+}
+
+async function verifyPrograms(root, arch) {
   const env = runtimeEnv(root)
+  const expectedMachine = PE_MACHINE[arch]
+  for (const binary of ['node/node.exe', 'webview2/msedgewebview2.exe']) {
+    const actual = await peMachine(join(root, binary))
+    if (actual !== expectedMachine) {
+      throw Error(`${binary} is a PE machine 0x${actual.toString(16)} binary, not ${arch}; the recipe points at the wrong download`)
+    }
+  }
   const node = join(root, 'node/node.exe')
-  const dsh = join(root, 'dsh/node_modules/@deepseek-ai/dsh/lib/bin.js')
+  const npm = join(root, 'node/node_modules/npm/bin/npm-cli.js')
   const versions = {
     node: await run(node, ['--version'], { env }),
-    dsh: await run(node, [dsh, '--version'], { env }),
+    npm: await run(node, [npm, '--version'], { env }),
   }
-  if (versions.node !== 'v' + recipe.assets.node.version || versions.dsh.replace(/^v/, '') !== recipe.dsh) {
+  if (versions.node !== 'v' + recipe.assets.node.version) {
     throw Error('Runtime version mismatch: ' + JSON.stringify(versions))
   }
-  // This resolves the native ripgrep dependency actually used by DSH, with no system rg.
-  await run(node, ['--input-type=module', '-e', `import {createRequire} from 'node:module'; import {execFileSync} from 'node:child_process'; const req=createRequire(${JSON.stringify(dsh)}); const search=createRequire(req.resolve('@deepseek-ai/dsh-tool-fs-search')); execFileSync(search('@vscode/ripgrep').rgPath,['--version'],{windowsHide:true});`], { env })
   // Verify Microsoft's signed runtime without relying on an installed Edge/WebView2.
   const signature = await run(powershell, ['-NoProfile', '-NonInteractive', '-Command',
     '$s = Get-AuthenticodeSignature -LiteralPath $env:DSH_PACK_WEBVIEW; if ($s.Status -ne "Valid" -or $s.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") { throw "Invalid WebView2 signature" }; (Get-Item -LiteralPath $env:DSH_PACK_WEBVIEW).VersionInfo.FileVersion'],
@@ -138,7 +196,12 @@ async function inventory(root) {
 async function verifyInventory(root) {
   const manifest = JSON.parse(await readFile(join(root, 'runtime.json'), 'utf8'))
   if (manifest.recipeDigest !== recipeDigest) throw Error('Runtime cache recipe mismatch')
+  // Reject unlisted leftovers too: copying an old cache must not reintroduce DSH.
+  for (const entry of await readdir(root)) {
+    if (!['node', 'webview2', 'runtime.json'].includes(entry)) throw Error('Unexpected runtime entry: ' + entry)
+  }
   for (const [name, expected] of Object.entries(manifest.files)) {
+    if (!/^(node|webview2)\//.test(name)) throw Error('Unexpected runtime inventory path: ' + name)
     const file = resolve(root, name)
     if (!file.startsWith(root + sep)) throw Error('Invalid runtime inventory path')
     if ((await stat(file)).size !== expected.bytes || await hash(file) !== expected.sha256) throw Error('Damaged runtime cache: ' + name)
@@ -146,42 +209,55 @@ async function verifyInventory(root) {
   return manifest
 }
 
-if (process.platform !== 'win32' || process.arch !== 'x64') throw Error('Offline packaging currently requires Windows x64 and x64 Node.js')
+if (process.platform !== 'win32') throw Error('Offline packaging requires Windows; an x64 host builds both payloads')
 await mkdir(cache, { recursive: true })
-if (process.argv[2] === '--verify') {
-  const target = resolve(process.argv[3])
-  await verifyInventory(target)
-  await verifyPrograms(target)
-  console.log('Verified offline runtime: ' + target)
+if (verifyTarget) {
+  await verifyInventory(verifyTarget)
+  await verifyPrograms(verifyTarget, arch)
+  console.log('Verified offline runtime: ' + verifyTarget)
 } else {
+  // A failed or interrupted build leaves its staging tree behind; it is always
+  // disposable and can be gigabytes, so reclaim the stale ones up front. Both
+  // staging shapes are swept, and a tree that cannot be removed (a handle from a
+  // concurrent run, an antivirus scan) must never take the new build down.
+  for (const entry of await readdir(cache, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^(stage|extract)-/.test(entry.name)) continue
+    const stale = join(cache, entry.name)
+    if ((await stat(stale)).mtimeMs >= Date.now() - 2 * 60 * 60 * 1000) continue
+    await removeCacheEntry(stale).catch(error => console.log(`Keeping ${entry.name}: ${error.message}`))
+  }
   if (await exists(runtime)) {
     console.log('Verifying cached runtime (no dependency downloads)')
     await verifyInventory(runtime)
-    await verifyPrograms(runtime)
+    await verifyPrograms(runtime, arch)
   } else {
     const stage = await mkdtemp(join(cache, 'stage-'))
-    // Downloads are independent; extraction stays sequential to limit disk pressure.
-    const keys = Object.keys(recipe.assets)
-    const downloads = await Promise.all(keys.map(key => download(recipe.assets[key])))
-    for (let i = 0; i < keys.length; i++) await unpack(keys[i], downloads[i], stage)
-    await cp(join(project, 'tools/offline-dsh'), join(stage, 'dsh'), { recursive: true })
-    console.log('Installing DSH dependencies into the build payload')
-    await run(join(stage, 'node/node.exe'), [join(stage, 'node/node_modules/npm/bin/npm-cli.js'),
-      // Include required peers: a clean DSH install with legacy-peer-deps misses
-      // cordis-plugin-group and cannot even report --version. The lock pins the
-      // full peer graph; force permits upstream's conflicting peer ranges.
-      'ci', '--prefix', join(stage, 'dsh'), '--force', '--omit=dev', '--no-audit', '--no-fund'],
-      { env: runtimeEnv(stage), cwd: stage })
-    const versions = await verifyPrograms(stage)
-    console.log('Recording runtime integrity manifest')
-    const manifest = { schema: 1, platform: 'win32', arch: 'x64', recipeDigest, versions,
-      archives: Object.fromEntries(await Promise.all(keys.map(async (key, i) => [key, { url: recipe.assets[key].url, sha256: await hash(downloads[i]) }]))),
-      files: await inventory(stage) }
-    await writeFile(join(stage, 'runtime.json'), JSON.stringify(manifest, null, 2) + '\n')
-    await rename(stage, runtime)
+    try {
+      // Downloads are independent; extraction stays sequential to limit disk pressure.
+      const keys = ['node', 'webview2']
+      const downloads = await Promise.all(keys.map(key => download(recipe.assets[key])))
+      for (let i = 0; i < keys.length; i++) await unpack(keys[i], downloads[i], stage)
+      // Match the Windows Node installer: ZIP distributions otherwise install
+      // global packages beside node.exe, where the app's DSH lookup cannot find
+      // them. A built-in default still permits the user's own npm configuration.
+      await writeFile(join(stage, 'node/node_modules/npm/npmrc'), 'prefix=${APPDATA}/npm\n')
+      const versions = await verifyPrograms(stage, arch)
+      console.log('Recording runtime integrity manifest')
+      const manifest = { schema: 1, platform: 'win32', arch, recipeDigest, versions,
+        archives: Object.fromEntries(await Promise.all(keys.map(async (key, i) => [key, { url: recipe.assets[key].url, sha256: await hash(downloads[i]) }]))),
+        files: await inventory(stage) }
+      await writeFile(join(stage, 'runtime.json'), JSON.stringify(manifest, null, 2) + '\n')
+      await rename(stage, runtime)
+    } catch (error) {
+      // A half-built payload wastes gigabytes and would confuse the cache check.
+      console.log('Removing the failed staging tree')
+      await removeCacheEntry(stage).catch(cleanup => console.log('Cleanup failed: ' + cleanup.message))
+      throw error
+    }
   }
-  const resultFile = process.argv[2]
+  // The result JSON is the first bare argument; --arch and its value are flags.
+  const resultFile = argv.find((value, index) => !value.startsWith('--') && !(argv[index - 1] ?? '').startsWith('--')) ?? null
   if (!resultFile || !isAbsolute(resultFile)) throw Error('Pass an absolute path for the build result JSON')
-  await writeFile(resultFile, JSON.stringify({ root: runtime, recipeDigest }) + '\n')
+  await writeFile(resultFile, JSON.stringify({ root: runtime, recipeDigest, arch }) + '\n')
   console.log('Offline runtime ready: ' + runtime)
 }

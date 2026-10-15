@@ -45,6 +45,59 @@ function run(crypto, desktop, transport) {
   return { window, attributes }
 }
 
+function viewportRealm({ height = 660, offsetTop = 0, scale = 1, visual = true, desktop = false } = {}) {
+  const styles = new Map(), viewportEvents = new Map(), windowEvents = new Map()
+  const viewport = { height, offsetTop, scale, addEventListener: (name, fn) => viewportEvents.set(name, fn) }
+  const window = { innerHeight: 812, crypto: {}, addEventListener: (name, fn) => windowEvents.set(name, fn) }
+  window.top = window
+  if (visual) window.visualViewport = viewport
+  if (desktop) window.__TAURI__ = { core: { invoke() {} } }
+  const document = { documentElement: { toggleAttribute() {}, style: { setProperty: (key, value) => styles.set(key, value) } } }
+  vm.runInNewContext(source, { window, document })
+  return { window, viewport, styles, viewportEvents, windowEvents,
+    change(values, event = 'resize') { Object.assign(viewport, values); viewportEvents.get(event)?.() },
+    rectangle: () => [styles.get('--dsh-mobile-height'), styles.get('--dsh-mobile-top')],
+  }
+}
+
+test('remote viewport follows keyboard height and Safari panning, then recovers on page restore', () => {
+  const f = viewportRealm()
+  assert.deepEqual(f.rectangle(), ['660px', '0px'])
+  f.change({ height: 320 })
+  assert.deepEqual(f.rectangle(), ['320px', '0px'])
+  f.change({ offsetTop: 145 }, 'scroll')
+  assert.deepEqual(f.rectangle(), ['320px', '145px'])
+  Object.assign(f.viewport, { height: 660, offsetTop: 0 })
+  f.windowEvents.get('pageshow')()
+  assert.deepEqual(f.rectangle(), ['660px', '0px'])
+  f.change({ height: 0, offsetTop: -50 })
+  assert.deepEqual(f.rectangle(), ['812px', '0px'])
+})
+
+test('manual pinch zoom does not shrink the app or chase viewport panning', () => {
+  const f = viewportRealm()
+  f.change({ height: 330, scale: 2, offsetTop: 120 })
+  f.change({ offsetTop: 200 }, 'scroll')
+  assert.deepEqual(f.rectangle(), ['660px', '0px'])
+  f.change({ height: 300, scale: 1, offsetTop: 60 })
+  assert.deepEqual(f.rectangle(), ['300px', '60px'])
+  assert.deepEqual(viewportRealm({ height: 330, scale: 2, offsetTop: 120 }).rectangle(), ['660px', '0px'])
+})
+
+test('viewport falls back without VisualViewport and leaves the desktop shell alone', () => {
+  const f = viewportRealm({ visual: false })
+  assert.deepEqual(f.rectangle(), ['812px', '0px'])
+  f.window.innerHeight = 390
+  f.windowEvents.get('resize')()
+  assert.deepEqual(f.rectangle(), ['390px', '0px'])
+  f.window.innerHeight = 0
+  f.windowEvents.get('resize')()
+  assert.deepEqual(f.rectangle(), ['390px', '0px'])
+  const desktop = viewportRealm({ desktop: true })
+  assert.equal(desktop.styles.size, 0)
+  assert.equal(desktop.viewportEvents.size, 0)
+})
+
 /** Every ECMAScript API the shims cover and the served bundles assume rather than test. */
 const MODERN = [
   'globalThis.Iterator',
@@ -115,25 +168,37 @@ function webRealm({ natives = false } = {}) {
   return Object.assign(handle, { pair, RealmURL })
 }
 
-test('desktop LAN origins create valid unique v4 UUIDs using the native random generator', () => {
+for (const desktop of [true, false]) test(`${desktop ? 'desktop' : 'remote browser'} HTTP origins create valid unique v4 UUIDs using the native random generator`, () => {
   let calls = 0
   const crypto = { getRandomValues(bytes) { calls++; return webcrypto.getRandomValues(bytes) } }
-  const { window, attributes } = run(crypto, true)
+  const { window, attributes } = run(crypto, desktop)
   assert.equal(window.crypto, crypto)
   const values = Array.from({ length: 128 }, () => crypto.randomUUID())
   assert.equal(new Set(values).size, 128)
   assert.equal(calls, 128)
   values.forEach(value => assert.match(value, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/))
-  assert.equal(attributes.get('data-dsh-browser'), false)
+  assert.equal(attributes.get('data-dsh-browser'), !desktop)
+  if (!desktop) assert.equal(window.__DSH_TRANSPORT__, undefined, 'UUID compatibility must not grant Host ownership')
 })
 
-test('native UUID implementations and ordinary-browser crypto remain unchanged', () => {
-  const crypto = { randomUUID: () => 'native' }, method = crypto.randomUUID
-  run(crypto, true); assert.equal(crypto.randomUUID, method)
-  const browserCrypto = { getRandomValues: bytes => webcrypto.getRandomValues(bytes) }
-  const result = run(browserCrypto, false)
-  assert.equal(browserCrypto.randomUUID, undefined)
-  assert.equal(result.attributes.get('data-dsh-browser'), true)
+test('native UUID implementations remain unchanged on desktop and remote pages', () => {
+  for (const desktop of [true, false]) {
+    const crypto = { getRandomValues: bytes => webcrypto.getRandomValues(bytes), randomUUID: () => 'native' }, method = crypto.randomUUID
+    const result = run(crypto, desktop)
+    assert.equal(result.window.crypto, crypto)
+    assert.equal(crypto.randomUUID, method)
+    assert.equal(crypto.randomUUID(), 'native')
+  }
+})
+
+test('UUID repair is idempotent and never substitutes a non-cryptographic random source', () => {
+  const f = realm(), method = f.window.crypto.randomUUID
+  f.rerun()
+  assert.equal(f.window.crypto.randomUUID, method)
+  for (const crypto of [undefined, {}]) {
+    run(crypto, false)
+    assert.equal(crypto?.randomUUID, undefined)
+  }
 })
 
 // DSH reads this ONE flag to decide whether the page may carry the Host

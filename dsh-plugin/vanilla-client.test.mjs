@@ -599,6 +599,38 @@ test('原版 withdraws the override, and desktop re-asserts it', async () => {
 })
 
 
+test('a refused reasoning control preference restores the saved style and reports failure', async () => {
+  const document = createDocument()
+  const { ctx, state } = createContext({ writeResult: false, section: { reasoningControl: 'select' } })
+  loadBundle(document, recordingReact).apply(ctx)
+  const row = () => renderSection(state.sectionComponent, n => n.props?.title === '推理等级控件')
+  const pending = row().props.onChange('slider')
+  assert.equal(row().props.value, 'slider')
+  await pending
+  assert.deepEqual(state.writes, [['reasoningControl', 'slider']])
+  assert.equal(row().props.value, 'select')
+  assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert'))
+})
+
+test('rapid reasoning style changes keep the last choice while saves settle', async () => {
+  const document = createDocument(), commits = []
+  const { ctx, state } = createContext({ write: (field, value) => new Promise(resolve => {
+    commits.push(() => { state.setSection({ [field]: value }); resolve(true) })
+  }) })
+  loadBundle(document, recordingReact).apply(ctx)
+  const row = () => renderSection(state.sectionComponent, n => n.props?.title === '推理等级控件')
+  const first = row().props.onChange('slider'), last = row().props.onChange('select')
+  await flushMicrotasks()
+  assert.equal(commits.length, 1)
+  commits.shift()(); await first
+  assert.equal(row().props.value, 'select')
+  await flushMicrotasks()
+  commits.shift()(); await last
+  assert.deepEqual(state.writes, [['reasoningControl', 'slider'], ['reasoningControl', 'select']])
+  state.setSection({ reasoningControl: 'slider' })
+  assert.equal(row().props.value, 'slider')
+})
+
 test('a refused composer material write restores the saved choice and exposes an error', async () => {
   const document = createDocument()
   const { ctx, state } = createContext({ writeResult: false, section: { composerMaterial: 'frosted' } })

@@ -44,6 +44,8 @@ const TITLEBAR_HOVER_FIELD = 'titlebarHover'
 const COMPOSER_MATERIAL_FIELD = 'composerMaterial'
 const COMPOSER_MATERIALS = ['glass', 'frosted', 'transparent', 'opaque']
 const COMPOSER_TUNING_FIELDS = ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity']
+const REASONING_CONTROL_FIELD = 'reasoningControl'
+const REASONING_CONTROLS = ['select', 'slider']
 
 /**
  * Accepted animation preferences.
@@ -136,7 +138,7 @@ const DEFAULT_TITLEBAR_HOVER = 'on'
  * @returns the value with known preferences, or undefined to reject.
  */
 const BACKGROUND_FIELDS = {
-  backgroundImage: 'string', backgroundTransparency: 'number',
+  backgroundImage: 'string', backgroundTransparency: 'number', backgroundBlur: 'number',
   backgroundTitlebarSurfaceTransparency: 'number', backgroundLeftSurfaceTransparency: 'number',
   backgroundRightSurfaceTransparency: 'number', backgroundChatSurfaceTransparency: 'number',
   backgroundTitlebar: 'boolean', backgroundTitlebarTransparency: 'number',
@@ -185,6 +187,11 @@ function normalize(value) {
   }
 
   const section = { [ANIMATION_FIELD]: animation, [UI_MODE_FIELD]: ui, [TITLEBAR_MODE_FIELD]: titlebar, [TITLEBAR_HOVER_FIELD]: titlebarHover }
+  // Optional for older documents; the client defaults to the selector.
+  if (value[REASONING_CONTROL_FIELD] !== undefined) {
+    if (!REASONING_CONTROLS.includes(value[REASONING_CONTROL_FIELD])) return undefined
+    section[REASONING_CONTROL_FIELD] = value[REASONING_CONTROL_FIELD]
+  }
   // Spread order is irrelevant — the field names are distinct — but the
   // override is added conditionally so a resolved section never carries the
   // key with `undefined`, which `deepEqual` and JSON round-trips both treat
@@ -282,11 +289,14 @@ const SCHEMA_ENVELOPE = {
     62: { type: 'const', meta: { required: true }, value: 'transparent' },
     63: { type: 'const', meta: { required: true }, value: 'opaque' },
     64: { type: 'union', list: [60, 61, 62, 63] },
+    68: { type: 'const', meta: { required: true }, value: 'select' },
+    69: { type: 'const', meta: { required: true }, value: 'slider' },
+    70: { type: 'union', list: [68, 69] },
     // The object schema itself, with all five fields.
     14: {
       type: 'object',
       meta: { default: {} },
-      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64 },
+      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, reasoningControl: 70 },
     },
   },
 }
@@ -391,6 +401,7 @@ SettingsSchema['~standard'] = {
         [TITLEBAR_MODE_FIELD, TITLEBAR_MODES],
         [TITLEBAR_HOVER_FIELD, TITLEBAR_HOVER_PREFERENCES],
         [COMPOSER_MATERIAL_FIELD, COMPOSER_MATERIALS],
+        [REASONING_CONTROL_FIELD, REASONING_CONTROLS],
         [ANIMATION_FIELD, ANIMATION_PREFERENCES],
       ]
       const failed = fieldValues.find(

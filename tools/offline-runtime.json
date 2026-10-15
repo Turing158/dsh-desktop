@@ -2,7 +2,6 @@
   "schema": 1,
   "platform": "win32",
   "arch": "x64",
-  "dsh": "0.2.0-rc.2",
   "assets": {
     "node": {
       "version": "24.21.0",

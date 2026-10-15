@@ -59,6 +59,9 @@ html:not([data-dsh-ui='vanilla']) body {
   /* Interactive hover/active washes pick up the accent instead of neutral grey. */
   --dsw-alias-interactive-bg-hover: color-mix(in srgb, #4176e6 8%, transparent);
   --dsw-alias-interactive-bg-active: color-mix(in srgb, #4176e6 14%, transparent);
+  /* Notices use the theme's neutral ink, independently of the blue link accent. */
+  --dsw-alias-turn-trigger-bg: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+  --dsw-alias-turn-trigger-bg-hover: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
 }
 
 /* Dark palette: the same accent, lightened for contrast on dark surfaces. */
@@ -68,6 +71,25 @@ html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] {
   --dsw-alias-button-primary-fill: #4176e6;
   --dsw-alias-interactive-bg-hover: color-mix(in srgb, #5686fe 14%, transparent);
   --dsw-alias-interactive-bg-active: color-mix(in srgb, #5686fe 22%, transparent);
+  --dsw-alias-turn-trigger-bg: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent);
+  --dsw-alias-turn-trigger-bg-hover: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+}
+
+/* All trigger kinds (including future ones) share this anchor. Their title,
+   icon, time and chevron inherit neutral ink; expanded content keeps its palette. */
+html:not([data-dsh-ui='vanilla']) body [data-turn-trigger] {
+  border-color: var(--dsw-alias-border-l2);
+}
+html:not([data-dsh-ui='vanilla']) body [data-turn-trigger] > button {
+  color: var(--dsw-alias-label-secondary);
+}
+html:not([data-dsh-ui='vanilla']) body [data-turn-trigger] > button:is(:hover, :focus-visible) {
+  color: var(--dsw-alias-label-primary);
+}
+html:not([data-dsh-ui='vanilla']) body [data-turn-trigger] > button:focus-visible {
+  outline: 2px solid var(--dsw-alias-label-secondary);
+  outline-offset: -2px;
+  border-radius: inherit;
 }
 
 /* The selected sidebar row uses an opaque neutral fill; tint it with the accent
@@ -215,6 +237,57 @@ html:not([data-dsh-ui='vanilla']) body :where([data-document-zoom-frame]:has([da
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   transition: opacity 180ms ease, transform 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Round the expanded reasoning header and soften only its sticky background. */
+html:not([data-dsh-ui='vanilla']) body [data-variant='think'][data-expanded] > [data-open] > [data-disclosure-row] {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 80%, transparent);
+}
+
+/* Tool result surfaces reveal the conversation background without fading text
+   or icons. Call anchors also cover custom tool views without data-tool. Keep
+   the shared Markdown palette opaque: prose fences use those same tokens. */
+html:not([data-dsh-ui='vanilla']) body [data-tool='ask_user_question'] [class*='_bodyWrap'] > [class*='_card'] {
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 80%, transparent);
+}
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) :is(
+  [class*='_ioCard'],
+  [class*='_detailsBodyWrap'] > [class*='_root'],
+  [data-terminal],
+  [data-read],
+  [data-diff],
+  [data-search],
+  [data-web],
+  .md-code-block[class*='_codeBody']
+) {
+  background: color-mix(in srgb, var(--dsw-alias-markdown-code-block) 80%, transparent);
+}
+/* Paint each card once; opaque headers or nested code would hide the backdrop.
+   Only tool-owned code is selected, including code fields in structured
+   results. Markdown fences inside a result's prose keep their original fill. */
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) :is([data-read], [data-diff]) > [data-code-block-banner],
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) [data-search] > [class*='_header'] {
+  background: transparent;
+}
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) :is(
+  .md-code-block[class*='_codeBody'],
+  [class*='_detailsBodyWrap'] > [class*='_root'] [class*='_item'] > .md-code-block[class*='_code']
+) {
+  --dsl-code-block-background: transparent;
+  --dsl-code-block-banner-background-color: transparent;
+}
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) :is(
+  .md-code-block[class*='_codeBody'],
+  [class*='_detailsBodyWrap'] > [class*='_root'] [class*='_item'] > .md-code-block[class*='_code']
+) > [class*='_bannerWrap'] {
+  background: transparent;
+}
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) button[class*='_inspectButton'] {
+  background: color-mix(in srgb, var(--dsw-alias-button-floating-fill) 70%, transparent);
+}
+html:not([data-dsh-ui='vanilla']) body :is([data-tool], [data-chat-call-id]) button[class*='_inspectButton']:hover {
+  background: color-mix(in srgb, var(--dsw-alias-button-floating-hover) 85%, transparent);
 }
 
 /* Compact code headers keep their 24px copy controls vertically centered. */
@@ -1878,6 +1951,264 @@ html:not([data-dsh-ui='vanilla']) body .dshAppearance__selector:focus-visible {
   outline-offset: 2px;
 }
 
+/* The goal keeps its compact summary until the user opens its full text. */
+html:not([data-dsh-ui='vanilla']) body [data-dsh-goal-disclosure] {
+  --dsh-goal-motion: 180ms;
+  min-block-size: 36px;
+  block-size: 36px;
+  overflow: clip;
+}
+html:not([data-dsh-ui='vanilla']) body [data-dsh-goal-overflow='true']:not([data-dsh-goal-expanded='true']) > :is([class*='_label'], [class*='_objective']) {
+  cursor: pointer;
+}
+html:not([data-dsh-ui='vanilla']) body .dshGoal__toggle {
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+html:not([data-dsh-ui='vanilla']) body .dshGoal__toggle[hidden] { display: none; }
+html:not([data-dsh-ui='vanilla']) body .dshGoal__toggle:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+html:not([data-dsh-ui='vanilla']) body .dshGoal__toggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshGoal__toggle svg { transition: transform var(--dsh-goal-motion) ease-out; }
+html:not([data-dsh-ui='vanilla']) body .dshGoal__toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+html:not([data-dsh-ui='vanilla']) body [data-dsh-goal-expanded='true'] {
+  block-size: auto;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+html:not([data-dsh-ui='vanilla']) body [data-dsh-goal-expanded='true'] > [class*='_objective'] {
+  order: 1;
+  flex: 1 0 100%;
+  box-sizing: border-box;
+  max-block-size: min(40vh, 320px);
+  margin: 2px 0 6px;
+  padding-right: 7px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  overscroll-behavior: contain;
+  text-overflow: clip;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [data-dsh-goal-disclosure] { --dsh-goal-motion: 0ms; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [data-dsh-goal-disclosure] { --dsh-goal-motion: 0ms; }
+}
+
+/* Inline reasoning panel in the model menu. Pill track, small stops and a
+   floating thumb follow Codex's power slider; color comes from the theme. */
+html:not([data-dsh-ui='vanilla']) body [data-menu-material][data-dsh-reasoning-slider] {
+  box-sizing: border-box;
+  width: min(250px, calc(100vw - 24px)) !important;
+  min-width: min(250px, calc(100vw - 24px)) !important;
+  max-width: calc(100vw - 24px) !important;
+}
+html:not([data-dsh-ui='vanilla']) body [data-dsh-reasoning-row] { display: none; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning {
+  --dsh-reasoning-motion: 180ms;
+  --dsh-reasoning-travel-duration: 200ms;
+  --dsh-reasoning-easing: cubic-bezier(.2, .7, .2, 1);
+  min-width: 0;
+  margin-top: 2px;
+  padding: 8px 8px 6px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 20px;
+  margin-bottom: 2px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__title { flex: 1; font-weight: 500; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__value {
+  min-width: 4.5em;
+  max-width: 50%;
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 500;
+  line-height: 20px;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__valueText { display: block; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__valueText[data-changing] {
+  animation: dsh-reasoning-value-in var(--dsh-reasoning-motion) var(--dsh-reasoning-easing);
+}
+@keyframes dsh-reasoning-value-in {
+  from { opacity: 0; transform: translateY(var(--dsh-reasoning-value-offset, 6px)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__range { position: relative; height: 36px; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__track {
+  position: absolute;
+  inset: 50% 0 auto;
+  transform: translateY(-50%);
+  height: 20px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+  box-shadow: inset 0 0 0 .5px var(--dsw-alias-border-l2);
+  pointer-events: none;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__track::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(calc(var(--dsh-reasoning-progress) - 100%));
+  border-radius: inherit;
+  background: var(--dsw-alias-brand-primary);
+  transition: transform var(--dsh-reasoning-travel-duration) var(--dsh-reasoning-easing);
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__tick {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: .65;
+  transition: background-color var(--dsh-reasoning-motion) ease-out, opacity var(--dsh-reasoning-motion) ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__tick[data-filled='true'] { background: #fff; opacity: .6; }
+/* Keep the native input for pointer/keyboard semantics; animate its visual
+   thumb on a rail whose travel matches the native thumb's 28px inset. */
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__thumb {
+  position: absolute;
+  inset: 50% 14px auto;
+  height: 0;
+  pointer-events: none;
+  transform: translateX(calc(var(--dsh-reasoning-position) * 100%));
+  transition: transform var(--dsh-reasoning-travel-duration) var(--dsh-reasoning-easing);
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__thumb::before {
+  content: '';
+  display: block;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: .5px solid var(--dsw-alias-border-l4);
+  background: #fff;
+  box-shadow: 0 1px 4px #0002;
+  transform: translate(-50%, -50%);
+  transition: transform var(--dsh-reasoning-motion) ease-out, box-shadow var(--dsh-reasoning-motion) ease-out, background-color var(--dsh-reasoning-motion) ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range'] {
+  position: relative;
+  display: block;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range']::-webkit-slider-runnable-track { height: 20px; background: transparent; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range']::-moz-range-track { height: 20px; background: transparent; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -4px;
+  opacity: 0;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range']::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  opacity: 0;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range']:focus-visible { outline: none; }
+@media (hover: hover) {
+  html:not([data-dsh-ui='vanilla']) body .dshReasoning:not([data-dragging]) input:hover:not(:disabled):not([aria-disabled='true']) ~ .dshReasoning__thumb::before {
+    transform: translate(-50%, -50%) scale(1.12);
+    background: color-mix(in srgb, #fff 94%, var(--dsw-alias-brand-primary));
+    box-shadow: 0 3px 8px #0003, 0 0 0 4px color-mix(in srgb, var(--dsw-alias-brand-primary) 16%, transparent);
+  }
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input:focus-visible ~ .dshReasoning__thumb::before {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 3px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__option:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 3px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input:disabled { opacity: .5; cursor: not-allowed; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input:disabled ~ .dshReasoning__thumb { opacity: .5; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning input[aria-disabled='true']:not(:disabled) { cursor: progress; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning[data-dragging] { --dsh-reasoning-travel-duration: 80ms; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning[data-dragging] input { cursor: grabbing; }
+html:not([data-dsh-ui='vanilla']) body .dshReasoning[data-dragging] .dshReasoning__thumb::before {
+  transform: translate(-50%, -50%) scale(1.06);
+  box-shadow: 0 2px 5px #0003, 0 0 0 5px color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent);
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  white-space: nowrap;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__labels > span {
+  transition: color var(--dsh-reasoning-motion) ease-out, transform var(--dsh-reasoning-motion) ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__labels [data-selected='true'] {
+  color: var(--dsw-alias-label-primary);
+  transform: translateY(-1px);
+}
+html:not([data-dsh-ui='vanilla']) body .dshReasoning__error {
+  margin: 12px 0 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media (pointer: coarse) {
+  html:not([data-dsh-ui='vanilla']) body .dshReasoning__range,
+  html:not([data-dsh-ui='vanilla']) body .dshReasoning input[type='range'] { height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body .dshReasoning {
+    --dsh-reasoning-motion: 0ms;
+    --dsh-reasoning-travel-duration: 0ms;
+  }
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body .dshReasoning {
+  --dsh-reasoning-motion: 0ms;
+  --dsh-reasoning-travel-duration: 0ms;
+}
+
 /* 鈹€鈹€ 8d. the terminal surface 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
  * The right column's terminal tab (`dsh-plugin/sidebar-terminal/client.js`).
  *
@@ -2420,6 +2751,46 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_cente
   background-repeat: no-repeat;
   background-attachment: fixed;
 }
+/* Sample each region's own opaque picture below its content. A negative layer
+ * inside an isolated stack keeps text sharp and never intercepts input. The
+ * photograph remains a fixed background, including animated GIFs. At zero blur
+ * no extra layer or stacking context is created. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
+  [data-dsh-background-titlebar] .dshTb,
+  [data-dsh-background-left] [class*='_sidebarCol'],
+  [data-dsh-background-chat] [class*='_centerCol'],
+  [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
+  [data-dsh-background-right] .dshTerminalDock[data-dsh-terminal-dock],
+  [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
+) {
+  isolation: isolate;
+}
+/* Keep the existing fixed/absolute positioning of the title bar and dock. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
+  [data-dsh-background-left] [class*='_sidebarCol'],
+  [data-dsh-background-chat] [class*='_centerCol'],
+  [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
+  [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
+) {
+  position: relative;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
+  [data-dsh-background-titlebar] .dshTb,
+  [data-dsh-background-left] [class*='_sidebarCol'],
+  [data-dsh-background-chat] [class*='_centerCol'],
+  [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
+  [data-dsh-background-right] .dshTerminalDock[data-dsh-terminal-dock],
+  [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
+)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  -webkit-backdrop-filter: blur(var(--dsh-background-blur, 0px));
+  backdrop-filter: blur(var(--dsh-background-blur, 0px));
+}
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sidebarCol'] [data-slot='sidebar'] > [class*='_root'],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] [class*='_root']:has(> [data-conversation-region]),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [data-dsh-archive-panel],
@@ -2877,6 +3248,20 @@ html body #root [data-dsh-chrome='layer'] {
  * non-vacuous by hiding the mask, which did change the bytes (40676 -> 21832). */
 html body [data-dsh-chrome='layer']:has(> [style*='position: fixed']) {
   transform: translateZ(0);
+}
+
+/* Attachment lightboxes portal to body. Reserve the title bar before the layer
+   is tagged, and subtract it from the image's viewport-based height as well as
+   the native 40px padding on each side. Current viewers style the close button
+   through a CSS module, so anchor it to the backdrop without a transform. */
+html body [role='dialog'][aria-modal='true']:has(> img) {
+  top: var(--dsh-desktop-titlebar-height, 44px);
+}
+html body [role='dialog'][aria-modal='true'] > img {
+  max-height: max(0px, calc(100dvh - var(--dsh-desktop-titlebar-height, 44px) - 80px));
+}
+html body [role='dialog'][aria-modal='true']:has(> img) > button {
+  position: absolute;
 }
 
 /* 鈹€鈹€ menus are the top layer, above the bar 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -3491,6 +3876,16 @@ html body [role='presentation']:has(> [data-shortcut-modal='settings']) {
 }
 html body [data-shortcut-modal='settings'] {
   max-height: calc(100dvh - var(--dsh-desktop-titlebar-height, 44px) - 4px);
+}
+html body [data-dsh-session-title-rename] {
+  cursor: pointer;
+}
+html body [data-dsh-session-title-rename]:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+html body [data-dsh-session-title-rename]:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
 }
 /* dsh-titlebar:end */
 

@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Start the DeepseekHarness desktop app in development mode, throttled so a
+    Start the dsh desktop app in development mode, throttled so a
     rebuild does not saturate the machine.
 
 .DESCRIPTION
@@ -158,7 +158,7 @@ foreach ($tool in @('node', 'cargo')) {
 # ── report what we are about to do ──────────────────────────────────────────
 $profileName = if ($Release) { 'release' } else { 'debug' }
 Write-Host ''
-Write-Host '  DeepseekHarness 开发服务器' -ForegroundColor Cyan
+Write-Host '  dsh desktop 开发服务器' -ForegroundColor Cyan
 Write-Host "  项目        $root"
 Write-Host "  编译并发    $Jobs 个 rustc（共 $([Environment]::ProcessorCount) 逻辑核心）"
 if ($lowered) {

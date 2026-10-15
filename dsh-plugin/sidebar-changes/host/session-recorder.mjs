@@ -4,8 +4,12 @@ import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { rootPath, relative, readEndpoint, absent, hash, fileIdentity } from './paths.mjs'
 import { LIMITS } from '../shared/change-model.mjs'
+import { createScanPool } from './scan-pool.mjs'
 
 const STRUCTURED = new Set(['write', 'edit', 'str_replace_editor'])
+// These built-in tools only inspect files. isConcurrencySafe is NOT a read-only
+// contract: arbitrary tools and shell commands still need before/after scans.
+const READ_ONLY = new Set(['read', 'read_image', 'glob', 'grep'])
 export const DEFAULT_EXCLUDES = ['.git']
 export async function scan(root, excludes = DEFAULT_EXCLUDES, options = {}) {
   const files = new Map(), gaps = [], excluded = [], directories = [root]
@@ -25,7 +29,7 @@ export async function scan(root, excludes = DEFAULT_EXCLUDES, options = {}) {
       if (files.size >= maxFiles || Date.now() > deadline) { gaps.push({ reason: 'scan', path: relative(root, directory) || '.', detail: '扫描时间或文件预算耗尽' }); break }
       if (child.isDirectory()) { directories.push(file); continue }
       try {
-        const value = await readEndpoint(root, file, { maxBytes: Math.max(0, maxBytes - bytes) })
+        const value = await readEndpoint(root, file, { maxBytes: Math.max(0, maxBytes - bytes), previous: options.previous?.files.get(name) })
         files.set(name, value); bytes += Buffer.byteLength(value.text || '')
         if (value.reason === 'scan-content') gaps.push({ reason: 'scan-content', path: name })
       } catch { gaps.push({ reason: 'scan', path: name, detail: '无法读取文件快照' }) }
@@ -64,9 +68,11 @@ export const persistentSessionId = agent => agent?.session?.id || agent?.session
 export function installRecorder(ctx, store, options = {}) {
   const executions = new Map(), nesting = new AsyncLocalStorage(), clockId = randomUUID()
   const tails = new Set()
+  const retainScan = createScanPool((root, previous) => scan(root, options.excludes, { ...options.scanLimits, previous }))
   const now = () => performance.timeOrigin + performance.now()
   const safe = async action => { try { return await action() } catch { return undefined } }
   ctx.on('tools/execute', async (exec, next) => {
+    if (READ_ONLY.has(exec.name)) return next()
     const sessionId = persistentSessionId(exec.agent)
     if (!sessionId) return next()
     const root = await safe(() => rootPath(exec.agent.session?.header?.cwd))
@@ -90,7 +96,8 @@ export function installRecorder(ctx, store, options = {}) {
     if (STRUCTURED.has(exec.name) && typeof file === 'string' && relative(root, file)) previous = await safe(() => readEndpoint(root, file))
     // Unknown tools can invoke arbitrary scripts/MCP writes, so observe them too.
     const needsScan = !STRUCTURED.has(exec.name)
-    const beforeScan = needsScan ? await safe(() => scan(root, options.excludes, options.scanLimits)) : null
+    const scanner = needsScan ? retainScan(root) : null
+    const beforeScan = scanner ? await safe(() => scanner.snapshot()) : null
     let result, threw = true
     try { result = await nesting.run([...ancestors, token], next); threw = false; return result }
     finally {
@@ -99,7 +106,7 @@ export function installRecorder(ctx, store, options = {}) {
         const authoritative = structuredOperation(exec, result?.value, root)
         if (authoritative) operations.push(authoritative)
         else if (beforeScan) {
-          finalScan = await safe(() => scan(root, options.excludes, options.scanLimits))
+          finalScan = await safe(() => scanner.snapshot())
           if (!finalScan) gaps.push(...beforeScan.gaps, { reason: 'scan', path: '.', detail: '执行后快照失败' })
           else {
             ;({ operations, gaps } = await compareScans(root, beforeScan, finalScan))
@@ -132,6 +139,7 @@ export function installRecorder(ctx, store, options = {}) {
         return true
       })
       if (!captured) for (const owner of owners) await safe(() => store.finish(owner, token, [], 'storage'))
+      scanner?.release()
     }
   })
   ctx.on('tools/result', (exec, result) => {
@@ -143,13 +151,16 @@ export function installRecorder(ctx, store, options = {}) {
   async function followJobs({ jobs, ids, owners, sessionId, root, baseline, callId }) {
     let before = baseline, startedAt = now(), token = randomUUID(), running, stopped = false, rerun = false
     for (const owner of owners) await store.begin(owner, token, callId)
+    const scanner = retainScan(root)
+    let timer
     const activeJobs = () => ids.map(id => { try { return jobs.get(id, sessionId) } catch { return null } })
     const tick = () => {
       if (stopped) return Promise.resolve()
       if (running) { rerun = true; return running }
+      clearTimeout(timer)
       running = (async () => {
         const state = activeJobs(), done = state.every(job => !job || !['running', 'stopping'].includes(job.status))
-        const after = await scan(root, options.excludes, options.scanLimits)
+        const after = await scanner.snapshot()
         const { operations, gaps } = await compareScans(root, before, after), endedAt = now()
         for (const owner of owners) await store.finish(owner, token, await Promise.all(operations.map(async (op, sequence) => {
           const absolutePath = path.resolve(root, op.path)
@@ -162,12 +173,17 @@ export function installRecorder(ctx, store, options = {}) {
         else { token = randomUUID(); for (const owner of owners) await store.begin(owner, token, callId) }
       })().catch(async () => {
         stop(); for (const owner of owners) await safe(() => store.finish(owner, token, [], 'storage'))
-      }).finally(() => { running = null; if (rerun && !stopped) { rerun = false; void tick() } })
+      }).finally(() => {
+        running = null
+        if (stopped) return
+        if (rerun) { rerun = false; void tick() }
+        else { timer = setTimeout(tick, options.jobPollMs ?? 1000); timer.unref?.() }
+      })
       return running
     }
     const off = jobs.events?.subscribe({ owner: sessionId }, event => { if (event.type === 'settled' && ids.includes(event.job.id)) void tick() })
-    const timer = setInterval(tick, options.jobPollMs ?? 1000); timer.unref?.()
-    const stop = () => { stopped = true; clearInterval(timer); off?.(); tails.delete(dispose) }
+    timer = setTimeout(tick, options.jobPollMs ?? 1000); timer.unref?.()
+    const stop = () => { stopped = true; clearTimeout(timer); off?.(); scanner.release(); tails.delete(dispose) }
     const dispose = async () => {
       stop(); await running
       for (const owner of owners) await safe(() => store.finish(owner, token, [], 'interrupted'))

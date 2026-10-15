@@ -1,18 +1,21 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
-  "description": "DeepseekHarness desktop shell (Rust + WebView2) with Windows notifications",
+  "description": "dsh desktop shell (Rust + WebView2) with Windows notifications",
   "scripts": {
     "tauri": "tauri",
     "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File dev.ps1",
     "dev:fast": "tauri dev",
     "dev:quiet": "powershell -NoProfile -ExecutionPolicy Bypass -File dev.ps1 -Jobs 1 -Priority Idle -Quiet",
     "build": "tauri build",
-    "test:plugin": "node --test dsh-plugin/desktop-notify.test.mjs dsh-plugin/cordis-ordering.test.mjs dsh-plugin/acl-coverage.test.mjs dsh-plugin/vanilla-mode.test.mjs dsh-plugin/vanilla-behaviour.test.mjs dsh-plugin/vanilla-client.test.mjs dsh-plugin/titlebar-boot.test.mjs dsh-plugin/titlebar-session.test.mjs dsh-plugin/dsh-update.test.mjs dsh-plugin/title-bar-remote.test.mjs dsh-plugin/remote-quick-actions.test.mjs dsh-plugin/ui-state.test.mjs dsh-plugin/sidebar-terminal.test.mjs dsh-plugin/sidebar-terminal-render.test.mjs dsh-plugin/sidebar-terminal-interactions.test.mjs dsh-plugin/sidebar-terminal-registry.test.mjs dsh-plugin/terminal-dock.test.mjs dsh-plugin/upstream-dock.test.mjs dsh-plugin/upstream-interactions.test.mjs dsh-plugin/terminal-preferences.test.mjs dsh-plugin/terminal-view-protocol.test.mjs dsh-plugin/terminal-selection.test.mjs dsh-plugin/terminal-remote-state.test.mjs dsh-plugin/terminal-mobile-input.test.mjs dsh-plugin/remote-control.test.mjs dsh-plugin/connection-note.test.mjs dsh-plugin/browser-compat.test.mjs dsh-plugin/engine-shim-injection.test.mjs dsh-plugin/boot-page.test.mjs dsh-plugin/settings-compat.test.mjs dsh-plugin/llm-compat.test.mjs dsh-plugin/session-export.test.mjs dsh-plugin/sidebar-changes.test.mjs dsh-plugin/sidebar-git-actions.test.mjs dsh-plugin/sidebar-session.test.mjs dsh-plugin/plugin-control.test.mjs dsh-plugin/profile-plugin-control.test.mjs dsh-plugin/file-editor.test.mjs dsh-plugin/i18n.test.mjs dsh-plugin/directory-picker.test.mjs",
+    "test:plugin": "node --test dsh-plugin/desktop-notify.test.mjs dsh-plugin/session-links.test.mjs dsh-plugin/cordis-ordering.test.mjs dsh-plugin/acl-coverage.test.mjs dsh-plugin/vanilla-mode.test.mjs dsh-plugin/vanilla-behaviour.test.mjs dsh-plugin/vanilla-client.test.mjs dsh-plugin/titlebar-boot.test.mjs dsh-plugin/titlebar-session.test.mjs dsh-plugin/dsh-update.test.mjs dsh-plugin/title-bar-remote.test.mjs dsh-plugin/remote-quick-actions.test.mjs dsh-plugin/ui-state.test.mjs dsh-plugin/draft-attachments.test.mjs dsh-plugin/attachment-images.test.mjs dsh-plugin/sidebar-terminal.test.mjs dsh-plugin/sidebar-terminal-render.test.mjs dsh-plugin/sidebar-terminal-interactions.test.mjs dsh-plugin/sidebar-terminal-registry.test.mjs dsh-plugin/terminal-dock.test.mjs dsh-plugin/upstream-dock.test.mjs dsh-plugin/upstream-interactions.test.mjs dsh-plugin/terminal-preferences.test.mjs dsh-plugin/terminal-view-protocol.test.mjs dsh-plugin/terminal-selection.test.mjs dsh-plugin/terminal-remote-state.test.mjs dsh-plugin/terminal-mobile-input.test.mjs dsh-plugin/remote-control.test.mjs dsh-plugin/remote-theme.test.mjs dsh-plugin/connection-note.test.mjs dsh-plugin/browser-compat.test.mjs dsh-plugin/engine-shim-injection.test.mjs dsh-plugin/boot-page.test.mjs dsh-plugin/settings-compat.test.mjs dsh-plugin/llm-compat.test.mjs dsh-plugin/session-export.test.mjs dsh-plugin/sidebar-changes.test.mjs dsh-plugin/sidebar-git-actions.test.mjs dsh-plugin/sidebar-session.test.mjs dsh-plugin/plugin-control.test.mjs dsh-plugin/profile-plugin-control.test.mjs dsh-plugin/file-editor.test.mjs dsh-plugin/i18n.test.mjs dsh-plugin/directory-picker.test.mjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:conversation-perf": "node tools/conversation-performance-smoke.mjs",
+    "test:long-task-perf": "node tools/long-task-performance-smoke.mjs",
+    "test:recorder-perf": "node --test dsh-plugin/recorder-performance.test.mjs",
     "check:menus": "node tools/check-menus.mjs",
-    "test": "npm run test:plugin && npm run test:rust",
+    "test": "npm run test:plugin && npm run test:recorder-perf && npm run test:rust",
     "build:terminal": "node tools/build-terminal.mjs"
   },
   "devDependencies": {

@@ -38,6 +38,7 @@ pub fn initialize(app: &AppHandle) {
             }
         }
         let state = app.state::<crate::state::Shared>().inner().clone();
+        let activation_app = app.clone();
         app.manage(NativeNotifications(windows::NotificationService::start(
             app.config().identifier.clone(),
             move |event| match event {
@@ -48,7 +49,13 @@ pub fn initialize(app: &AppHandle) {
                     }
                 }
                 windows::DeliveryEvent::Dismissed => crate::debug_log("[notify/dismissed]"),
-                windows::DeliveryEvent::Activated => crate::debug_log("[notify/activated]"),
+                windows::DeliveryEvent::Activated => {
+                    crate::debug_log("[notify/activated]");
+                    // Session toasts use protocol activation, including from
+                    // Action Center after their in-process handlers expire.
+                    // A toast without a session still brings the interface up.
+                    crate::tray::show_main_window(&activation_app);
+                }
             },
         )));
     }
@@ -66,11 +73,20 @@ pub trait Notifier: Send + Sync {
 /// The production notifier, using WinRT on Windows.
 pub struct ToastNotifier {
     app: AppHandle,
+    session_id: Option<String>,
 }
 
 impl ToastNotifier {
     pub fn new(app: AppHandle) -> Self {
-        Self { app }
+        Self {
+            app,
+            session_id: None,
+        }
+    }
+
+    pub fn with_session(mut self, session_id: String) -> Self {
+        self.session_id = Some(session_id);
+        self
     }
 }
 
@@ -93,11 +109,11 @@ impl Notifier for ToastNotifier {
         #[cfg(windows)]
         {
             let notifications = self.app.state::<NativeNotifications>();
-            notifications
-                .0
-                .as_ref()
-                .map_err(Clone::clone)?
-                .submit(&title, &body)
+            notifications.0.as_ref().map_err(Clone::clone)?.submit(
+                &title,
+                &body,
+                self.session_id.as_deref(),
+            )
         }
         #[cfg(not(windows))]
         {

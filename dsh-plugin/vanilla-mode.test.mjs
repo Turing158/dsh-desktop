@@ -299,6 +299,12 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   assert.throws(() => rehydrated({ composerMaterial: 'unknown' }), /composerMaterial/)
   assert.equal(module.normalize({ composerMaterial: 'unknown' }), undefined)
   assert.deepEqual(module.SettingsSchema['~standard'].validate({ composerMaterial: 'unknown' }).issues[0].path, ['composerMaterial'])
+  for (const reasoningControl of ['select', 'slider']) {
+    assert.deepEqual(rehydrated({ reasoningControl }), module.normalize({ reasoningControl }))
+  }
+  assert.throws(() => rehydrated({ reasoningControl: 'high' }), /reasoningControl/)
+  assert.equal(module.normalize({ reasoningControl: 'high' }), undefined)
+  assert.deepEqual(module.SettingsSchema['~standard'].validate({ reasoningControl: 'high' }).issues[0].path, ['reasoningControl'])
   for (const field of ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity']) {
     for (const level of [0, 25.5, 50, 100]) {
       const value = { [field]: level }
@@ -319,11 +325,12 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   const fields = Object.keys(module.SCHEMA_ENVELOPE.refs[module.SCHEMA_ENVELOPE.uid].dict)
   assert.deepEqual(fields.sort(), [
     'animation',
-    'backgroundChat', 'backgroundChatSurfaceTransparency', 'backgroundChatTransparency', 'backgroundImage',
+    'backgroundBlur', 'backgroundChat', 'backgroundChatSurfaceTransparency', 'backgroundChatTransparency', 'backgroundImage',
     'backgroundLeft', 'backgroundLeftSurfaceTransparency', 'backgroundLeftTransparency', 'backgroundRight', 'backgroundRightSurfaceTransparency', 'backgroundRightTransparency',
     'backgroundTitlebar', 'backgroundTitlebarSurfaceTransparency', 'backgroundTitlebarTransparency', 'backgroundTransparency',
     'composerFrostedIntensity', 'composerGlassIntensity', 'composerMaterial', 'composerTransparency',
     'fontSizeOverride',
+    'reasoningControl',
     'titlebar',
     'titlebarHover',
     'ui',
@@ -1238,7 +1245,7 @@ test('the layer offset is tagged as chrome, so it survives 原版', () => {
   const observerAt = dom.indexOf('function watchRelocatedRows')
   const observerEnd = dom.indexOf('function decorateFrame')
   const observer = dom.slice(observerAt, observerEnd > observerAt ? observerEnd : observerAt + 2000)
-  const tagAt = observer.indexOf('markFullSurfaceLayers(false)')
+  const tagAt = observer.indexOf('markFullSurfaceLayers(false, records)')
   const guardAt = observer.indexOf('isVanilla()')
   assert.ok(tagAt > 0, 'the observer must tag full-surface layers')
   assert.ok(

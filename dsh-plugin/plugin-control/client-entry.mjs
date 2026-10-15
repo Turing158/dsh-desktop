@@ -1,4 +1,5 @@
 import { t, useLocale } from '../i18n/api.mjs'
+import { observeChrome } from '../observe-chrome.mjs'
 import { contribution } from './protocol.mjs'
 import styles from './style.mjs'
 import inventoryStyles from './inventory-style.mjs'
@@ -55,8 +56,7 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/plugin-control', factory(requir
         }
       }
     }
-    const observer = new MutationObserver(update)
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+    const observer = observeChrome('[data-shortcut-modal="settings"]', update, { characterData: true })
     update()
     return () => { observer.disconnect(); for (const [node, text] of changed) if (node.textContent.trim() === t('插件')) node.textContent = text }
   }

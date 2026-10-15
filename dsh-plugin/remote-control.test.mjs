@@ -76,7 +76,7 @@ test('functional remote and mobile resources ship in the packaged overlay', () =
   const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))
   const patch = readFileSync(new URL('./desktop-notify.patch.yml', import.meta.url), 'utf8')
   assert.match(patch, /\.\/ui-remote\/index.js/)
-  for (const file of ['ui-remote/package.json','ui-remote/index.js','ui-remote/client.js','ui-remote/style.css','ui-overlay/mobile.css','ui-overlay/browser-compat.js','ui-overlay/connection-note.js','runtime-import.mjs','lan-webserver.mjs','lan-web-runtime.mjs']) {
+  for (const file of ['ui-remote/package.json','ui-remote/index.js','ui-remote/client.js','ui-remote/style.css','ui-overlay/mobile.css','ui-overlay/browser-compat.js','ui-overlay/remote-theme.js','ui-overlay/connection-note.js','runtime-import.mjs','lan-webserver.mjs','lan-web-runtime.mjs']) {
     assert.equal(config.bundle.resources['../dsh-plugin/'+file], 'dsh-plugin/'+file)
     assert.ok(readFileSync(new URL('./'+file, import.meta.url)).length)
   }

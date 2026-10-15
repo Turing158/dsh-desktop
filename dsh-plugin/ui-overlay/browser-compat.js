@@ -1,11 +1,11 @@
-/* DSH uses getRandomValues on HTTP; desktop terminal plugins also need UUIDs.
+/* DSH uses getRandomValues on HTTP; changes and terminal tabs also need UUIDs.
  * This injected script is shared by desktop and ordinary browsers.
  *
  * It carries four things, in this order:
  *
  *   1. engine shims — the newest standards APIs the served client bundles call
  *      without feature-detecting them (see the section below);
- *   2. the LAN-HTTP crypto repair for the desktop window;
+ *   2. the LAN-HTTP UUID repair for desktop and remote pages;
  *   3. `window.__DSH_ENGINE__`, the list of APIs this engine was missing, for the
  *      phone-side diagnostics;
  *   4. the mobile viewport metric a phone needs while its keyboard is open. */
@@ -624,9 +624,10 @@
   }
 
   const browser = !window.__DSH_DESKTOP_BOOT_HOST__ && !window.__TAURI__?.core?.invoke
-  // A LAN HTTP origin is not a secure context, even in the desktop WebView.
-  // Keep the native crypto object and CSPRNG; supply only its missing UUID API.
-  if (!browser && window.crypto && typeof window.crypto.randomUUID !== 'function') {
+  // LAN HTTP omits randomUUID in both the WebView and remote browsers. Changes
+  // tabs need it before they can open their resource and request the file list.
+  // Keep the native crypto object and CSPRNG; supply only the missing UUID API.
+  if (typeof window.crypto?.getRandomValues === 'function' && typeof window.crypto.randomUUID !== 'function') {
     Object.defineProperty(window.crypto, 'randomUUID', { configurable: true, value() {
       const bytes = window.crypto.getRandomValues(new Uint8Array(16))
       bytes[6] = (bytes[6] & 15) | 64
@@ -671,10 +672,32 @@
   }
   document.documentElement.toggleAttribute('data-dsh-browser', browser)
   if (!browser) return
-  // VisualViewport also follows the on-screen keyboard on browsers whose dvh
-  // continues to measure the layout viewport while the keyboard is open.
-  const update = () => document.documentElement.style.setProperty('--dsh-mobile-height', (window.visualViewport?.height || window.innerHeight) + 'px')
+  // iOS keeps vh/dvh tied to the layout viewport while the keyboard shrinks and
+  // pans the visible viewport. Publish that rectangle directly; subtracting its
+  // height from 100vh applies Safari's browser chrome/keyboard inset twice.
+  let height, top
+  const update = () => {
+    const viewport = window.visualViewport
+    const scale = viewport?.scale || 1
+    const zoomed = Math.abs(scale - 1) > 0.01
+    // Keep pinch zoom as browser magnification/panning, without reflowing the
+    // app into the smaller zoomed rectangle or chasing the user's pan.
+    if (zoomed && height !== undefined) return
+    const nextHeight = (viewport?.height || window.innerHeight) * (zoomed ? scale : 1)
+    const nextTop = zoomed ? 0 : Math.max(0, viewport?.offsetTop || 0)
+    if (!Number.isFinite(nextHeight) || nextHeight <= 0) return
+    if (nextHeight !== height) {
+      height = nextHeight
+      document.documentElement.style.setProperty('--dsh-mobile-height', height + 'px')
+    }
+    if (nextTop !== top) {
+      top = nextTop
+      document.documentElement.style.setProperty('--dsh-mobile-top', top + 'px')
+    }
+  }
   update()
   window.visualViewport?.addEventListener('resize', update)
+  window.visualViewport?.addEventListener('scroll', update)
   window.addEventListener('resize', update)
+  window.addEventListener('pageshow', update)
 })()

@@ -107,15 +107,26 @@ try {
   for(const name of ['标题栏','左边导航栏','侧边栏区域']) await page.getByRole('checkbox',{name:'在'+name+'显示',exact:true}).check()
   const total = page.getByRole('slider',{name:'图片总透明度',exact:true})
   await total.fill('25'); await total.dispatchEvent('pointerup')
+  const blur = page.getByRole('slider',{name:'图片模糊程度',exact:true})
+  assert.equal(await total.evaluate(el => el.closest('label').nextElementSibling.querySelector('input')?.getAttribute('aria-label')), '图片模糊程度')
+  assert.equal(await blur.inputValue(), '0', 'existing settings default to a sharp background')
+  await blur.fill('65')
+  assert.equal(await page.evaluate(() => document.body.style.getPropertyValue('--dsh-background-blur')), '26px')
+  assert.equal((await values(page))['desktop-appearance'].backgroundBlur, undefined, 'drag previews before saving')
+  await blur.dispatchEvent('pointerup')
   const left = page.getByRole('slider',{name:'左边导航栏底色透明度',exact:true})
   await left.fill('60'); await left.dispatchEvent('pointerup')
   await page.waitForFunction(() => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.backgroundLeftSurfaceTransparency === 60)
   const expected=(await values(page))['desktop-appearance']
   assert.equal(expected.backgroundImage,png)
   assert.equal(expected.backgroundTransparency,25)
+  assert.equal(expected.backgroundBlur,65)
   assert.equal(await page.locator('[data-conversation-region=chat]').evaluate(e=>getComputedStyle(e.parentElement).backgroundColor),'rgba(0, 0, 0, 0)')
   assert.equal(await page.locator('[data-slot=sidebar] > [class*=_root]').evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)')
   for(const selector of ['.dshTb','[class*=_sidebarCol]','[class*=_centerCol]']) assert.match(await page.locator(selector).evaluate(e=>getComputedStyle(e).backgroundImage),/blob:/)
+  for(const selector of ['.dshTb','[class*=_sidebarCol]','[class*=_centerCol]']) {
+    assert.deepEqual(await page.locator(selector).evaluate(e => ({filter:getComputedStyle(e).filter, blur:getComputedStyle(e,'::before').backdropFilter})), {filter:'none',blur:'blur(26px)'})
+  }
   assert.ok(Math.abs(await page.evaluate(()=>Number(document.body.style.getPropertyValue('--dsh-background-left-opacity')))-.4)<.001)
   await page.screenshot({path:join(root,'settings.png'),fullPage:true})
   console.log('PASS: upload, region switches, live transparency and unobstructed backgrounds')
@@ -126,6 +137,7 @@ try {
   await page.locator('[data-sidebar-right-panel][data-sidebar-right-open]').waitFor()
   const right = page.locator('[data-sidebar-right-panel][data-sidebar-right-open] [data-dockkit-host]').first()
   assert.match(await right.evaluate(e=>getComputedStyle(e).backgroundImage), /blob:/)
+  assert.equal(await right.evaluate(e=>getComputedStyle(e,'::before').backdropFilter), 'blur(26px)')
   assert.equal(await right.locator('[data-dockkit-strip-chrome]').evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)')
   await page.screenshot({path:join(root,'background.png'),fullPage:true})
   // Verify actual pixels with a large image, rather than only CSS declarations.
@@ -135,6 +147,29 @@ try {
     return page.evaluate(async data=>{const img=new Image();img.src=data;await img.decode();const c=document.createElement('canvas');c.width=c.height=1;const x=c.getContext('2d');x.drawImage(img,0,0);return [...x.getImageData(0,0,1,1).data].slice(0,3)},'data:image/png;base64,'+buffer.toString('base64'))
   }
   await set('backgroundRightSurfaceTransparency',100);await set('backgroundTransparency',0)
+  await set('backgroundBlur',0)
+  async function detail() {
+    const buffer = await page.screenshot({clip:{x:100,y:200,width:32,height:32}})
+    return page.evaluate(async data => {
+      const image = new Image();image.src=data;await image.decode()
+      const canvas=document.createElement('canvas');canvas.width=canvas.height=32
+      const context=canvas.getContext('2d');context.drawImage(image,0,0)
+      const pixels=context.getImageData(0,0,32,32).data
+      let difference=0
+      for(let y=0;y<32;y++)for(let x=0;x<31;x++)for(let channel=0;channel<3;channel++) {
+        const i=(y*32+x)*4+channel;difference+=Math.abs(pixels[i]-pixels[i+4])
+      }
+      return difference/(32*31*3)
+    }, 'data:image/png;base64,'+buffer.toString('base64'))
+  }
+  const sharpDetail=await detail()
+  await set('backgroundBlur',100)
+  const blurredDetail=await detail()
+  assert.ok(sharpDetail>1 && blurredDetail<sharpDetail*.35, JSON.stringify({sharpDetail,blurredDetail}))
+  await page.screenshot({path:join(root,'blurred-background.png'),fullPage:true})
+  await set('backgroundBlur',0)
+  assert.equal(await detail(),sharpDetail,'zero restores the original image pixels')
+  console.log('PASS: blur slider order, live preview, saved setting and actual image detail reduction without filtering content')
   const visible=await pixel()
   assert.notDeepEqual(visible,[255,255,255])
   await set('backgroundRightSurfaceTransparency',0)
@@ -155,6 +190,7 @@ try {
   await set('backgroundChatSurfaceTransparency',0)
   assert.deepEqual(await pixel(),[255,255,255])
   await set('backgroundTransparency',25);await set('backgroundChatSurfaceTransparency',70);await set('backgroundRightSurfaceTransparency',70)
+  await set('backgroundBlur',65)
   expected.backgroundChatSurfaceTransparency=70;expected.backgroundRightSurfaceTransparency=70
   console.log('PASS: large-image pixels, independent surface alpha, light/dark canvas and theme switching')
   stop();const secondUrl=await start(); await ready(page,secondUrl)
@@ -163,9 +199,10 @@ try {
   await page.evaluate(()=>window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').set('backgroundImage',''))
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-dsh-background-chat'))
   assert.equal(await page.locator('[class*=_sidebarCol]').evaluate(e=>getComputedStyle(e).backgroundImage),'none')
+  assert.equal(await page.evaluate(()=>document.documentElement.hasAttribute('data-dsh-background-blur')),false)
   assert.deepEqual(pageErrors,[])
   console.log('PASS: removal restores normal surfaces; no browser errors')
-  report.checks={upload:true,regions:true,transparency:true,restart:true,remove:true,noPageErrors:true}
+  report.checks={upload:true,regions:true,transparency:true,blur:true,restart:true,remove:true,noPageErrors:true}
 } catch (error) {
   report.error = error.stack
   throw error

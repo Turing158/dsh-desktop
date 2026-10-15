@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DeepseekHarness",
-  "version": "0.1.1",
+  "productName": "dsh desktop",
+  "version": "0.1.2",
   "identifier": "com.deepseek.harness.desktop",
   "build": {
     "frontendDist": "ui",
@@ -26,6 +26,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Turing158",
     "targets": [
       "nsis"
     ],
@@ -36,6 +37,11 @@
     ],
     "resources": {
       "../dsh-plugin/desktop-notify.mjs": "dsh-plugin/desktop-notify.mjs",
+      "../dsh-plugin/session-links.mjs": "dsh-plugin/session-links.mjs",
+      "../dsh-plugin/session-links/index.js": "dsh-plugin/session-links/index.js",
+      "../dsh-plugin/session-links/package.json": "dsh-plugin/session-links/package.json",
+      "../dsh-plugin/session-links/links.mjs": "dsh-plugin/session-links/links.mjs",
+      "../dsh-plugin/session-links/client.js": "dsh-plugin/session-links/client.js",
       "../dsh-plugin/desktop-ui.mjs": "dsh-plugin/desktop-ui.mjs",
       "../dsh-plugin/desktop-notify.patch.yml": "dsh-plugin/desktop-notify.patch.yml",
       "../dsh-plugin/ui-overlay/theme.css": "dsh-plugin/ui-overlay/theme.css",
@@ -68,6 +74,7 @@
       "../dsh-plugin/directory-picker/protocol.mjs": "dsh-plugin/directory-picker/protocol.mjs",
       "../dsh-plugin/directory-picker/client.js": "dsh-plugin/directory-picker/client.js",
       "../dsh-plugin/ui-overlay/browser-compat.js": "dsh-plugin/ui-overlay/browser-compat.js",
+      "../dsh-plugin/ui-overlay/remote-theme.js": "dsh-plugin/ui-overlay/remote-theme.js",
       "../dsh-plugin/ui-overlay/mobile.css": "dsh-plugin/ui-overlay/mobile.css",
       "../dsh-plugin/ui-overlay/connection-note.js": "dsh-plugin/ui-overlay/connection-note.js",
       "../dsh-plugin/runtime-import.mjs": "dsh-plugin/runtime-import.mjs",
@@ -76,6 +83,7 @@
       "../dsh-plugin/lan-webserver.mjs": "dsh-plugin/lan-webserver.mjs",
       "../dsh-plugin/lan-web-runtime.mjs": "dsh-plugin/lan-web-runtime.mjs",
       "../dsh-plugin/sidebar-changes/package.json": "dsh-plugin/sidebar-changes/package.json",
+      "../dsh-plugin/sidebar-changes/host/scan-pool.mjs": "dsh-plugin/sidebar-changes/host/scan-pool.mjs",
       "../dsh-plugin/file-editor/package.json": "dsh-plugin/file-editor/package.json",
       "../dsh-plugin/file-editor/index.js": "dsh-plugin/file-editor/index.js",
       "../dsh-plugin/file-editor/host.mjs": "dsh-plugin/file-editor/host.mjs",

@@ -1,6 +1,7 @@
 import { t, useLocale } from '../i18n/api.mjs'
 import { currentSessionId } from './session-context.mjs'
 import { createDockMotion } from './dock-motion.mjs'
+import { observeChrome } from '../observe-chrome.mjs'
 
 const PREFIX = 'dsh-resource://desktop-terminal/'
 const STORAGE_KEY = 'dsh-terminal-dock'
@@ -553,8 +554,7 @@ export function createDockFallbackToggle(React, reactDom, Toggle) {
           setHost(null)
         }
       }
-      const observer = new MutationObserver(sync)
-      observer.observe(document.body, { childList: true, subtree: true })
+      const observer = observeChrome('[data-conversation-header-corner], [' + TOGGLE_ATTRIBUTE + ']', sync)
       sync()
       return () => { observer.disconnect(); node.remove() }
     }, [])

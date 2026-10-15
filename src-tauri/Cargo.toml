@@ -1,7 +1,7 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "0.1.1"
-description = "DeepseekHarness desktop shell with Windows notifications"
+version = "0.1.2"
+description = "dsh desktop shell with Windows notifications"
 edition = "2021"
 rust-version = "1.77"
 
@@ -41,6 +41,7 @@ uuid = { version = "1", features = ["v4"] }
 tauri-runtime = "2.11"
 
 [target.'cfg(windows)'.dependencies]
+png = "0.17"
 webview2-com = "0.38.2"
 windows = { version = "0.61", features = [
   "Data_Xml_Dom",
@@ -75,6 +76,7 @@ windows = { version = "0.61", features = [
   "Win32_System_WinRT",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
   "Win32_UI_Shell_PropertiesSystem",
   "Win32_UI_WindowsAndMessaging",
 ] }

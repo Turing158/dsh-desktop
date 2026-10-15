@@ -101,7 +101,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     });
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("DeepseekHarness")
+        .tooltip("dsh desktop")
         .menu(&menu)
         // The menu is a RIGHT-click affordance; a left click brings the window
         // back (the handler below). Leaving the default would open the menu on

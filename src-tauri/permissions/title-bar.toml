@@ -143,9 +143,19 @@ anything, and it reaches no window that is not an Explorer folder window.
 commands.allow = ["focus_folder_window"]
 
 [[permission]]
+identifier = "allow-workspace-directory"
+description = "Choose a workspace folder with the desktop's native dialog and return the selected path to the current desktop page."
+commands.allow = ["pick_workspace_directory"]
+
+[[permission]]
 identifier = "allow-session-export"
 description = "Choose a native folder for one Session ZIP download. The destination stays in the host and is bound to the requesting Session and backend origin."
 commands.allow = ["prepare_session_export"]
+
+[[permission]]
+identifier = "allow-attachment-images"
+description = "Copy an attachment image to the native clipboard or save its bytes to a file chosen in the native Save As dialog. No caller-supplied destination path is accepted."
+commands.allow = ["clipboard_write_image", "save_attachment_image"]
 
 [[permission]]
 identifier = "allow-ui-snapshot"

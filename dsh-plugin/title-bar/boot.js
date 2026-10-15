@@ -1,4 +1,4 @@
-/* DeepseekHarness desktop — the title bar for the interval before DSH exists.
+/* dsh desktop — the title bar for the interval before DSH exists.
  *
  * ## Why this file exists
  *
@@ -579,7 +579,7 @@
       // real bar's dialog ships: a dialog about the build must not claim a
       // build it cannot name.
       var ident = h('div', { class: CLS('aboutIdent') }, [
-        h('div', { class: CLS('aboutName'), text: 'DeepseekHarness' }),
+        h('div', { class: CLS('aboutName'), text: 'dsh desktop' }),
       ])
 
       overlay = h('div', { class: CLS('overlay') }, [
@@ -724,8 +724,8 @@
       [
         h('div', { class: CLS('brand') }, [
           logo(),
-          h('span', { class: CLS('wordmark'), text: 'deepseek' }),
-          h('span', { class: CLS('badge'), text: 'HARNESS' }),
+          h('span', { class: CLS('wordmark'), text: 'dsh' }),
+          h('span', { class: CLS('badge'), text: 'desktop' }),
         ]),
         h('nav', { class: CLS('nav'), 'aria-label': t('主菜单') }, [more]),
         h('div', { class: CLS('spacer') }),

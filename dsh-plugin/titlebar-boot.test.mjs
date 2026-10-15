@@ -42,7 +42,7 @@ test('the title-bar host publishes functional chrome without the optional UI ove
   applyTitleBarHost({ on(event, listener) { assert.equal(event, 'webserver/index-inject'); render = listener } })
   const table = []
   render(table)
-  assert.equal(table.length, 1)
+  assert.equal(table.length, 3)
   assert.equal(table[0].kind, 'style')
   assert.equal(table[0].placement, 'head')
   assert.match(table[0].text, /\.dshTb\s*\{[\s\S]*?position: fixed/)
@@ -50,6 +50,10 @@ test('the title-bar host publishes functional chrome without the optional UI ove
   assert.match(table[0].text, /html body #root\s*\{/)
   assert.ok(table[0].text.includes("[data-shortcut-modal='settings']"))
   assert.doesNotMatch(table[0].text, /\.dshChanges\s*\{|\.dshPlugins__restart|dsh-inventory-expand/)
+  assert.equal(table[1].placement, 'head')
+  assert.equal(table[1].text, readFileSync(new URL('./ui-overlay/remote-theme.js', import.meta.url), 'utf8').replace(/<\/script/gi, '<\\/script'))
+  assert.equal(table[2].placement, 'body')
+  assert.equal(table[2].text, 'window.__DSH_REMOTE_THEME__?.boot()')
 })
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -594,7 +598,7 @@ test('关于 opens the about dialog, as a real dialog', () => {
   assert.ok(overlay.querySelector('.dshBoot__aboutMark').querySelector('svg'), 'the mark must be the bar’s own whale')
   assert.equal(
     overlay.querySelector('.dshBoot__aboutName').textContent,
-    'DeepseekHarness',
+    'dsh desktop',
   )
   assert.match(
     overlay.querySelector('.dshBoot__aboutText').textContent,
@@ -1313,7 +1317,7 @@ test('the real bar’s mark is a button carrying both glyphs', () => {
   // The lockup around it is unchanged: the wordmark and badge still render, so the
   // bar keeps the identity the sidebar's row used to carry.
   assert.ok(body.includes("className: 'dshTb__wordmark'"), 'the wordmark must still render')
-  assert.ok(body.includes("className: 'dshTb__badge'"), 'and the HARNESS badge')
+  assert.ok(body.includes("className: 'dshTb__badge'"), 'and the desktop badge')
 
   // It must be USED in the tree. A builder nothing calls would satisfy every
   // assertion above while leaving the bar exactly as it was.

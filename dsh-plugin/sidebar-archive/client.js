@@ -88,6 +88,40 @@
     };
   }
 
+  // dsh-plugin/observe-chrome.mjs
+  var CONTENT = '[data-conversation-region="chat"], [data-chat-flow], [data-code-block-content], [data-textpreview-plain], [data-document-markdown], .xterm-screen';
+  function observeChrome(selector, update, options = {}) {
+    const known = /* @__PURE__ */ new WeakSet();
+    const remember = (node) => {
+      if (node?.nodeType !== 1) return false;
+      if (node.matches(selector)) {
+        known.add(node);
+        return true;
+      }
+      if (node.matches(CONTENT)) return false;
+      const found = node.querySelector(selector);
+      if (found) known.add(found);
+      return Boolean(found);
+    };
+    const observer = new MutationObserver((records) => {
+      if (records.some((record) => {
+        const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+        const region = target?.closest(selector);
+        if (region) {
+          known.add(region);
+          return true;
+        }
+        if (target && known.has(target)) return true;
+        if (target?.closest(CONTENT)) return false;
+        if (record.type === "attributes") return remember(target);
+        return [...record.addedNodes, ...record.removedNodes].some(remember);
+      })) update(records);
+    });
+    document.querySelectorAll(selector).forEach((node) => known.add(node));
+    observer.observe(document.body, { childList: true, subtree: true, ...options });
+    return observer;
+  }
+
   // dsh-plugin/sidebar-archive/sidebar.mjs
   var REGION = '[data-slot="sidebar.workspaces"]';
   var ROW = '[role="treeitem"]:is([data-row-key^="session:"], [class*="_searchResultRow"])';
@@ -145,7 +179,6 @@
     const clearButton = () => {
       root?.unmount();
       mount?.remove();
-      actions?.classList.remove("dshArchive__headerActions");
       root = mount = actions = null;
     };
     const update = () => {
@@ -166,7 +199,6 @@
         clearButton();
         if (next) {
           actions = next;
-          actions.classList.add("dshArchive__headerActions");
           mount = document.createElement("span");
           mount.className = "dshArchive__toggleMount";
           actions.append(mount);
@@ -209,8 +241,11 @@
       event.stopImmediatePropagation();
       if (event.type !== "dblclick" && navigation.open(id)) onOpen();
     };
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class", "data-row-key"] });
+    const observer = observeChrome(
+      REGION + ', [role="menu"][class*="_viewOptionsMenu"]',
+      schedule,
+      { characterData: true, attributes: true, attributeFilter: ["class", "data-row-key"] }
+    );
     for (const type of ["click", "keydown", "dblclick"]) document.addEventListener(type, activate, true);
     const off = navigation.subscribe(schedule);
     update();
@@ -283,7 +318,7 @@
   }
 
   // dsh-plugin/sidebar-archive/style.css
-  var style_default = ".dshArchive__toggleMount { display:inline-flex; flex:none; }\n[data-dsh-archive-filter-hidden] { display:none !important; }\n.dshArchive__headerActions:not([class*='_headerActionsHidden']) { max-width:92px; }\n.dshArchive__toggle { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; padding:0; border:0; border-radius:var(--dsw-radius-sm,8px); background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }\n.dshArchive__toggle:hover, .dshArchive__toggle[aria-pressed='true'] { background:var(--dsw-alias-interactive-bg-hover); }\n.dshArchive__toggle[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__toggle:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:-2px; }\n[data-slot='sidebar.workspaces'] [data-dsh-archive-selected] { background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary); }\n/* Archive browsing has its own section; keep the normal row text hierarchy. */\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] :is([class*='_title'], [class*='_searchResultTitle']) { color:var(--dsw-alias-label-primary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultWorkspace'] { color:var(--dsw-alias-label-tertiary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultSnippet'] { color:var(--dsw-alias-label-secondary); }\n.dshArchive { box-sizing:border-box; position:relative; display:flex; flex:1; flex-direction:column; height:100%; min-width:0; min-height:0; overflow:hidden; container-type:inline-size; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); --dsh-composer-height:0px; --dsh-composer-side-clearance:16px; --dsh-chat-content-width:var(--dsh-chat-user-width,clamp(680px,64cqw,920px)); }\n/* Match the conversation header's title row and view tabs. */\n.dshArchive__header { box-sizing:border-box; display:flex; flex:none; flex-direction:column; min-height:76px; padding:10px 28px 0 20px; border-bottom:.5px solid var(--dsw-alias-border-l3); }\n.dshArchive__header:not(:has(.dshArchive__tabs)) { min-height:0; padding-bottom:10px; }\n.dshArchive__titleRow { display:flex; align-items:center; gap:10px; min-width:0; min-height:30px; padding-inline-start:max(0px,calc(var(--dsh-frame-leading-clearance,0px) - 20px)); }\n.dshArchive__header h2 { flex:1; min-width:0; margin:0; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:500; line-height:20px; }\n.dshArchive__readonly { flex:none; color:var(--dsw-alias-label-tertiary); font-size:12px; }\n.dshArchive__tabs { display:flex; flex:none; gap:36px; margin-top:10px; padding-left:8px; }\n.dshArchive__tabs button { position:relative; border:0; background:transparent; color:var(--dsw-alias-label-tertiary); font:inherit; font-size:13px; font-weight:500; line-height:16px; padding:0 0 9px; cursor:pointer; }\n.dshArchive__tabs button::after { content:''; position:absolute; inset:auto 0 -1px; height:2px; border-radius:2px; background:transparent; }\n.dshArchive__tabs button[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__tabs button[aria-pressed='true']::after { background:currentColor; }\n.dshArchive__tabs button:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:3px; }\n.dshArchive__content { position:relative; display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; margin-right:2px; overflow:auto; scrollbar-gutter:stable; }\n.dshArchive__empty { box-sizing:border-box; display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:220px; padding:24px; color:var(--dsw-alias-label-tertiary); font-size:14px; line-height:22px; text-align:center; }\n.dshArchive__empty > svg { flex:none; }\n.dshArchive__placeholderCopy { max-width:28em; }\n.dshArchive__placeholderTitle { margin:0; color:var(--dsw-alias-label-primary); font-weight:500; }\n.dshArchive__placeholderHint { margin:6px 0 0; font-size:13px; line-height:20px; }\n.dshArchive__notice { flex:none; padding:12px 20px; border-top:.5px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-tertiary); font-size:12px; text-align:center; }\n";
+  var style_default = ".dshArchive__toggleMount { display:inline-flex; flex:none; }\n[data-dsh-archive-filter-hidden] { display:none !important; }\n/* React rewrites the action group's classes when search opens or closes. */\n[class*='_headerActions']:not([class*='_headerActionsHidden']):has(> .dshArchive__toggleMount) { max-width:92px; }\n.dshArchive__toggle { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; padding:0; border:0; border-radius:var(--dsw-radius-sm,8px); background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }\n.dshArchive__toggle:hover, .dshArchive__toggle[aria-pressed='true'] { background:var(--dsw-alias-interactive-bg-hover); }\n.dshArchive__toggle[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__toggle:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:-2px; }\n[data-slot='sidebar.workspaces'] [data-dsh-archive-selected] { background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary); }\n/* Archive browsing has its own section; keep the normal row text hierarchy. */\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] :is([class*='_title'], [class*='_searchResultTitle']) { color:var(--dsw-alias-label-primary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultWorkspace'] { color:var(--dsw-alias-label-tertiary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultSnippet'] { color:var(--dsw-alias-label-secondary); }\n.dshArchive { box-sizing:border-box; position:relative; display:flex; flex:1; flex-direction:column; height:100%; min-width:0; min-height:0; overflow:hidden; container-type:inline-size; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); --dsh-composer-height:0px; --dsh-composer-side-clearance:16px; --dsh-chat-content-width:var(--dsh-chat-user-width,clamp(680px,64cqw,920px)); }\n/* Match the conversation header's title row and view tabs. */\n.dshArchive__header { box-sizing:border-box; display:flex; flex:none; flex-direction:column; min-height:76px; padding:10px 28px 0 20px; border-bottom:.5px solid var(--dsw-alias-border-l3); }\n.dshArchive__header:not(:has(.dshArchive__tabs)) { min-height:0; padding-bottom:10px; }\n.dshArchive__titleRow { display:flex; align-items:center; gap:10px; min-width:0; min-height:30px; padding-inline-start:max(0px,calc(var(--dsh-frame-leading-clearance,0px) - 20px)); }\n.dshArchive__header h2 { flex:1; min-width:0; margin:0; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:500; line-height:20px; }\n.dshArchive__readonly { flex:none; color:var(--dsw-alias-label-tertiary); font-size:12px; }\n.dshArchive__tabs { display:flex; flex:none; gap:36px; margin-top:10px; padding-left:8px; }\n.dshArchive__tabs button { position:relative; border:0; background:transparent; color:var(--dsw-alias-label-tertiary); font:inherit; font-size:13px; font-weight:500; line-height:16px; padding:0 0 9px; cursor:pointer; }\n.dshArchive__tabs button::after { content:''; position:absolute; inset:auto 0 -1px; height:2px; border-radius:2px; background:transparent; }\n.dshArchive__tabs button[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__tabs button[aria-pressed='true']::after { background:currentColor; }\n.dshArchive__tabs button:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:3px; }\n.dshArchive__content { position:relative; display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; margin-right:2px; overflow:auto; scrollbar-gutter:stable; }\n.dshArchive__empty { box-sizing:border-box; display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:220px; padding:24px; color:var(--dsw-alias-label-tertiary); font-size:14px; line-height:22px; text-align:center; }\n.dshArchive__empty > svg { flex:none; }\n.dshArchive__placeholderCopy { max-width:28em; }\n.dshArchive__placeholderTitle { margin:0; color:var(--dsw-alias-label-primary); font-weight:500; }\n.dshArchive__placeholderHint { margin:6px 0 0; font-size:13px; line-height:20px; }\n.dshArchive__notice { flex:none; padding:12px 20px; border-top:.5px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-tertiary); font-size:12px; text-align:center; }\n";
 
   // dsh-plugin/sidebar-archive/client-entry.mjs
   window.__ModuleLoader__.load({ id: "@dsh-desktop/sidebar-archive", factory(require2) {

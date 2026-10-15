@@ -1,4 +1,5 @@
 import { t, useLocale } from '../i18n/api.mjs'
+import { observeChrome } from '../observe-chrome.mjs'
 // The upstream page exposes tab bodies only. Mount in the shared section,
 // anchored by our own tab identity, so tab visibility never hides the prompt.
 export function mountMarketplaceHeader(React, createRoot, Prompt) {
@@ -16,8 +17,7 @@ export function mountMarketplaceHeader(React, createRoot, Prompt) {
     root = createRoot(container)
     root.render(React.createElement(Prompt))
   }
-  const observer = new MutationObserver(update)
-  observer.observe(document.body, { childList: true, subtree: true })
+  const observer = observeChrome('[data-shortcut-modal="settings"]', update)
   update()
   return () => { observer.disconnect(); clear() }
 }

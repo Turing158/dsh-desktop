@@ -5,7 +5,7 @@ import vm from 'node:vm'
 
 const source = readFileSync(new URL('./title-bar/client.js', import.meta.url), 'utf8')
 const flush = () => new Promise(setImmediate)
-const tags = { latest: '0.1.7-rc.2', next: '0.2.0-rc.1' }
+const tags = { latest: '0.2.0-rc.2', preview: '0.2.1-alpha.2' }
 const desktopRelease = { current: '0.1.0', release: { version: '0.2.0', name: 'Desktop v0.2.0', notes: '## Changes\n- Fixes',
   publishedAt: '2026-10-05T14:59:05Z', prerelease: false, updateAvailable: true,
   url: 'https://github.com/Turing158/dsh-desktop/releases/tag/v0.2.0' } }
@@ -50,7 +50,7 @@ function fixture({ check = async () => ({ current: tags.latest, ...tags }), inst
     __TAURI__: host ? { core: { invoke: async (command, args) => {
       calls.push({ command, args })
       if (command === 'check_dsh_update') return check?.()
-      if (command === 'install_dsh_update') return install?.(args.channel)
+      if (command === 'install_dsh_update') return install?.(args.channel, args.targetVersion)
       if (command === 'check_desktop_update') return checkDesktop()
       if (command === 'open_desktop_release') return openRelease?.(args.url)
       return ''
@@ -126,25 +126,30 @@ test('one click opens the dialog and starts both checks without duplicate reques
   assert.equal(f.updateCalls().length, 1, 'switching tabs does not run another check')
 })
 
-for (const [current, latest, next, label, stableDisabled, previewDisabled] of [
-  [tags.latest, tags.latest, tags.next, 'dsh 已是最新版', true, false],
-  [tags.next, tags.latest, tags.next, 'dsh 已是最新预览版', false, true],
-  ['0.1.5-rc.2', tags.latest, tags.next, 'dsh 可更新', false, false],
+for (const [current, latest, preview, label, stableDisabled, previewDisabled] of [
+  [tags.latest, tags.latest, tags.preview, 'dsh 已是最新版', true, false],
+  [tags.preview, tags.latest, tags.preview, 'dsh 已是最新预览版', false, true],
+  ['0.1.5-rc.2', tags.latest, tags.preview, 'dsh 可更新', false, false],
   ['1.0.0', '1.0.0', '1.0.0', 'dsh 已是最新版', true, undefined],
   ['0.9.0', '1.0.0', '1.0.0', 'dsh 可更新', false, undefined],
+  ['1.1.0-beta.1', '1.0.0', '1.1.0-beta.1', 'dsh 已是最新预览版', false, true],
+  ['1.1.0', '1.0.0', '1.1.0', 'dsh 已是最新预览版', false, true],
+  ['0.2.1-alpha.1', tags.latest, tags.preview, 'dsh 可更新', false, false],
 ]) {
-  test(`version comparison: ${current} / ${latest} / ${next}`, async () => {
-    const f = fixture({ check: async () => ({ current, latest, next }), install: async () => latest })
+  test(`version comparison: ${current} / ${latest} / ${preview}`, async () => {
+    const f = fixture({ check: async () => ({ current, latest, preview }), install: async () => latest })
     f.openMore(); f.selectUpdate(); await flush()
     f.selectTab('dsh')
     assert.equal(f.status(), label)
+    assert.equal(f.tab('dsh').props.children.some(node => node?.props?.className === 'dshTb__updateDot'), label === 'dsh 可更新')
     assert.equal(f.button('最新稳定版').props.disabled, stableDisabled)
     assert.equal(f.button('最新预览版')?.props.disabled, previewDisabled)
-    assert.equal(f.render().some(node => node.type === 'dt' && node.props.children.includes('最新预览版')), latest !== next)
+    assert.equal(f.render().some(node => node.type === 'dt' && node.props.children.includes('最新预览版')), latest !== preview)
+    if (latest !== preview) assert.ok(f.render().some(node => node.type === 'code' && node.props.children.includes(preview)))
     if (stableDisabled) f.button('最新稳定版').props.onClick()
     if (previewDisabled) f.button('最新预览版').props.onClick()
     assert.equal(f.updateCalls().length, 1, 'a disabled channel cannot start installation')
-    if (latest === next && !stableDisabled) {
+    if (latest === preview && !stableDisabled) {
       f.button('最新稳定版').props.onClick(); await flush()
       assert.equal(f.updateCalls().length, 2)
       assert.equal(f.updateCalls()[1].args.channel, 'latest')
@@ -155,7 +160,7 @@ for (const [current, latest, next, label, stableDisabled, previewDisabled] of [
   })
 }
 
-for (const channel of ['latest', 'next']) {
+for (const channel of ['latest', 'preview']) {
   test(`${channel} installation is exclusive and updates the displayed version`, async () => {
     const pending = deferred()
     const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), install: () => pending.promise })
@@ -170,6 +175,7 @@ for (const channel of ['latest', 'next']) {
     assert.equal(calls.length, 2)
     assert.equal(calls[1].command, 'install_dsh_update')
     assert.equal(calls[1].args.channel, channel)
+    assert.equal(calls[1].args.targetVersion, channel === 'preview' ? tags.preview : undefined)
     // Dismiss and reopen while installing: status is retained and no new call.
     f.render().find(node => node.type === 'Modal').props.onClose()
     f.openDialog()
@@ -177,10 +183,40 @@ for (const channel of ['latest', 'next']) {
     assert.equal(f.button('最新稳定版').props.disabled, true)
     pending.resolve(tags[channel]); await flush()
     assert.equal(f.button('最新稳定版').props.disabled, channel === 'latest')
-    assert.equal(f.button('最新预览版').props.disabled, channel === 'next')
+    assert.equal(f.button('最新预览版').props.disabled, channel !== 'latest')
     assert.ok(f.render().some(node => node.props.children?.some(text => typeof text === 'string' && text.includes('从托盘退出'))))
   })
 }
+
+test('preview installation pins the checked version until an explicit recheck', async () => {
+  let current = tags.latest, published = tags.preview
+  const f = fixture({ check: async () => ({ current, latest: tags.latest, preview: published }),
+    install: async (_channel, targetVersion) => { current = targetVersion; return current } })
+  f.openDialog(); await flush(); f.selectTab('dsh')
+  published = '0.2.1-alpha.3'
+  f.button('最新预览版').props.onClick(); await flush()
+  assert.equal(f.updateCalls()[1].args.channel, 'preview')
+  assert.equal(f.updateCalls()[1].args.targetVersion, tags.preview)
+  assert.equal(f.status(), 'dsh 已是最新预览版')
+  assert.equal(f.button('最新预览版').props.disabled, true)
+  assert.equal(f.render().filter(node => node.type === 'code' && node.props.children.includes(tags.preview)).length, 2)
+  f.button('重新检测').props.onClick(); await flush()
+  assert.equal(f.status(), 'dsh 可更新')
+  assert.equal(f.button('最新预览版').props.disabled, false)
+  f.button('最新预览版').props.onClick(); await flush()
+  assert.equal(f.updateCalls().at(-1).args.targetVersion, published)
+  assert.equal(f.status(), 'dsh 已是最新预览版')
+})
+
+test('preview display and installation ignore next and alpha tags', async () => {
+  const f = fixture({ check: async () => ({ current: tags.latest, ...tags, next: tags.latest, alpha: '0.2.1-alpha.1' }),
+    install: async (_channel, targetVersion) => targetVersion })
+  f.openDialog(); await flush(); f.selectTab('dsh')
+  assert.ok(f.render().some(node => node.type === 'code' && node.props.children.includes(tags.preview)))
+  f.button('最新预览版').props.onClick(); await flush()
+  assert.equal(f.updateCalls()[1].args.targetVersion, tags.preview)
+  assert.equal(f.status(), 'dsh 已是最新预览版')
+})
 
 test('a failed check stays clickable, shows its error, and can be retried', async () => {
   let attempts = 0

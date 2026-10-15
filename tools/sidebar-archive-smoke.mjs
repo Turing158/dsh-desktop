@@ -66,7 +66,7 @@ try {
   page = await browser.newPage({ viewport: { width: 1280, height: 840 } })
   page.on('pageerror', error => errors.push(error.message))
   page.on('request', req => { if (/\/api\//.test(req.url())) requests.push({ url: req.url(), body: req.postData() }) })
-  await page.addInitScript(() => { window.__DSH_UI_BOOT__ = { smoke: true } })
+  await page.addInitScript(() => { window.__DSH_UI_BOOT__ = { smoke: true }; window.__DSH_DESKTOP_BOOT_HOST__ = true })
   await page.goto(url)
   await page.waitForFunction(() => {
     if (document.body.textContent.includes('Failed to load plugins')) throw Error(document.body.textContent)
@@ -106,6 +106,37 @@ try {
   await page.keyboard.press('Escape')
   const toggle = page.locator('.dshArchive__toggle')
   assert.equal(await toggle.evaluate(node => node.closest('[class*="_headerActions"]').lastElementChild.contains(node)), true)
+  for (const remote of [false, true]) {
+    await page.evaluate(remote => document.documentElement.toggleAttribute('data-dsh-browser', remote), remote)
+    for (const animation of ['off', 'on']) {
+      await page.evaluate(animation => window.__ARCHIVE_TEST__.configForms.get('desktop-appearance').set('animation', animation), animation)
+      for (const cancel of ['button', 'Escape', 'button']) {
+        report.searchCancel = { remote, animation, cancel }
+        await region.locator('[class*="_searchSlot"] button[class*="_searchButton"]').click()
+        const search = region.locator('input[class*="_searchInput"]')
+        await search.fill('Gamma')
+        if (cancel === 'button') await region.locator('button[class*="_clearButton"]').click()
+        else await search.press('Escape')
+        await page.waitForFunction(() => {
+          const region = document.querySelector('[data-slot="sidebar.workspaces"]')
+          return !region.getAnimations({ subtree: true }).some(animation => animation.playState === 'running')
+        })
+        const visible = await toggle.evaluate(button => {
+          const box = button.getBoundingClientRect(), actions = button.closest('[class*="_headerActions"]').getBoundingClientRect()
+          return box.left >= actions.left && box.right <= actions.right + 1
+            && button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2))
+        })
+        assert.equal(visible, true, `archive remains visible and clickable after ${cancel}, remote=${remote}, animation=${animation}`)
+        assert.equal(await toggle.count(), 1)
+      }
+    }
+    await page.screenshot({ path: join(root, 'search-cancel-' + (remote ? 'remote' : 'desktop') + '.png') })
+  }
+  await page.evaluate(() => {
+    document.documentElement.removeAttribute('data-dsh-browser')
+    return window.__ARCHIVE_TEST__.configForms.get('desktop-appearance').set('animation', 'off')
+  })
+  pass('repeated search cancellation keeps the archive button visible and clickable on desktop and remote pages')
   const checkViewOptions = async mode => {
     await region.getByRole('button', { name: '视图选项', exact: true }).click()
     const menu = page.locator('[role="menu"][class*="_viewOptionsMenu"]')

@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "platform": "win32",
+  "arch": "x86",
+  "note": "Node.js stopped shipping 32-bit Windows after v22, so this architecture pins win-x86 LTS (22.23.3) instead of the x64 pin (24.21.0). WebView2 154.0.4258.48 was published only for arm64/x64, so x86 pins the next patch of the same release (154.0.4258.62).",
+  "assets": {
+    "node": {
+      "version": "22.23.3",
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-win-x86.zip",
+      "sha256": "1e07ac00e61b41b7ecf242de8e38883d237d5ad3fdcad7c16f2dd3a88670e2b6"
+    },
+    "webview2": {
+      "version": "154.0.4258.62",
+      "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/38975b98-29e2-4f75-9942-48d25e9fb110/Microsoft.WebView2.FixedVersionRuntime.154.0.4258.62.x86.cab"
+    }
+  }
+}

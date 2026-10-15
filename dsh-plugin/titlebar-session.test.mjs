@@ -45,6 +45,33 @@ test('background retention and missing summaries cannot enable session actions',
   assert.equal(currentSession({}), undefined)
 })
 
+const headerTargetSource = source.slice(source.indexOf('    function headerRenameTarget('), source.indexOf('    // Keep the upstream header'))
+const headerRenameTarget = vm.runInNewContext(headerTargetSource + '\nheaderRenameTarget')
+
+test('header rename reads the displayed session title and allows root forks', () => {
+  const list = { byId: { active: { title: 'Stored', displayTitle: 'Displayed', origin: 'fork', parentId: 'parent' } } }
+  const ctx = context(list)
+  ctx.sessions.binding = () => ({ session: { getSnapshot: () => ({ subagent: null }) } })
+  assert.equal(headerRenameTarget(ctx, 'active').title, 'Displayed')
+  list.byId.active.displayTitle = 'Renamed'
+  assert.equal(headerRenameTarget(ctx, 'active').title, 'Renamed')
+  assert.equal(headerRenameTarget(ctx, 'missing'), undefined)
+})
+
+test('header rename refuses subagent views across summary, address and session contracts', () => {
+  for (const block of [
+    (ctx, list) => { list.byId.active.origin = 'subagent' },
+    (ctx, list) => { list.currentAddress = { parentId: 'parent', sessionId: 'child' } },
+    ctx => { ctx.sessions.subagentAddress = () => ({ parentId: 'parent', sessionId: 'active' }) },
+    ctx => { ctx.sessions.binding = () => ({ session: { getSnapshot: () => ({ subagent: { address: {} } }) } }) },
+  ]) {
+    const list = { byId: { active: { displayTitle: 'Child' } } }, ctx = context(list)
+    ctx.sessions.binding = () => ({ session: { getSnapshot: () => ({ subagent: null }) } })
+    block(ctx, list)
+    assert.equal(headerRenameTarget(ctx, 'active'), undefined)
+  }
+})
+
 test('copying a deep link omits the internal prefix and follows the selected session', async () => {
   const list = { current: undefined, byId: {} }, ctx = context(list), copied = []
   const copySource = source.slice(source.indexOf('      function copyDeepLink()'), source.indexOf('      /** Start a new session'))

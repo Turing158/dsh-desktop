@@ -83,7 +83,7 @@ try {
   assert.ok(await dialog.locator('.dshTb__releaseBody strong').count(), 'real safe Markdown renderer is used')
   await dialog.getByRole('tab', { name: 'dsh 更新' }).click()
   await dialog.getByText('正在检测 dsh 更新…', { exact: true }).waitFor()
-  await page.evaluate(() => window.updateReplies.check_dsh_update.resolve({ current: '0.1.5-rc.2', latest: '0.1.7-rc.2', next: '0.2.0-rc.1' }))
+  await page.evaluate(() => window.updateReplies.check_dsh_update.resolve({ current: '0.1.5-rc.2', latest: '0.1.7-rc.2', preview: '0.2.1-alpha.2' }))
   await dialog.getByText('dsh 可更新', { exact: true }).waitFor()
   await dialog.getByRole('tab', { name: 'dsh 更新' }).press('ArrowLeft')
   assert.equal(await dialog.getByRole('tab', { name: '软件更新' }).getAttribute('aria-selected'), 'true')
@@ -122,7 +122,7 @@ try {
   assert.equal(await page.evaluate(() => window.updateCalls.filter(call => /^check_(desktop|dsh)_update$/.test(call.command)).length), 4)
   await page.evaluate(() => {
     window.updateReplies.check_desktop_update.reject('GitHub 暂时限制了请求，请稍后重试。')
-    window.updateReplies.check_dsh_update.resolve({ current: '0.1.7-rc.2', latest: '0.1.7-rc.2', next: '0.1.7-rc.2' })
+    window.updateReplies.check_dsh_update.resolve({ current: '0.1.7-rc.2', latest: '0.1.7-rc.2', preview: '0.1.7-rc.2' })
   })
   await dialog.getByRole('alert').waitFor()
   await page.screenshot({ path: join(root, 'error.png') })

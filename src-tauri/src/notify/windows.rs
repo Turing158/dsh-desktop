@@ -36,7 +36,7 @@ const APP_ID_PROPERTY: PROPERTYKEY = PROPERTYKEY {
     pid: 5,
 };
 // One stable app-owned filename, separate from the installer's shortcut.
-const SHORTCUT_NAME: &str = "DeepseekHarness Desktop.lnk";
+const SHORTCUT_NAME: &str = "dsh desktop.lnk";
 
 /// Balance our initialization on either the main STA or a worker thread.
 /// An existing apartment of a different type already supplies COM/WinRT.
@@ -204,6 +204,7 @@ pub enum DeliveryEvent {
 struct Request {
     title: String,
     body: String,
+    session_id: Option<String>,
     reply: mpsc::Sender<Result<(), String>>,
 }
 
@@ -232,9 +233,13 @@ impl NotificationService {
                             let result = match &apartment {
                                 Ok(_) => {
                                     let report = report.clone();
-                                    show(&app_id, &request.title, &request.body, move |event| {
-                                        report(event)
-                                    })
+                                    show(
+                                        &app_id,
+                                        &request.title,
+                                        &request.body,
+                                        request.session_id.as_deref(),
+                                        move |event| report(event),
+                                    )
                                     .map(|toast| {
                                         if pending.len() >= 64 {
                                             pending.remove(0);
@@ -259,7 +264,7 @@ impl NotificationService {
         })
     }
 
-    pub fn submit(&self, title: &str, body: &str) -> Result<(), String> {
+    pub fn submit(&self, title: &str, body: &str, session_id: Option<&str>) -> Result<(), String> {
         let (reply, result) = mpsc::channel();
         self.requests
             .as_ref()
@@ -267,6 +272,7 @@ impl NotificationService {
             .send(Request {
                 title: title.into(),
                 body: body.into(),
+                session_id: session_id.map(str::to_owned),
                 reply,
             })
             .map_err(|e| format!("通知线程不可用：{e}"))?;
@@ -324,10 +330,24 @@ fn xml_text(value: &str) -> String {
     result
 }
 
-fn notification_xml(title: &str, body: &str) -> WinResult<XmlDocument> {
+/// Keep the activation target in the toast itself: Windows can open it even
+/// after the banner times out, its callbacks are released, or the app exits.
+/// Round-trip through the deep-link parser so malformed IDs never become URLs
+/// to a different session or escape the XML attribute.
+fn session_link(session_id: Option<&str>) -> Option<String> {
+    let id = session_id?;
+    let suffix = id.strip_prefix("session-").unwrap_or(id);
+    let link = format!("{}://session/{suffix}", crate::deep_link::SCHEME);
+    (crate::deep_link::parse(&link).ok()? == format!("session-{suffix}")).then_some(link)
+}
+
+fn notification_xml(title: &str, body: &str, session_id: Option<&str>) -> WinResult<XmlDocument> {
+    let activation = session_link(session_id)
+        .map(|link| format!(" activationType=\"protocol\" launch=\"{link}\""))
+        .unwrap_or_default();
     let document = XmlDocument::new()?;
     document.LoadXml(&HSTRING::from(format!(
-        "<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
+        "<toast{activation}><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
         xml_text(title), xml_text(body),
     )))?;
     Ok(document)
@@ -337,6 +357,7 @@ pub fn show(
     app_id: &str,
     title: &str,
     body: &str,
+    session_id: Option<&str>,
     report: impl Fn(DeliveryEvent) + Send + Sync + 'static,
 ) -> Result<PendingToast, String> {
     let _apartment = Apartment::new().map_err(|e| e.to_string())?;
@@ -365,7 +386,7 @@ pub fn show(
             setting.0
         ));
     }
-    let document = notification_xml(title, body).map_err(|e| e.to_string())?;
+    let document = notification_xml(title, body, session_id).map_err(|e| e.to_string())?;
     let toast = ToastNotification::CreateToastNotification(&document).map_err(|e| e.to_string())?;
     let finished = Arc::new(AtomicBool::new(false));
     let report = Arc::new(report);
@@ -468,8 +489,12 @@ mod tests {
     #[test]
     fn notification_text_is_valid_xml_and_never_injects_markup() {
         let _apartment = Apartment::new().unwrap();
-        let document =
-            notification_xml("<task> & \"完成\"", "x\0y\n</text><audio silent='true'/>").unwrap();
+        let document = notification_xml(
+            "<task> & \"完成\"",
+            "x\0y\n</text><audio silent='true'/>",
+            None,
+        )
+        .unwrap();
         let texts = document
             .GetElementsByTagName(&HSTRING::from("text"))
             .unwrap();
@@ -490,6 +515,68 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn session_toasts_launch_their_own_session_through_the_registered_protocol() {
+        let _apartment = Apartment::new().unwrap();
+        for (id, expected) in [
+            ("session-first", "deepseekharness://session/first"),
+            ("session-second", "deepseekharness://session/second"),
+            ("legacy-id", "deepseekharness://session/legacy-id"),
+            ("session-A_1.2~3", "deepseekharness://session/A_1.2~3"),
+        ] {
+            let document = notification_xml("任务完成", "回答", Some(id)).unwrap();
+            let toast = document.DocumentElement().unwrap();
+            assert_eq!(
+                toast
+                    .GetAttribute(&HSTRING::from("activationType"))
+                    .unwrap(),
+                "protocol"
+            );
+            let launch = toast.GetAttribute(&HSTRING::from("launch")).unwrap();
+            assert_eq!(launch, expected);
+            assert_eq!(
+                crate::deep_link::parse(&launch.to_string()).unwrap(),
+                format!("session-{}", id.strip_prefix("session-").unwrap_or(id))
+            );
+        }
+    }
+
+    #[test]
+    fn missing_or_malformed_session_ids_do_not_create_a_protocol_target() {
+        let _apartment = Apartment::new().unwrap();
+        for id in [
+            None,
+            Some(""),
+            Some("session-"),
+            Some("session-abc/../other"),
+            Some("session-abc?next=other"),
+            Some("session-abc#other"),
+            Some("session-%61bc"),
+            Some("session-abc\" launch=\"https://example.com"),
+            Some("session-abc\n"),
+            Some("session-会话"),
+        ] {
+            let document = notification_xml("状态通知", "正文", id).unwrap();
+            let toast = document.DocumentElement().unwrap();
+            assert_eq!(toast.GetAttribute(&HSTRING::from("launch")).unwrap(), "");
+            assert_eq!(
+                toast
+                    .GetAttribute(&HSTRING::from("activationType"))
+                    .unwrap(),
+                ""
+            );
+            assert_eq!(
+                document
+                    .GetElementsByTagName(&HSTRING::from("text"))
+                    .unwrap()
+                    .Length()
+                    .unwrap(),
+                2
+            );
+        }
+        assert_eq!(session_link(Some(&"a".repeat(121))), None);
     }
 
     #[test]
@@ -519,7 +606,11 @@ mod tests {
         })
         .unwrap();
         service
-            .submit("DeepseekHarness 通知测试", "单文件版的通知注册与发送验证。")
+            .submit(
+                "DeepseekHarness 通知测试",
+                "单文件版的通知注册与发送验证。",
+                Some("session-notification-test"),
+            )
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -541,7 +632,30 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(100));
         }
-        println!("Windows notification reached Action Center using a newly registered identity");
+        // History must retain the target independently of the process's event
+        // handlers, which also get released when a banner is dismissed.
+        drop(service);
+        let stored = history.GetHistoryWithId(&HSTRING::from(&id)).unwrap();
+        let toast = stored
+            .GetAt(0)
+            .unwrap()
+            .Content()
+            .unwrap()
+            .DocumentElement()
+            .unwrap();
+        assert_eq!(
+            toast
+                .GetAttribute(&HSTRING::from("activationType"))
+                .unwrap(),
+            "protocol"
+        );
+        assert_eq!(
+            toast.GetAttribute(&HSTRING::from("launch")).unwrap(),
+            "deepseekharness://session/notification-test"
+        );
+        println!(
+            "Windows notification reached Action Center with its session activation target intact"
+        );
     }
 
     #[test]
@@ -556,6 +670,7 @@ mod tests {
         match service.submit(
             "DeepseekHarness notification failure test",
             "Unregistered identity",
+            None,
         ) {
             Err(error) => assert!(!error.is_empty()),
             Ok(()) => match receive.recv_timeout(Duration::from_secs(5)) {
