@@ -207,6 +207,7 @@ fn cancel_before_destroy(app: &AppHandle, identity: Identity, error: &str) {
         s.ui.last_error = Some(error.into());
         s.ui.transition(UiPhase::Active);
         s.remote.restore_instance = None;
+        s.update_presentation = None;
         s.ui.snapshot.take()
     };
     drop(discarded);
@@ -352,6 +353,7 @@ pub fn restored(
         s.ui.transition(UiPhase::Active);
         s.minimal = false;
         s.remote.restore_instance = None;
+        s.update_presentation = None;
         s.ui.snapshot.take()
     };
     drop(discarded);

@@ -28,6 +28,7 @@ export function createGitOperation(remote, onChanged = () => {}) {
       }
     },
     reset: () => { if (!gitBusy(state) && state.phase !== 'unknown') publish({ phase: 'idle', error: null, commitId: '', context: null }) },
+    dismissError: () => { if (!gitBusy(state) && state.phase !== 'unknown') publish({ error: null }) },
     async recover() {
       if (!state.request || state.phase === 'recovering') return
       publish({ phase: 'recovering' })

@@ -5,5 +5,12 @@
     "version": "0.2.0-rc.2",
     "runtimeVersion": "0.2.0-rc.2",
     "hint": "支持即时移除和恢复浏览器入口；关闭时页面内容会卸载。"
+  },
+  {
+    "moduleName": "@deepseek-ai/dsh-client-ui-sidebar-browser",
+    "packageName": "@deepseek-ai/dsh-client-ui-sidebar-browser",
+    "version": "0.2.1-rc.2",
+    "runtimeVersion": "0.2.1-rc.2",
+    "hint": "支持即时移除和恢复浏览器入口；关闭时页面内容会卸载。"
   }
 ]

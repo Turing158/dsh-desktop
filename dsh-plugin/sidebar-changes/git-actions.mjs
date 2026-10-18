@@ -175,7 +175,8 @@ export function createGitActions(React, primitives) {
     }
     const errorContent = shownError && h('div', { className: 'dshChanges__gitError', role: 'alert' },
       retry && h('p', null, state.action === 'pushOnly' ? t('推送失败') : t('提交已保存 · 推送失败')),
-      h('p', null, reason(shownError)), shownError.detail && shownError.detail !== reason(shownError) && h('pre', null, shownError.detail))
+      h('p', null, reason(shownError)), shownError.detail && shownError.detail !== reason(shownError) && h('pre', null, shownError.detail),
+      !dialog && !busy && !uncertain && h(Button, { size: 'sm', onClick: () => { setError(null); operation.dismissError() } }, t('关闭')))
     return h(React.Fragment, null,
       h('div', { className: 'dshChanges__gitActions', role: 'group', 'aria-label': t('Git 操作') },
         h(Button, { size: 'sm', className: 'dshChanges__gitPrimary', disabled: busy || primaryAction === 'stage' && (!data || uncertain),

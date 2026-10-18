@@ -2,9 +2,10 @@ import { t, useLocale } from '../i18n/api.mjs'
 import { absoluteFilePath, fileAddress, changeAddress } from './file-resource.mjs'
 
 export function createFileMenu(React, primitives) {
-  const h = React.createElement, { Menu, IconFolderOpenOutlineRegular: Folder, IconFileOutlineRegular: File,
+  const h = React.createElement, { Menu, FileTypeIcon, IconFolderOpenOutlineRegular: Folder,
     IconCompareSplitOutlineRegular: Compare, IconChevronDownOutlineRegular: Down, IconChevronUpOutlineRegular: Up } = primitives
   const icon = Icon => Icon ? h(Icon, { size: 16 }) : undefined
+  const fileIcon = h(FileTypeIcon, { kind: 'other', size: 16 })
   return function FileMenu({ ctx, tab, sessionId, source, entry, workspaceRoot, point, expanded, toggle, dismiss, onError }) {
     useLocale(React)
     const path = absoluteFilePath(entry, workspaceRoot)
@@ -53,13 +54,13 @@ export function createFileMenu(React, primitives) {
     }
     const applications = apps?.map(app => ({ id: 'app:' + app.id,
       label: app.default ? t('{0}（默认）', [app.name]) : app.name,
-      icon: app.icon ? h('img', { src: app.icon, alt: '', width: 16, height: 16, className: 'dshChanges__appIcon' }) : icon(File),
+      icon: app.icon ? h('img', { src: app.icon, alt: '', width: 16, height: 16, className: 'dshChanges__appIcon' }) : fileIcon,
     })) || []
     return h(Menu, { open: true, anchor: null, portal: true, compact: true, autoFocus: true,
       listClassName: 'dshChanges__fileMenu', onClose: dismiss, onSelect: select,
       getAnchorRect: () => ({ left: point.x, right: point.x, top: point.y, bottom: point.y }),
       items: [
-        { id: 'file', label: t('打开文件'), icon: icon(File), disabled: !path || entry.status === 'deleted' },
+        { id: 'file', label: t('打开文件'), icon: fileIcon, disabled: !path || entry.status === 'deleted' },
         { id: 'diff', label: t('查看更改'), icon: icon(Compare) },
         { id: 'toggle', label: expanded ? t('收起更改') : t('展开更改'), icon: icon(expanded ? Up : Down) },
         { type: 'separator', id: 'native' },

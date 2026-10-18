@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod locale;
+mod browser_window;
 mod app_icon;
 mod attachment_images;
 mod boot_bar;
@@ -100,6 +101,7 @@ fn main() {
             let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
                 locale::desktop_locale_changed,
                 probe_state,
+                boot_bar::desktop_boot_context,
                 retry_boot,
                 cancel_install,
                 install_node,
@@ -211,6 +213,7 @@ fn create_main_window(app: &AppHandle, restoring: bool) -> tauri::Result<()> {
         (state.ui.window_generation, state.ui.geometry.clone())
     };
     let builder = tauri::WebviewWindowBuilder::new(app, "main", main_window_url(app));
+    let popup_app = app.clone();
     #[cfg(debug_assertions)]
     let builder = if let Some(dir) = std::env::var_os("DSH_DESKTOP_SMOKE_DIR") {
         builder.data_directory(PathBuf::from(dir).join("webview"))
@@ -236,6 +239,7 @@ fn create_main_window(app: &AppHandle, restoring: bool) -> tauri::Result<()> {
         // and none at all if the boot fails. See `boot_bar`.
         .initialization_script(boot_bar::initialization_script(app))
         .initialization_script(ui_snapshot::initialization_script(app, generation, restoring))
+        .on_new_window(move |url, features| browser_window::open(&popup_app, url, features))
         .on_page_load(move |window, payload| {
             let started = payload.event() == tauri::webview::PageLoadEvent::Started;
             minimal::page_load(&window, generation, payload.url(), started);

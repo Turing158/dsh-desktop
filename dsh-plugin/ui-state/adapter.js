@@ -26,6 +26,29 @@
   function readPersisted(id) {
     try { return JSON.parse(localStorage.getItem('dsh.conversation.' + id) || '{}') } catch { fail('snapshot-draft-storage') }
   }
+  function semanticDraft(value) {
+    if (value == null || typeof value === 'string') return { text: value || '', references: [] }
+    if (typeof value.text !== 'string' || !Array.isArray(value.references) || value.references.length > 10000) fail('snapshot-editor-unsupported')
+    const result = { text: value.text, references: [] }
+    let end = 0
+    if (value.command != null) {
+      const token = value.command.token
+      if (typeof token !== 'string' || !token.startsWith('/') || token.length > 256 || !token.trimEnd()
+        || !value.text.startsWith(token.trimEnd())) fail('snapshot-editor-unsupported')
+      result.command = { token }; end = token.trimEnd().length
+    }
+    for (const ref of value.references) {
+      if (!ref || ['source', 'ref', 'label', 'clipboardText'].some(key => typeof ref[key] !== 'string')
+        || !ref.source || !ref.ref || !Number.isInteger(ref.offset) || !Number.isInteger(ref.length)
+        || ref.offset < end || ref.length < 1 || ref.length !== ref.clipboardText.length
+        || value.text.slice(ref.offset, ref.offset + ref.length) !== ref.clipboardText
+        || (ref.appearance !== undefined && !['file', 'folder', 'session'].includes(ref.appearance))) fail('snapshot-editor-unsupported')
+      result.references.push({ source: ref.source, ref: ref.ref, label: ref.label, clipboardText: ref.clipboardText,
+        offset: ref.offset, length: ref.length, ...(ref.appearance ? { appearance: ref.appearance } : {}) })
+      end = ref.offset + ref.length
+    }
+    return result
+  }
   function getScroll(sessionId) {
     const scroller = document.querySelector('[data-conversation-scroll]')
     if (!scroller) return null
@@ -47,6 +70,12 @@
       if (node.nodeType === 3) {
         for (let i = 0; i <= node.textContent.length; i++) points[length + i] ??= [node, i]
         length += node.textContent.length
+      } else if (node.hasAttribute?.('data-composer-chip') || node.hasAttribute?.('data-composer-command')) {
+        // Native caretSpan uses one detect-coordinate character per chip,
+        // irrespective of its displayed label or clipboard representation.
+        const parent = node.parentNode, index = [...parent.childNodes].indexOf(node)
+        points[length] ??= [parent, index]
+        points[++length] = [parent, index + 1]
       } else if (node.nodeName === 'BR') {
         const parent = node.parentNode, index = [...parent.childNodes].indexOf(node)
         points[length] ??= [parent, index]
@@ -128,6 +157,17 @@
       if (typeof ctx.sessions.open === 'function') ctx.sessions.open(id)
       else ctx.uiWorkspace.openSession(id)
     }
+    function canClearPage() { return typeof ctx.sessions.clear === 'function' || typeof ctx.uiWorkspace.clearMain === 'function' }
+    function clearPage() {
+      // Cancel startup/default-workspace navigation before releasing mainView.
+      ctx.layout.beginNavigation?.()
+      if (typeof ctx.sessions.clear === 'function') ctx.sessions.clear()
+      else if (typeof ctx.uiWorkspace.clearMain === 'function') ctx.uiWorkspace.clearMain()
+      else fail('snapshot-navigation-unsupported')
+    }
+    const supportsSemantic = input => input && 'draftSnapshot' in input && typeof input.setDraft === 'function'
+    const editable = (input, semantic) => input.state.getSnapshot().phase === 'plain'
+      || (input.state.getSnapshot().phase === 'claimed' && supportsSemantic(input) && semantic?.command)
     const retainedDrafts = new Map()
     // DSH 0.2 releases input scopes on navigation. Keep restored attachments
     // alive until the adapter's document is disposed, including across retries.
@@ -173,7 +213,7 @@
       if (list.phase !== 'ready' || ctx.workspaces.list.getSnapshot().phase !== 'ready') fail('snapshot-page-not-ready')
       const currentId = currentSessionId(list)
       if (list.currentAddress || (currentId && ctx.sessions.subagentAddress?.(currentId))) fail('snapshot-panel-unsupported')
-      if (!currentId && typeof ctx.sessions.clear !== 'function') fail('snapshot-navigation-unsupported')
+      if (!currentId && !canClearPage()) fail('snapshot-navigation-unsupported')
       const state = layoutStore().getSnapshot()
       const changes = providers.get('desktop-changes')
       const files = providers.get('desktop-file-editor')
@@ -200,12 +240,15 @@
         if (input && (typeof current?.draft !== 'string' || !Array.isArray(current.attachmentIds)
           || typeof input.setDraft !== 'function' || typeof input.addAttachments !== 'function'
           || typeof input.removeAttachment !== 'function')) fail('snapshot-editor-unsupported')
-        const text = current?.draft ?? persisted.draft ?? ''
+        const content = semanticDraft(supportsSemantic(input) ? input.draftSnapshot : current?.draft ?? persisted.draft)
+        const text = content.text
+        const semantic = content.references.length || content.command ? content : null
+        if (current && current.draft !== text) fail('snapshot-editor-unsupported')
         const view = persisted.view || null
         if (view && view !== 'chat') fail('snapshot-panel-unsupported')
-        if (current && current.phase !== 'plain') fail('snapshot-input-busy')
+        if (input && !editable(input, semantic)) fail('snapshot-input-busy')
         if (current?.queue?.length) fail('snapshot-input-busy')
-        if (current?.occurrences?.length) fail('snapshot-editor-unsupported')
+        if (current?.occurrences?.length && !supportsSemantic(input)) fail('snapshot-editor-unsupported')
         const session = ctx.sessions.binding(id)?.session
         if (session?.getSnapshot().pendingSubmissions?.length) fail('snapshot-input-busy')
         const editor = input?.editor
@@ -231,7 +274,7 @@
           if (!list.byId[id]) fail('snapshot-session-missing')
           const selection = input ? { ...input.caretSpan(), focused: Boolean(editor.getRootElement()?.contains(document.activeElement)) } : null
           const serialized = editor ? editor.getEditorState().toJSON() : null
-          drafts.push({ sessionId: id, text, editor: serialized?.root?.children?.length === 0 ? null : serialized, selection, attachmentKeys, revision: current?.draftRev || 0, view })
+          drafts.push({ sessionId: id, text, ...(semantic ? { semantic } : {}), editor: serialized?.root?.children?.length === 0 ? null : serialized, selection, attachmentKeys, revision: current?.draftRev || 0, view })
           if (input) {
             const saved = id === currentId ? getScroll(id) : null
             const held = chatFace(id).chatScroll.read()
@@ -250,14 +293,16 @@
     async function restore(snapshot, { signal, frontendVersion, providers }) {
       const payload = snapshot.payload
       validateCapabilities()
-      if (payload.frontendVersion !== versionOf(frontendVersion)) fail('snapshot-adapter-version')
+      const frontendChanged = payload.frontendVersion !== versionOf(frontendVersion)
+      if (frontendChanged && snapshot.restoreFrontendVersion !== versionOf(frontendVersion)) fail('snapshot-adapter-version')
       if (payload.schemaVersion !== 1) fail('snapshot-schema-unsupported')
       await wait(() => ctx.sessions.list.getSnapshot().phase === 'ready' && ctx.workspaces.list.getSnapshot().phase === 'ready', signal, 'snapshot-page-not-ready')
       const list = ctx.sessions.list.getSnapshot()
       if (payload.page.sessionId && !list.byId[payload.page.sessionId]) fail('snapshot-session-missing')
       if (payload.page.workspaceId && !ctx.workspaces.list.getSnapshot().items.some(w => w.workspaceId === payload.page.workspaceId)) fail('snapshot-workspace-missing')
       for (const draft of payload.drafts) if (!list.byId[draft.sessionId]) fail('snapshot-session-missing')
-      if (!payload.page.sessionId && typeof ctx.sessions.clear !== 'function') fail('snapshot-navigation-unsupported')
+      if (!payload.page.sessionId && !canClearPage()) fail('snapshot-navigation-unsupported')
+      for (const draft of payload.drafts) if (draft.semantic != null && semanticDraft(draft.semantic).text !== draft.text) fail('snapshot-editor-unsupported')
       for (const dialog of payload.dialogs) await wait(() => providers.get(dialog.id)?.version === dialog.version, signal, 'snapshot-form-unsupported')
       // All target IDs are validated before any writes. No create/send/submit verbs.
       for (const draft of payload.drafts) {
@@ -267,8 +312,17 @@
         await wait(() => Boolean(inputFor(draft.sessionId)), signal, 'snapshot-editor-missing')
         await frame(); check(signal)
         const input = inputFor(draft.sessionId)
-        if (input.state.getSnapshot().phase !== 'plain') fail('snapshot-input-busy')
-        if (draft.editor !== null && draft.editor?.root?.children?.length !== 0) input.editor.setEditorState(input.editor.parseEditorState(JSON.stringify(draft.editor)))
+        const semantic = draft.semantic == null ? null : semanticDraft(draft.semantic)
+        if (semantic && !supportsSemantic(input)) fail('snapshot-editor-unsupported')
+        if (!editable(input, supportsSemantic(input) ? semanticDraft(input.draftSnapshot) : null)) fail('snapshot-input-busy')
+        // A package update may change Lexical's document schema. The plain draft
+        // and attachment bytes are the portable representation across versions.
+        if (semantic) {
+          // DSH resolves the command's submit handler from its own registry;
+          // restoring never submits the command or serializes that handler.
+          input.setDraft(clone(semantic))
+          await wait(() => canonical(semanticDraft(input.draftSnapshot)) === canonical(semantic), signal, 'snapshot-editor-verify')
+        } else if (!frontendChanged && draft.editor !== null && draft.editor?.root?.children?.length !== 0) input.editor.setEditorState(input.editor.parseEditorState(JSON.stringify(draft.editor)))
         else input.setDraft(draft.text)
         const attachmentIds = []
         for (const key of draft.attachmentKeys) {
@@ -316,7 +370,7 @@
       }
       check(signal)
       if (payload.page.sessionId) ctx.uiWorkspace.openSession(payload.page.sessionId)
-      else ctx.sessions.clear()
+      else clearPage()
       const store = layoutStore()
       store.actions.setSidebar(payload.layout.sidebar)
       if (payload.layout.sidebar === 0 && store.getSnapshot().layoutInfo.sidebar !== 0) store.actions.toggleSidebar()

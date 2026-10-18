@@ -7,6 +7,7 @@ import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { bootPatches } from '../dsh-plugin/plugin-control/model.mjs'
 import { checkPluginMotion } from './plugin-control-motion-checks.mjs'
+import { handleOnboarding, dismissInitialWelcome, openDshSettings, offlineModelPatch } from './dsh-ui-helpers.mjs'
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const dshBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
@@ -21,7 +22,7 @@ const original = await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')
 const patch = original.replace(/name: \.\/([^\s]+)/g, (_, name) => 'name: ' + pathToFileURL(resolve('dsh-plugin', name)).href)
   + '\n- insert:\n    - id: plugin-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 const patchPath = join(root, 'desktop.patch.yml'), bootPath = join(root, 'boot.json')
-await writeFile(patchPath, patch)
+await writeFile(patchPath, patch + offlineModelPatch)
 const catalog = JSON.parse(await readFile('dsh-plugin/plugin-control/catalog.json', 'utf8'))
 const core = JSON.parse(await readFile('dsh-plugin/plugin-control/core.json', 'utf8'))
 await writeFile(file, JSON.stringify({ version: 1, enabled: Object.fromEntries([...core, 'desktop-appearance'].map(id => [id, false])) }))
@@ -33,7 +34,7 @@ async function start() {
   output = ''
   child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--patch', bootPath, '--no-open', '--port', '0'], {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_PLUGINS_FILE: file, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes') },
+    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_PLUGINS_FILE: file, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes'), DSH_UI_SMOKE_KEY: 'offline-fixture' },
   })
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
   for (let i = 0; i < 300; i++) {
@@ -54,15 +55,10 @@ try {
   page = await browser.newPage({ viewport: { width: 1280, height: 840 } })
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
-  for (const name of ['继续', '稍后配置']) {
-    // A delayed onboarding prompt can land behind settings. Dismiss only these
-    // incidental, enabled buttons through their handlers; plugin switches below
-    // still use real pointer input and must pass the browser's hit testing.
-    await page.addLocatorHandler(page.getByRole('button', { name, exact: true }).and(page.locator(':enabled')),
-      button => button.evaluate(element => element.click()))
-  }
+  await handleOnboarding(page)
   await page.goto(url)
   await page.waitForFunction(() => Boolean(window.__PLUGIN_SMOKE__?.remote.desktopPlugins), undefined, { timeout: 40000 })
+  await dismissInitialWelcome(page)
   const call = (method, ...args) => page.evaluate(async ([method, args]) => {
     const result = await window.__PLUGIN_SMOKE__.remote.desktopPlugins[method](...args)
     if (!result.ok) throw Error(result.error.message)
@@ -71,24 +67,44 @@ try {
   let state = await call('status')
   assert.equal(state.restartRequired, false)
   async function openSettings() {
-    await page.locator('button[aria-haspopup="dialog"]').first().evaluate(button => button.click())
+    await openDshSettings(page)
     await page.locator('[data-shortcut-modal="settings"]').getByRole('button', { name: '插件', exact: true }).click()
-    await page.getByRole('tab', { name: '插件', exact: true }).click()
-    await page.locator('.dshPlugins__card').last().waitFor()
+    await page.getByRole('tab', { name: '内置插件', exact: true }).click()
+    await page.locator('.dshInventory__card').last().waitFor()
   }
-  // The desktop title bar delegates to this trigger, hidden in collapsed mode.
+  // Exercise the native settings entry alongside the desktop plugin panel.
   await openSettings()
-  assert.equal(await page.locator('.dshPlugins__card').count(), 4)
+  // Render the desktop titlebar on a second page without replacing DSH's
+  // account launcher or settings shell, then exercise the actual menu action.
+  const desktop = await browser.newPage({ viewport: { width: 1280, height: 840 } })
+  try {
+    await desktop.addInitScript(() => {
+      window.__DSH_UI_BOOT__ = { smoke: true }
+      window.__TAURI__ = { app: { getVersion: async () => '0.1.2' }, core: {
+        Channel: class { onmessage() {} },
+        invoke: async command => command === 'window_is_maximized' ? false : null,
+      } }
+    })
+    desktop.on('pageerror', error => pageErrors.push(error.message))
+    await handleOnboarding(desktop)
+    await desktop.goto(url)
+    await desktop.getByRole('button', { name: '更多', exact: true }).click()
+    await desktop.getByRole('menuitem', { name: '设置', exact: true }).click()
+    await desktop.locator('[data-shortcut-modal="settings"]').waitFor()
+    await desktop.screenshot({ path: join(root, 'titlebar-settings.png') })
+    console.log('PASS: desktop More → Settings opens the real DSH settings shell')
+  } finally { await desktop.close() }
+  assert.equal(await page.locator('.dshInventory__card').count(), 4)
   assert.equal(state.rows.find(row => row.id === 'desktop-ui').enabled, true, 'old appearance-entry switch does not override the merged feature')
   for (const id of core) await assert.rejects(call('setEnabled', id, false))
   const disclosure = page.getByRole('button', { name: '桌面通知详情', exact: true })
   assert.equal(await page.locator('.dshPlugins input[type=checkbox]').count(), 0)
   await disclosure.press('Enter')
-  await page.waitForFunction(() => document.querySelector('[data-plugin-id="desktop-notify"] .dshPlugins__disclosure')?.getAttribute('aria-expanded') === 'true')
+  await page.waitForFunction(() => document.querySelector('[data-plugin-id="desktop-notify"] .dshInventory__cardContent')?.getAttribute('aria-expanded') === 'true')
   assert.equal(await disclosure.getAttribute('aria-expanded'), 'true')
   await page.locator('#dsh-plugin-details-desktop-notify').waitFor()
   await disclosure.press('Space')
-  await page.waitForFunction(() => document.querySelector('[data-plugin-id="desktop-notify"] .dshPlugins__disclosure')?.getAttribute('aria-expanded') === 'false')
+  await page.waitForFunction(() => document.querySelector('[data-plugin-id="desktop-notify"] .dshInventory__cardContent')?.getAttribute('aria-expanded') === 'false')
   assert.equal(await disclosure.getAttribute('aria-expanded'), 'false')
   await page.screenshot({ path: join(root, 'settings.png') })
   const clientIds = {
@@ -127,7 +143,7 @@ try {
         card: rect.toJSON(), rootTop: document.getElementById('root').getBoundingClientRect().top,
         insideDialog: settings.contains(card), position: getComputedStyle(card).position,
         introBottom: document.querySelector('.dshPlugins__intro').getBoundingClientRect().bottom,
-        listTop: document.querySelector('.dshPlugins__cards').getBoundingClientRect().top,
+        listTop: document.querySelector('.dshInventory__cards').getBoundingClientRect().top,
         unobstructed: card.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)),
         width: innerWidth, horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
         oldBanner: Boolean(document.querySelector('.dshPlugins__banner')),

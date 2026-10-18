@@ -63,10 +63,8 @@
  *   - **Rename** opens a dialog here rather than the app's, because the sidebar's
  *     rename dialog is internal `useState` with no way to trigger it externally.
  *     It calls the same `rename` methods the sidebar's dialog does.
- *   - **Settings** has no programmatic open path at all (its open state is local
- *     to the settings root), so the trigger button is clicked. That button is
- *     found by `aria-haspopup="dialog"`, part of the component's accessibility
- *     contract rather than a build-specific class hash.
+ *   - **Settings** uses the shell store published by `sidebar.settings`. Older
+ *     releases without that store use the original accessible trigger button.
  */
 
 window.__ModuleLoader__.load({
@@ -1006,15 +1004,19 @@ var React = require('react')
     /**
      * Open the app's settings panel.
      *
-     * There is no programmatic path: the panel's open state is local to the
-     * settings root, and the `settings.trigger` slot supplies only content. So the
-     * trigger button is clicked. It is found by `aria-haspopup="dialog"`, which is
-     * part of the button's accessibility contract — stable across builds, unlike
-     * its CSS-module class.
+     * The current shell publishes its shared store on `sidebar.settings`.
+     * Resolve it on each invocation so HMR cannot leave a stale store here.
+     * Older shells keep local open state and expose only the trigger button.
      *
-     * @returns whether a trigger was found and clicked.
+     * @returns whether the settings shell or its legacy trigger was opened.
      */
-    function openSettings() {
+    function openSettings(ctx) {
+      var entry = ctx.slots.entriesOfSlot('sidebar.settings')[0]
+      var shell = entry?.store?.create?.()
+      if (typeof shell?.actions?.open === 'function') {
+        shell.actions.open()
+        return true
+      }
       var trigger = document.querySelector('button[aria-haspopup="dialog"]')
       if (trigger === null) return false
       trigger.click()
@@ -1636,6 +1638,7 @@ var React = require('react')
       var setUpdateOpen = updateOpenState[1]
       // Block repeated clicks before React has committed the disabled state.
       var updatePending = React.useRef(false)
+      var updateCapture = React.useRef(false)
       var desktopUpdateState = React.useState({ busy: null, result: null, error: null })
       var desktopUpdate = desktopUpdateState[0]
       var setDesktopUpdate = desktopUpdateState[1]
@@ -1767,22 +1770,26 @@ var React = require('react')
         updatePending.current = true
         var previousVersions = dshUpdate.versions
         setDshUpdate({ attempted: true, busy: channel, versions: previousVersions, error: null, message: null })
+        var bridge = window.__DSH_UI_STATE__
         try {
           if (!hasHost()) throw new Error(t('请在桌面应用中安装 dsh 更新。'))
-          var request = { channel: channel }
+          if (!bridge?.prepareRemoteApply) throw new Error(t('页面保存服务尚未准备好，请稍后重试'))
+          var identity = window.__DSH_REMOTE_IDENTITY__
+          var status = await invokeHost('remote_status', { identity: identity })
+          updateCapture.current = true
+          var payload = await bridge.prepareRemoteApply(status.frontendVersion, t('正在保存界面并更新 dsh…'))
+          var request = { channel: channel, identity: identity, payload: payload,
+            palette: window.__DSH_DESKTOP_BOOT__?.capturePalette() }
           if (channel === 'preview') request.targetVersion = previousVersions.preview
-          var installed = await invokeHost('install_dsh_update', request)
-          if (typeof installed !== 'string' || !installed) throw new Error(t('安装后未能读取版本，请重新检测。'))
-          // The stable tag can move; preview installs are pinned to the checked
-          // version and verified by the host before it reports success.
-          var versions = Object.assign({}, previousVersions, { current: installed })
-          versions[channel] = installed
-          setDshUpdate({ attempted: true, busy: null, versions: versions, error: null,
-            message: t('已安装 dsh ') + installed + t('。请从托盘退出并重新启动应用，使新版本生效。') })
+          await invokeHost('install_dsh_update', request)
+          // The host now owns the snapshot and navigates to its install page.
+          // Keep input frozen until the new backend restores this document.
         } catch (error) {
+          bridge?.finishRemoteApply()
+          updatePending.current = false
           setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: String((error && error.message) || error), message: null })
         } finally {
-          updatePending.current = false
+          updateCapture.current = false
         }
       }
 
@@ -1797,11 +1804,12 @@ var React = require('react')
             return Boolean(node && (node.matches?.('.dshTb__dialogField, .dshTb__about') || node.querySelector?.('.dshTb__dialogField, .dshTb__about')))
           },
           capture: function () {
-            if (renamePending || updatePending.current || desktopUpdatePending.current) throw new Error('snapshot-input-busy')
+            if (renamePending || (!updateCapture.current && (updatePending.current || desktopUpdatePending.current))) throw new Error('snapshot-input-busy')
             setOpenMenu(null)
-            if (!rename && !confirm && !aboutOpen && !dshUpdate.attempted) return null
+            if (!rename && !confirm && !aboutOpen && (!dshUpdate.attempted || updateCapture.current)) return null
             return { rename: rename, value: renameValue, confirm: confirm, about: aboutOpen,
-              update: dshUpdate, updateOpen: updateOpen, desktopUpdate: desktopUpdate, updateTab: updateTab,
+              update: updateCapture.current ? null : dshUpdate, updateOpen: !updateCapture.current && updateOpen,
+              desktopUpdate: updateCapture.current ? null : desktopUpdate, updateTab: updateTab,
               sessionId: currentSessionId(ctx.sessions.list.getSnapshot()) || null }
           },
           restore: function (saved) {
@@ -2383,7 +2391,7 @@ var React = require('react')
         }
         if (which === 'more') {
           if (id === 'toggle-styles') toggleStyles()
-          if (id === 'settings') openSettings()
+          if (id === 'settings') openSettings(ctx)
           if (id === 'about') setAboutOpen(true)
         }
       }

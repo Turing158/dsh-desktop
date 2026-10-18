@@ -70,6 +70,8 @@ pub struct AppState {
     /// The web app's appearance preference, as last reported by the UI plugin.
     /// Drives the native title bar's colors.
     pub appearance: crate::dsh::ThemePreference,
+    /// Old DSH colors until an update has restored the new interface.
+    pub update_presentation: Option<crate::boot_bar::UpdatePresentation>,
     /// Visibility compatibility flag. The confirmed lifecycle lives in `ui.phase`.
     /// In-memory only; a restart starts with the full interface.
     pub minimal: bool,
@@ -94,6 +96,7 @@ impl Default for AppState {
             process: None,
             installer: None,
             appearance: crate::dsh::ThemePreference::default(),
+            update_presentation: None,
             minimal: false,
             ui: crate::ui_snapshot::UiState::default(),
             pending_deep_link: None,
@@ -133,6 +136,7 @@ pub fn shared() -> Shared {
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusReport {
     pub phase: PublicPhase,
+    pub updating_dsh: bool,
     pub node_path: Option<PathBuf>,
     pub node_version: Option<String>,
     pub dsh_path: Option<PathBuf>,
@@ -153,6 +157,7 @@ pub fn status(
 ) -> StatusReport {
     StatusReport {
         phase: PublicPhase::from(&state.phase),
+        updating_dsh: state.update_presentation.is_some(),
         node_path,
         node_version,
         dsh_path: state

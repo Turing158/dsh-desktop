@@ -115,6 +115,114 @@ test('multi-session controlled drafts and image/file contents survive, without r
   assert.equal(fresh.inputs.get('s1').state.getSnapshot().attachmentIds.length, 2)
 })
 
+test('an explicit update restores portable drafts and attachment bytes only into its verified target', async () => {
+  const original = fixture()
+  const file = new File(['保留附件内容'], 'note.txt', { type: 'text/plain' })
+  original.inputs.get('s1').addAttachments(original.ctx.conversation.createDrafts('s1', [file]).map(a => a.id))
+  const payload = await original.adapter.capture(options())
+  const snapshot = { snapshotId: 8, payload, restoreFrontendVersion: '0.2.1-rc.1' }
+  const fresh = fixture({ text: '', second: '' })
+  for (const input of fresh.inputs.values()) input.editor.parseEditorState = () => { throw Error('old editor schema') }
+  await assert.rejects(fresh.adapter.restore(snapshot, { ...options(), frontendVersion: '0.2.2' }), /snapshot-adapter-version/)
+  assert.equal(fresh.inputs.get('s1').state.getSnapshot().draft, '')
+  await fresh.adapter.restore(snapshot, { ...options(), frontendVersion: '0.2.1-rc.1' })
+  assert.equal(fresh.inputs.get('s1').state.getSnapshot().draft, '草稿一')
+  assert.equal(fresh.inputs.get('s2').state.getSnapshot().draft, 'draft two')
+  assert.equal(await [...fresh.attachments.values()][0].file.text(), '保留附件内容')
+})
+
+test('inactive plain structured drafts remain portable and malformed references stop capture', async () => {
+  const original = fixture()
+  original.inputs.delete('s2')
+  for (const text of ['', '未打开会话的草稿']) {
+    original.storage.set('dsh.conversation.s2', JSON.stringify({ draft: { text, references: [] } }))
+    const payload = await original.adapter.capture(options())
+    const draft = payload.drafts.find(draft => draft.sessionId === 's2')
+    if (text) assert.equal(draft.text, text)
+    assert.ok(payload.drafts.every(draft => typeof draft.text === 'string'))
+  }
+  original.storage.set('dsh.conversation.s2', JSON.stringify({ draft: { text: '@file', references: [{ id: 'file' }] } }))
+  await assert.rejects(original.adapter.capture(options()), /snapshot-editor-unsupported/)
+})
+
+function semanticFixture(args) {
+  const f = fixture(args)
+  for (const input of f.inputs.values()) {
+    const state = input.state.getSnapshot()
+    let content = { text: state.draft, references: [] }
+    Object.defineProperty(input, 'draftSnapshot', { get: () => content })
+    input.setDraft = value => {
+      content = typeof value === 'string' ? { text: value, references: [] } : structuredClone(value)
+      state.draft = content.text; state.occurrences = content.references
+      state.phase = 'plain'
+      if (content.command) {
+        const command = content.command; delete content.command
+        // The native command registry restores claims asynchronously.
+        setTimeout(() => { content.command = command; state.phase = 'claimed' }, 5)
+      }
+    }
+    input.editor.parseEditorState = () => { throw Error('semantic drafts must use the native draft setter') }
+  }
+  return f
+}
+const referenceDraft = () => ({ text: '查看 @说明.txt 的内容', references: [
+  { source: 'file', ref: 'C:/project/说明.txt', label: '说明.txt', clipboardText: '@说明.txt', offset: 3, length: 7, appearance: 'file' },
+] })
+const plainObject = value => JSON.parse(JSON.stringify(value))
+
+test('inactive reference and command drafts retain their semantics across a frontend update', async () => {
+  const original = semanticFixture({ text: '', second: '' })
+  original.inputs.delete('s2')
+  const content = referenceDraft()
+  original.storage.set('dsh.conversation.s2', JSON.stringify({ draft: content }))
+  original.inputs.get('s1').setDraft({ text: '/goal ', references: [], command: { token: '/goal ' } })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  const [attachment] = original.ctx.conversation.createDrafts('s1', [new File(['keep command attachment'], 'keep.txt')])
+  original.inputs.get('s1').addAttachments([attachment.id])
+  const payload = await original.adapter.capture(options())
+  assert.deepEqual(plainObject(payload.drafts.find(d => d.sessionId === 's2').semantic), content)
+  assert.equal(payload.drafts.find(d => d.sessionId === 's1').semantic.command.token, '/goal ')
+  const fresh = semanticFixture({ text: '', second: '' })
+  const opts = { ...options(), frontendVersion: '0.2.2' }
+  const snapshot = { snapshotId: 30, payload, restoreFrontendVersion: opts.frontendVersion }
+  await fresh.adapter.restore(snapshot, opts)
+  await fresh.adapter.restore(snapshot, opts)
+  assert.equal(fresh.inputs.get('s1').state.getSnapshot().phase, 'claimed')
+  assert.equal(fresh.inputs.get('s1').draftSnapshot.command.token, '/goal ')
+  assert.deepEqual(plainObject(fresh.inputs.get('s2').draftSnapshot), content)
+  assert.equal(fresh.creations, 1)
+  assert.equal(await [...fresh.attachments.values()][0].file.text(), 'keep command attachment')
+})
+
+test('live semantic drafts override stale storage and busy input still prevents capture', async () => {
+  const f = semanticFixture(), input = f.inputs.get('s1')
+  input.setDraft(referenceDraft())
+  f.storage.set('dsh.conversation.s1', JSON.stringify({ draft: 'stale' }))
+  const payload = await f.adapter.capture(options())
+  assert.deepEqual(plainObject(payload.drafts[0].semantic), referenceDraft())
+  for (const phase of ['adjudicating', 'submitting', 'pending', 'claimed']) {
+    input.state.getSnapshot().phase = phase
+    await assert.rejects(f.adapter.capture(options()), /snapshot-input-busy/)
+  }
+  input.state.getSnapshot().phase = 'plain'
+  input.state.getSnapshot().queue = [{}]
+  await assert.rejects(f.adapter.capture(options()), /snapshot-input-busy/)
+  input.state.getSnapshot().queue = []
+  input.editor.isComposing = () => true
+  await assert.rejects(f.adapter.capture(options()), /snapshot-input-busy/)
+})
+
+test('semantic restore rejects unsupported runtimes and corrupt reference spans without flattening chips', async () => {
+  const f = semanticFixture(), input = f.inputs.get('s1')
+  input.setDraft(referenceDraft())
+  const payload = await f.adapter.capture(options())
+  const older = fixture({ text: 'untouched' })
+  await assert.rejects(older.adapter.restore({ payload }, options()), /snapshot-editor-unsupported/)
+  assert.equal(older.inputs.get('s1').state.getSnapshot().draft, 'untouched')
+  payload.drafts[0].semantic.references[0].offset++
+  await assert.rejects(f.adapter.restore({ payload }, options()), /snapshot-editor-unsupported/)
+})
+
 test('a removed target stops restore before writing drafts into any session', async () => {
   const payload = await fixture().adapter.capture(options())
   const fresh = fixture({ text: 'untouched' }); delete fresh.state.byId.s2
@@ -227,7 +335,7 @@ test('missing service contracts stop capture before invoking providers or changi
   }
 })
 
-test('changed layout and chat contracts fail with capability errors; modern empty navigation is refused', async () => {
+test('changed layout, chat and missing empty-navigation contracts fail with capability errors', async () => {
   let f = fixture()
   delete f.ctx.slots.entriesOfSlot('root')[0].store.create().actions.setSidebar
   await assert.rejects(f.adapter.capture(options()), /snapshot-layout-unsupported/)
@@ -241,6 +349,25 @@ test('changed layout and chat contracts fail with capability errors; modern empt
   f.state.byId.s1.retainedBy = { mainView: 1 }
   f.ctx.sessions.subagentAddress = () => ({ parentId: 'parent', sessionId: 's1' })
   await assert.rejects(f.adapter.capture(options()), /snapshot-panel-unsupported/)
+})
+
+test('modern empty pages cancel pending navigation and clear mainView after restoring dormant drafts', async () => {
+  const f = modernFixture(), calls = []
+  f.ctx.layout.beginNavigation = () => calls.push('begin')
+  f.ctx.uiWorkspace.clearMain = () => {
+    calls.push('clear')
+    for (const row of Object.values(f.state.byId)) row.retainedBy = {}
+    f.ctx.layout.selectPanel(null)
+  }
+  f.ctx.uiWorkspace.clearMain(); calls.length = 0
+  f.storage.set('dsh.conversation.s2', JSON.stringify({ draft: 'dormant draft' }))
+  const payload = await f.adapter.capture(options())
+  assert.equal(payload.page.sessionId, null)
+  f.ctx.uiWorkspace.openSession('s1')
+  await f.adapter.restore({ payload }, options())
+  assert.deepEqual(calls, ['begin', 'clear'])
+  assert.ok(Object.values(f.state.byId).every(row => !row.retainedBy.mainView))
+  assert.equal(f.inputs.get('s2').state.getSnapshot().draft, 'dormant draft')
 })
 
 test('changed versions, schema and cancellation are checked before changing UI data', async () => {

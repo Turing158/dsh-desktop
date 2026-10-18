@@ -8,6 +8,18 @@ import { readFileSync } from 'node:fs'
 const name = 'desktop-title-bar'
 const inject = []
 
+/** Head bootstrap downloads block WebView2's first paint and animation clock.
+ * Execute the same ordered bootstrap rows just inside body, after the inline
+ * module queue and graph, and before the upstream boot-readiness tail.
+ */
+export function paintableBootInjections(rows) {
+  const batches = rows.find(row => row.kind === 'global' && row.name === '__DSH_BOOT__')?.value?.batches
+  if (!Array.isArray(batches)) return rows
+  const bootstrap = new Set(batches.filter(batch => batch.phase === 'bootstrap').map(batch => batch.url))
+  return rows.map(row => row.kind === 'script-src' && row.placement === 'head' && bootstrap.has(row.src)
+    ? { ...row, placement: 'body' } : row)
+}
+
 export function readTitleBarStyles() {
   const source = readFileSync(new URL('../ui-overlay/theme.css', import.meta.url), 'utf8')
   const begin = '/* dsh-titlebar:start */', end = '/* dsh-titlebar:end */'

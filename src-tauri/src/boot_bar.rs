@@ -57,6 +57,58 @@
 //! compile time — so editing it would need a full rebuild instead of the window
 //! reload every other overlay asset needs.
 
+use serde::{Deserialize, Serialize};
+use tauri::Manager;
+
+/// Resolved colors from the running DSH, retained across update navigations.
+/// Values are assigned through CSS properties, never interpolated into CSS text.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Palette {
+    pub dark: bool,
+    pub background: String,
+    pub foreground: String,
+    pub border: String,
+}
+
+impl Palette {
+    pub fn bounded(self) -> Option<Self> {
+        [&self.background, &self.foreground, &self.border]
+            .iter()
+            .all(|color| !color.is_empty() && color.len() <= 128)
+            .then_some(self)
+    }
+}
+
+#[derive(Default)]
+pub struct UpdatePresentation {
+    pub palette: Option<Palette>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BootContext {
+    local: bool,
+    restoring: bool,
+    updating: bool,
+    palette: Option<Palette>,
+}
+
+/// Available before the DSH modules load, on the same origins as window controls.
+#[tauri::command]
+pub fn desktop_boot_context(window: tauri::WebviewWindow) -> Result<BootContext, String> {
+    crate::window_controls::validate_window(&window)?;
+    let url = window.url().map_err(|_| "window-origin")?;
+    let shared = window.state::<crate::state::Shared>();
+    let state = shared.lock().map_err(|_| "window-state")?;
+    Ok(BootContext {
+        local: crate::ui_snapshot::is_app_document(window.app_handle(), &url),
+        restoring: state.ui.snapshot.is_some(),
+        updating: state.update_presentation.is_some(),
+        palette: state.update_presentation.as_ref().and_then(|update| update.palette.clone()),
+    })
+}
+
 /// Resource-relative location of the injected bar.
 #[cfg(not(feature = "single"))]
 const BAR_RESOURCE: &str = "dsh-plugin/title-bar/boot.js";

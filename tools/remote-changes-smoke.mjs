@@ -3,12 +3,13 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, unlink } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { SnapshotStore } from '../dsh-plugin/sidebar-changes/host/snapshot-store.mjs'
 import { hash } from '../dsh-plugin/sidebar-changes/host/paths.mjs'
 import { git } from '../dsh-plugin/sidebar-changes/host/git-provider.mjs'
+import { offlineModelPatch, handleOnboarding } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -24,11 +25,14 @@ await writeFile(join(probe, 'index.js'), 'export function apply() {}\n')
 await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({id:'@dsh-desktop/remote-changes-smoke',factory:()=>({
   inject:['sessions','workspaces','uiWorkspace','sidebarRight','remote','remote.desktopChanges'],apply(ctx){window.__REMOTE_CHANGES_SMOKE__=ctx}})})`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')).replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
+  + offlineModelPatch
   + '\n- insert:\n    - id: remote-changes-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 await writeFile(join(root, 'patch.yml'), patch)
 const name = '中文 文件.txt', before = 'before\n', staged = 'staged change\n', working = 'working change\n'
+const deleted = '新建 文本文档.txt'
 await git(workspace, ['init'])
 await git(workspace, ['config', 'user.name', 'Test']); await git(workspace, ['config', 'user.email', 'test@example.invalid'])
+await writeFile(join(workspace, deleted), 'removed file\n')
 await writeFile(join(workspace, name), before); await git(workspace, ['add', '.']); await git(workspace, ['commit', '-m', 'test: initial commit'])
 await writeFile(join(workspace, name), staged); await git(workspace, ['add', '.']); await writeFile(join(workspace, name), working)
 
@@ -39,7 +43,7 @@ const pass = text => { report.checks.push(text); console.log('PASS: ' + text) }
 try {
   child = spawn(process.execPath, [dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0', '--trusted-host', hostname], {
     cwd: workspace, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: snapshots },
+    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: snapshots, DSH_UI_SMOKE_KEY: 'offline-fixture' },
   })
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
   let url
@@ -59,9 +63,7 @@ try {
   }, desktop)
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.type() === 'error' && message.text().includes('slot entry crashed')) errors.push(message.text()) })
-  for (const label of ['继续', '我知道了', '稍后配置']) {
-    await page.addLocatorHandler(page.getByRole('button', { name: label, exact: true }).and(page.locator(':enabled')), button => button.click())
-  }
+  await handleOnboarding(page)
   await page.goto(remote.href)
   await page.waitForFunction(() => Boolean(window.__REMOTE_CHANGES_SMOKE__), undefined, { timeout: 40000 })
   assert.deepEqual(await page.evaluate(() => ({ secure: isSecureContext, uuidBeforeBoot: window.__UUID_BEFORE_BOOT__, browser: document.documentElement.hasAttribute('data-dsh-browser') })),
@@ -105,6 +107,44 @@ try {
     assert.equal(await panel().evaluate(node => node.scrollWidth <= node.clientWidth + 1), true)
   }
   pass('another Changes tab opens correctly and the file diff fits the remote viewport')
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await unlink(join(workspace, deleted))
+  await source('未提交'); await file().waitFor()
+  // Force a real, recoverable Git failure without changing the user's repository.
+  const lock = join(workspace, '.git/index.lock')
+  await writeFile(lock, '', { flag: 'wx' })
+  try {
+    await panel().getByRole('button', { name: '暂存', exact: true }).click()
+    await panel().locator('.dshChanges__gitError').filter({ hasText: 'index.lock' }).waitFor()
+  } finally { await unlink(lock) }
+  for (const [label, expected] of [['当前会话', 'staged change'], ['暂存区', 'staged change'], ['未提交', 'working change']]) {
+    await source(label); await file().waitFor()
+    if (await file().getAttribute('aria-expanded') !== 'true') await file().click()
+    await added(expected)
+    assert.equal(await panel().getByRole('button', { name: '更改范围', exact: true }).isEnabled(), true)
+  }
+  const errorBanner = panel().locator('.dshChanges__gitError')
+  await errorBanner.getByRole('button', { name: '关闭', exact: true }).click()
+  await errorBanner.waitFor({ state: 'detached' })
+  pass('failed Git writes keep all change views and diffs readable; the shared error can be dismissed')
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) await source('未提交')
+    await panel().getByRole('button', { name: '暂存', exact: true }).click()
+    await page.locator('.dshChanges[data-source="staged"]:visible').waitFor()
+    assert.equal(await panel().locator('.dshChanges__gitError').count(), 0)
+    const removed = panel().getByRole('button', { name: /^新建 文本文档.txt，/ })
+    if (await removed.getAttribute('aria-expanded') !== 'true') await removed.click()
+    await panel().locator('.dshChanges__line[data-kind="-"] code').filter({ hasText: 'removed file' }).waitFor()
+  }
+  await panel().getByRole('button', { name: '提交', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '提交与推送', exact: true })
+  await dialog.getByRole('textbox', { name: '提交信息', exact: true }).fill('test: recover Git changes')
+  await dialog.getByRole('button', { name: '提交', exact: true }).click()
+  await dialog.getByText('已提交', { exact: true }).waitFor()
+  await dialog.getByRole('button', { name: '完成', exact: true }).click()
+  assert.equal((await git(workspace, ['show', 'HEAD:' + name])).toString('utf8'), working)
+  assert.equal((await git(workspace, ['ls-files', '--', deleted])).length, 0)
+  pass('repeated staging of a Chinese deletion and committing work after a Git failure')
   const next = await page.evaluate(async path => {
     const ctx = window.__REMOTE_CHANGES_SMOKE__, workspace = await ctx.workspaces.create({ path })
     const id = await ctx.sessions.create({ workspaceId: workspace.workspaceId }); ctx.uiWorkspace.openSession(id); ctx.sidebarRight.openTab('desktop-changes'); return id

@@ -169,6 +169,16 @@ test('a phase with no version is still a sentence', async () => {
   assert.equal(painted(body, app).text, '正在启动工作空间…')
 })
 
+test('an update shows its status and expanded installation progress', async () => {
+  const { body, app, handlers } = loadPage({ invoke: async () => ({ phase: { kind: 'installing', version: 'latest' }, updating_dsh: true }) })
+  await settle()
+  assert.equal(painted(body, app).headings[0], '正在更新 dsh…')
+  const details = body.walk().find(node => node.tagName === 'DETAILS')
+  assert.equal(details.attributes.open, '')
+  handlers['install-progress']({ payload: { line: 'Downloading dsh' } })
+  assert.ok(painted(body, app).text.includes('Downloading dsh'))
+})
+
 test('a stale-origin refusal stays quiet and keeps the page alive', async () => {
   // The refusal is expected on the edge of the navigation to the DSH server, so
   // no card may be painted - but the spinner has to remain, or the window would

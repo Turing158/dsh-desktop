@@ -6,6 +6,34 @@ import { t } from './i18n/api.mjs'
 
 // Run the bundle's actual state readers against both supported Controller APIs.
 const source = readFileSync(new URL('./title-bar/client.js', import.meta.url), 'utf8')
+const settingsStart = source.indexOf('    function openSettings(')
+const settingsSource = source.slice(settingsStart, source.indexOf('    /**', settingsStart))
+const settingsOpener = document => vm.runInNewContext(settingsSource + '\nopenSettings', { document })
+
+test('settings opens the current shell store without an account-menu click', () => {
+  let calls = 0
+  const state = { actions: { open() { assert.equal(this, state.actions); calls++ } } }
+  let entry = { store: { create: () => state } }
+  const ctx = { slots: { entriesOfSlot: name => { assert.equal(name, 'sidebar.settings'); return [entry] } } }
+  const open = settingsOpener({ querySelector() { throw Error('native settings store must take precedence') } })
+  assert.equal(open(ctx), true)
+  entry = { store: { create: () => ({ actions: { open: () => { calls += 10 } } }) } }
+  assert.equal(open(ctx), true)
+  assert.equal(calls, 11, 'an HMR replacement is resolved on the next click')
+})
+
+test('settings retains the legacy trigger and handles a missing shell', () => {
+  let calls = 0
+  const ctx = { slots: { entriesOfSlot: () => [] } }
+  const open = settingsOpener({ querySelector(selector) {
+    assert.equal(selector, 'button[aria-haspopup="dialog"]')
+    return { click: () => calls++ }
+  } })
+  assert.equal(open(ctx), true)
+  assert.equal(calls, 1)
+  assert.equal(settingsOpener({ querySelector: () => null })(ctx), false)
+})
+
 const readers = source.slice(source.indexOf('    function currentWorkspace('), source.indexOf('    function hasSelection('))
 const { currentSession, currentWorkspace } = vm.runInNewContext(readers + '\n({currentSession, currentWorkspace})')
 const context = (list) => ({

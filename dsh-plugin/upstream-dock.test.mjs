@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createUpstreamRegistry, createUpstreamBody, UPSTREAM_PREFIX } from './sidebar-terminal/upstream-dock.mjs'
+import { createUpstreamRegistry, createUpstreamBody, createUpstreamRemoteState, UPSTREAM_PREFIX } from './sidebar-terminal/upstream-dock.mjs'
 import { createUpstreamPreferences, installUpstreamShellDefault, bindUpstreamShortcut } from './sidebar-terminal/upstream-preferences.mjs'
 import { SettingsSchema } from './sidebar-terminal/index.js'
 import { createDockStore, createDockWorkspaceSource } from './sidebar-terminal/dock.mjs'
@@ -16,7 +16,7 @@ function fixture(t, disk = new Map(), preferences) {
   const models = new Map()
   const storage = { getItem: key => disk.get(key), setItem: (key, value) => disk.set(key, value) }
   const ctx = {
-    sessions: { list: source({ phase: 'ready', current: 'a' }) },
+    sessions: { list: source({ phase: 'ready', current: 'a', byId: { a: { id: 'a' }, a2: { id: 'a2' }, b: { id: 'b' } } }) },
     workspaces: { list: source({ phase: 'ready', items: [
       { path: 'C:/one', sessionIds: ['a', 'a2'] }, { path: 'C:/two', sessionIds: ['b'] },
     ] }) },
@@ -40,6 +40,59 @@ function fixture(t, disk = new Map(), preferences) {
   t.after(dispose)
   return { ctx, registry, store, disk, calls, dispose, originalRetain }
 }
+
+test('native dock snapshots cross origins with project owners, shells, active tabs and visibility intact', t => {
+  const original = fixture(t, new Map(), { shellPath: () => 'chosen-shell' })
+  const select = (f, current) => f.ctx.sessions.list.set({ ...f.ctx.sessions.list.getSnapshot(), current })
+  original.store.open(); const first = original.store.getSnapshot().tabs[0]
+  original.store.add(); original.store.activate(first.contentId)
+  original.store.resize(320)
+  original.store.collapse(true)
+  select(original, 'b')
+  original.registry.withShellPath('second-shell', () => original.store.add())
+  original.store.collapse(true)
+  const provider = createUpstreamRemoteState(original.ctx, original.registry, original.store)
+  const saved = JSON.parse(JSON.stringify(provider.capture()))
+  assert.equal(saved.backend, 'dsh')
+  assert.equal(saved.sessions.length, 3)
+  const next = fixture(t)
+  const restored = createUpstreamRemoteState(next.ctx, next.registry, next.store)
+  restored.restore(saved); restored.restore(saved)
+  assert.deepEqual(restored.capture(), saved)
+  assert.equal(next.calls.views.length, 0, 'restoration does not allocate terminals or send commands')
+  assert.equal(next.calls.closes.length, 0, 'retries do not restart restored shells')
+  assert.equal(next.store.getSnapshot().active, first.contentId)
+  assert.equal(next.store.getSnapshot().height, 320)
+  next.registry.view(next.store.getSnapshot().tabs[0])
+  select(next, 'b')
+  next.registry.view(next.store.getSnapshot().tabs[0])
+  assert.deepEqual(next.calls.views.map(v => [v.sessionId, v.shellPath]), [['a', 'chosen-shell'], ['b', 'second-shell']])
+})
+
+test('native terminal restore rejects missing owners and inconsistent payloads before changing holds', t => {
+  const original = fixture(t); original.store.open()
+  const saved = createUpstreamRemoteState(original.ctx, original.registry, original.store).capture()
+  for (const corrupt of [
+    value => { value.sessions[0].sessionId = 'missing' },
+    value => { value.backend = 'desktop' },
+    value => { value.dock.workspaces[0].tabs.push(value.dock.workspaces[0].tabs[0]) },
+    value => { value.sessions[0].cwd = 'C:/wrong-project' },
+    value => { value.dock.workspaces[0].active = 'missing' },
+  ]) {
+    const next = fixture(t), input = structuredClone(saved); corrupt(input)
+    const provider = createUpstreamRemoteState(next.ctx, next.registry, next.store)
+    assert.throws(() => provider.restore(input), /snapshot-(terminal-unsupported|session-missing)/)
+    assert.equal(next.registry.sessions.length, 0)
+    assert.equal(next.calls.views.length, 0)
+    assert.equal(next.calls.closes.length, 0)
+  }
+  const next = fixture(t)
+  const provider = createUpstreamRemoteState(next.ctx, next.registry, next.store)
+  provider.restore(saved)
+  const conflict = structuredClone(saved); conflict.sessions[0].shellPath = 'changed'
+  assert.throws(() => provider.restore(conflict), /snapshot-terminal-conflict/)
+  assert.deepEqual(provider.capture(), saved)
+})
 
 test('DSH dock retains collapsed and inactive projects alongside right sidebar terminals', t => {
   const f = fixture(t)

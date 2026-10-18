@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { handleOnboarding, offlineModelPatch } from './dsh-ui-helpers.mjs'
 
 export const inject = ['agents', 'llm', 'sessions', 'sessionPersistence', 'sessionQuery', 'sessionReferenceResolver']
 export function apply(ctx) {
@@ -68,13 +69,13 @@ async function main() {
   await writeFile(join(probe, 'package.json'), JSON.stringify({ name: '@dsh-desktop/session-link-smoke', type: 'module', main: 'index.js',
     exports: { '.': './index.js', './client': './client.js' }, dsh: { client: { platform: 'web' } } }))
   await writeFile(join(probe, 'index.js'), `export * from ${JSON.stringify(import.meta.url)}`)
-  await writeFile(join(probe, 'client.js'), "window.__ModuleLoader__.load({id:'@dsh-desktop/session-link-smoke',factory:()=>({inject:['sessions','uiWorkspace'],apply(ctx){window.__SESSION_LINK_SMOKE__=ctx}})})")
+  await writeFile(join(probe, 'client.js'), "window.__ModuleLoader__.load({id:'@dsh-desktop/session-link-smoke',factory:()=>({inject:['sessions','uiWorkspace','slots'],apply(ctx){window.__SESSION_LINK_SMOKE__=ctx}})})")
   const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')).replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
     + '\n- insert:\n    - id: session-link-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
-  await writeFile(join(root, 'patch.yml'), patch)
+  await writeFile(join(root, 'patch.yml'), patch + offlineModelPatch)
   const child = spawn(process.execPath, [bin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: bin, DSH_SESSION_LINK_SMOKE: root },
+    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: bin, DSH_SESSION_LINK_SMOKE: root, DSH_UI_SMOKE_KEY: 'offline-fixture' },
   })
   let output = '', browser, page, report = { root, browserErrors: [] }
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
@@ -100,9 +101,7 @@ async function main() {
     page.on('response', response => { if (response.status() >= 400) report.browserErrors.push(response.status() + ' ' + response.url()) })
     await page.goto(url, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => window.__SESSION_LINK_SMOKE__?.sessions.list.getSnapshot().phase === 'ready')
-    for (const name of ['继续', '我知道了', '稍后配置']) {
-      await page.addLocatorHandler(page.getByRole('button', { name, exact: true }), button => button.click())
-    }
+    await handleOnboarding(page)
     await page.evaluate(id => window.__SESSION_LINK_SMOKE__.uiWorkspace.openSession(id), result.target)
     const message = page.locator('[data-dsh-session-message="user"]')
     const links = message.locator('a[data-dsh-session-link]')
@@ -168,6 +167,43 @@ async function main() {
     assert.ok(lifecycle.checks.every(Boolean), JSON.stringify(lifecycle))
     assert.deepEqual(lifecycle.opened, [result.link])
     report.checks.push('native text updates, node replacement and disposal preserve text without stale links')
+    // Use the actual browser-only keyed registry, including any other native
+    // wrappers. Registration must settle and disposing probes must remove all
+    // their wrappers without removing the original renderer.
+    const registry = await page.evaluate(async () => {
+      const slots = window.__SESSION_LINK_SMOKE__.slots, slot = 'conversation.chat.node'
+      const winner = () => slots.entriesOfSlot(slot).find(entry => entry.options.key === 'user')
+      const tick = () => new Promise(resolve => setTimeout(resolve, 50))
+      const baselineCount = slots.entries(slot).length, baseline = winner()
+      const checks = {}
+      let notifications = 0, removeOriginal, removeReplacement
+      const off = slots.subscribe(slot, () => { notifications++ })
+      try {
+        const original = () => null, replacement = () => null
+        removeOriginal = slots.register({ name: slot, key: 'user', locale: 'chat', priority: -1000 }, original)
+        await tick()
+        const first = winner()
+        checks.wrapped = first.component !== original && first.options.priority < -1000 && first.locale === 'chat'
+        await tick()
+        checks.idleStable = winner() === first
+        removeReplacement = slots.register({ name: slot, key: 'user', locale: 'chat', priority: -1005 }, replacement)
+        await tick()
+        checks.replaced = winner().component !== first.component && winner().component !== replacement && winner().options.priority < -1005
+        removeReplacement(); removeReplacement = null
+        await tick()
+        checks.replacementDisposed = winner().options.priority === first.options.priority && !slots.entries(slot).some(entry => entry.component === replacement)
+        removeOriginal(); removeOriginal = null
+        await tick()
+        checks.originalRestored = slots.entries(slot).length === baselineCount && winner().options.priority === baseline.options.priority
+        const restored = winner(), settled = notifications
+        await tick()
+        checks.settled = winner() === restored && notifications === settled && notifications < 100
+        return { checks, notifications }
+      } finally { removeReplacement?.(); removeOriginal?.(); off() }
+    })
+    assert.ok(Object.values(registry.checks).every(Boolean), JSON.stringify(registry))
+    report.registry = registry
+    report.checks.push('real keyed message slots settle, follow renderer replacement and dispose every temporary wrapper')
     console.log(JSON.stringify(report, null, 2))
   } catch (error) {
     report.error = error.stack

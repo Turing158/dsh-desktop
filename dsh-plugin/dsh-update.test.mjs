@@ -20,7 +20,7 @@ function deferred() {
 // primitives and native IPC are stubs. Tests click its real handlers and await
 // controlled native responses, including repeated clicks before a rerender.
 function fixture({ check = async () => ({ current: tags.latest, ...tags }), install,
-  checkDesktop = async () => desktopRelease, openRelease, host = true } = {}) {
+  checkDesktop = async () => desktopRelease, openRelease, host = true, capture = async () => ({ page: { kind: 'dsh' } }) } = {}) {
   let factory, slot, cursor = 0
   const hooks = [], calls = [], focused = []
   const React = {
@@ -40,6 +40,12 @@ function fixture({ check = async () => ({ current: tags.latest, ...tags }), inst
     useEffect() {},
   }
   const sandbox = {
+    __DSH_REMOTE_IDENTITY__: { backendInstance: 1, documentNonce: [1] },
+    __DSH_DESKTOP_BOOT__: { capturePalette: () => ({ dark: false, background: 'rgb(246, 248, 250)', foreground: 'rgb(20, 22, 24)', border: 'rgb(200, 202, 204)' }) },
+    __DSH_UI_STATE__: {
+      prepareRemoteApply: async version => { calls.push({ command: 'capture', version }); return capture() },
+      finishRemoteApply: () => calls.push({ command: 'unfreeze' }),
+    },
     document: {
       body: {}, addEventListener() {},
       getElementById: id => ({ focus: () => focused.push(id) }),
@@ -51,6 +57,7 @@ function fixture({ check = async () => ({ current: tags.latest, ...tags }), inst
       calls.push({ command, args })
       if (command === 'check_dsh_update') return check?.()
       if (command === 'install_dsh_update') return install?.(args.channel, args.targetVersion)
+      if (command === 'remote_status') return { frontendVersion: '0.1.5-rc.2' }
       if (command === 'check_desktop_update') return checkDesktop()
       if (command === 'open_desktop_release') return openRelease?.(args.url)
       return ''
@@ -153,7 +160,7 @@ for (const [current, latest, preview, label, stableDisabled, previewDisabled] of
       f.button('最新稳定版').props.onClick(); await flush()
       assert.equal(f.updateCalls().length, 2)
       assert.equal(f.updateCalls()[1].args.channel, 'latest')
-      assert.equal(f.status(), 'dsh 已是最新版')
+      assert.equal(f.status(), '正在更新 dsh…')
       assert.equal(f.button('最新稳定版').props.disabled, true)
       assert.equal(f.button('最新预览版'), undefined)
     }
@@ -161,13 +168,14 @@ for (const [current, latest, preview, label, stableDisabled, previewDisabled] of
 }
 
 for (const channel of ['latest', 'preview']) {
-  test(`${channel} installation is exclusive and updates the displayed version`, async () => {
+  test(`${channel} update captures the page and stays frozen until native navigation`, async () => {
     const pending = deferred()
     const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), install: () => pending.promise })
     f.openDialog(); await flush(); f.selectTab('dsh')
     const selected = f.button(channel === 'latest' ? '最新稳定版' : '最新预览版')
     const other = f.button(channel === 'latest' ? '最新预览版' : '最新稳定版')
     selected.props.onClick(); selected.props.onClick(); other.props.onClick()
+    await flush()
     assert.equal(f.button('最新稳定版').props.disabled, true)
     assert.equal(f.button('最新预览版').props.disabled, true)
     assert.equal(f.button('重新检测').props.disabled, true)
@@ -176,19 +184,24 @@ for (const channel of ['latest', 'preview']) {
     assert.equal(calls[1].command, 'install_dsh_update')
     assert.equal(calls[1].args.channel, channel)
     assert.equal(calls[1].args.targetVersion, channel === 'preview' ? tags.preview : undefined)
+    assert.equal(calls[1].args.payload.page.kind, 'dsh')
+    assert.equal(calls[1].args.identity.backendInstance, 1)
+    assert.equal(calls[1].args.palette.background, 'rgb(246, 248, 250)')
+    assert.ok(f.calls.findIndex(call => call.command === 'capture') < f.calls.findIndex(call => call.command === 'install_dsh_update'))
     // Dismiss and reopen while installing: status is retained and no new call.
     f.render().find(node => node.type === 'Modal').props.onClose()
     f.openDialog()
     f.selectTab('dsh')
     assert.equal(f.button('最新稳定版').props.disabled, true)
-    pending.resolve(tags[channel]); await flush()
-    assert.equal(f.button('最新稳定版').props.disabled, channel === 'latest')
-    assert.equal(f.button('最新预览版').props.disabled, channel !== 'latest')
-    assert.ok(f.render().some(node => node.props.children?.some(text => typeof text === 'string' && text.includes('从托盘退出'))))
+    pending.resolve(); await flush()
+    assert.equal(f.button('最新稳定版').props.disabled, true)
+    assert.equal(f.button('最新预览版').props.disabled, true)
+    assert.equal(f.calls.some(call => call.command === 'unfreeze'), false)
+    assert.ok(f.render().some(node => node.type === 'code' && node.props.children.includes('0.1.5-rc.2')), 'acceptance does not claim installation succeeded')
   })
 }
 
-test('preview installation pins the checked version until an explicit recheck', async () => {
+test('preview installation pins the checked version while the registry changes', async () => {
   let current = tags.latest, published = tags.preview
   const f = fixture({ check: async () => ({ current, latest: tags.latest, preview: published }),
     install: async (_channel, targetVersion) => { current = targetVersion; return current } })
@@ -197,15 +210,8 @@ test('preview installation pins the checked version until an explicit recheck', 
   f.button('最新预览版').props.onClick(); await flush()
   assert.equal(f.updateCalls()[1].args.channel, 'preview')
   assert.equal(f.updateCalls()[1].args.targetVersion, tags.preview)
-  assert.equal(f.status(), 'dsh 已是最新预览版')
+  assert.equal(f.status(), '正在更新 dsh…')
   assert.equal(f.button('最新预览版').props.disabled, true)
-  assert.equal(f.render().filter(node => node.type === 'code' && node.props.children.includes(tags.preview)).length, 2)
-  f.button('重新检测').props.onClick(); await flush()
-  assert.equal(f.status(), 'dsh 可更新')
-  assert.equal(f.button('最新预览版').props.disabled, false)
-  f.button('最新预览版').props.onClick(); await flush()
-  assert.equal(f.updateCalls().at(-1).args.targetVersion, published)
-  assert.equal(f.status(), 'dsh 已是最新预览版')
 })
 
 test('preview display and installation ignore next and alpha tags', async () => {
@@ -215,7 +221,7 @@ test('preview display and installation ignore next and alpha tags', async () => 
   assert.ok(f.render().some(node => node.type === 'code' && node.props.children.includes(tags.preview)))
   f.button('最新预览版').props.onClick(); await flush()
   assert.equal(f.updateCalls()[1].args.targetVersion, tags.preview)
-  assert.equal(f.status(), 'dsh 已是最新预览版')
+  assert.equal(f.status(), '正在更新 dsh…')
 })
 
 test('a failed check stays clickable, shows its error, and can be retried', async () => {
@@ -236,7 +242,7 @@ test('a failed check stays clickable, shows its error, and can be retried', asyn
   assert.equal(f.button('最新预览版').props.disabled, false)
 })
 
-test('failed installation releases both buttons and preserves the last verified version', async () => {
+test('rejected update releases the page and preserves the last verified version', async () => {
   let attempts = 0
   const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), install: async () => {
     if (++attempts === 1) throw Error('npm EACCES')
@@ -249,8 +255,19 @@ test('failed installation releases both buttons and preserves the last verified 
   assert.equal(f.button('最新稳定版').props.disabled, false)
   assert.equal(f.button('最新预览版').props.disabled, false)
   assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('npm EACCES')))
+  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 1)
   f.button('最新稳定版').props.onClick(); await flush()
   assert.equal(f.button('最新稳定版').props.disabled, true)
+})
+
+test('failed draft capture never starts installation and leaves the page usable', async () => {
+  const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), capture: async () => { throw Error('draft unavailable') } })
+  f.openDialog(); await flush(); f.selectTab('dsh')
+  f.button('最新稳定版').props.onClick(); await flush()
+  assert.equal(f.updateCalls().length, 1)
+  assert.equal(f.button('最新稳定版').props.disabled, false)
+  assert.equal(f.calls.at(-1).command, 'unfreeze')
+  assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('draft unavailable')))
 })
 
 test('ordinary browsers do not offer a desktop package update', async () => {

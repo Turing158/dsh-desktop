@@ -106,6 +106,101 @@
    */
   var HEIGHT_PROPERTY = '--dsh-desktop-titlebar-height'
 
+  // A blocking script in <head> can delay <body> for the entire module download.
+  // Mount on <html> during that interval, then move into the parsed body so the
+  // live theme's body selectors and normal portal stacking continue to apply.
+  var earlyNodes = []
+  function appendToPage(node) {
+    ;(document.body || document.documentElement).appendChild(node)
+    if (!document.body) earlyNodes.push(node)
+  }
+
+  // The update owns these resolved colors until the new interface takes over.
+  // Keeping them in the native host crosses both the local install-page origin
+  // and the new DSH server's port without depending on browser storage.
+  function capturePalette() {
+    var bar = document.querySelector('.dshTb')
+    if (!bar || typeof getComputedStyle !== 'function') return null
+    var style = getComputedStyle(bar)
+    return {
+      dark: document.body.hasAttribute('data-ds-dark-theme'),
+      background: style.backgroundColor,
+      foreground: getComputedStyle(bar.querySelector('.dshTb__wordmark') || bar).color,
+      border: style.borderBottomColor,
+    }
+  }
+
+  var contentReady = false
+  var restoring = false
+
+  function finishLoading() {
+    contentReady = true
+    var loading = document.getElementById(HOST_ID + '-loading')
+    if (loading && loading.parentNode) loading.parentNode.removeChild(loading)
+  }
+
+  // These styles also serve the saving/restoring overlay after the boot bar
+  // retires. They stay in this document; the progress elements do not.
+  function progressVisual() {
+    var id = HOST_ID + '-progress-style'
+    if (!document.getElementById(id)) {
+      var style = h('style', { id: id, text: PROGRESS_CSS })
+      ;(document.head || document.documentElement).appendChild(style)
+    }
+    return h('div', { class: CLS('progress'), 'aria-hidden': 'true' }, [
+      h('span', { class: CLS('spinner') }), logo(),
+    ])
+  }
+
+  function showLoading() {
+    if (contentReady || document.getElementById(HOST_ID + '-loading')) return
+    appendToPage(h('div', { id: HOST_ID + '-loading', class: CLS('loading'), role: 'status', 'aria-live': 'polite' }, [
+      progressVisual(),
+      h('div', { class: CLS('loadingLabel'), text: t('正在载入界面…') }),
+      h('div', { class: CLS('loadingHint'), text: t('请稍候，完成后将自动恢复界面。') }),
+    ]))
+  }
+
+  window.__DSH_DESKTOP_BOOT__ = {
+    capturePalette: capturePalette,
+    contentReady: finishLoading,
+    progressVisual: progressVisual,
+    markRestoring: function () { restoring = true },
+  }
+
+  function applyBootContext(context) {
+    if (!context || realBarIsReady()) return
+    restoring = Boolean(context.restoring)
+    var palette = context.palette
+    var root = document.documentElement
+    if (palette && ['background', 'foreground', 'border'].every(function (key) {
+      return typeof palette[key] === 'string' && window.CSS?.supports('color', palette[key])
+    })) {
+      root.style.setProperty('--dsh-desktop-titlebar-bg', palette.background)
+      root.style.setProperty('--dsh-desktop-titlebar-fg', palette.foreground)
+      root.style.setProperty('--dsh-desktop-titlebar-border', palette.border)
+      root.style.setProperty('--dsh-desktop-titlebar-hover', palette.dark ? 'rgb(255 255 255 / 8%)' : 'rgb(0 0 0 / 6%)')
+      root.style.setProperty('--dsh-desktop-titlebar-menu-bg', palette.background)
+      if (context.local) {
+        root.setAttribute('data-dsh-boot-scheme', palette.dark ? 'dark' : 'light')
+        root.style.setProperty('--bg', palette.background)
+        root.style.setProperty('--text', palette.foreground)
+      }
+    }
+    // Context enriches an already visible animation; a delayed/failed IPC must
+    // never decide whether there is any content in the window.
+    var label = document.querySelector('.' + CLS('loadingLabel'))
+    if (label) label.textContent = context.updating ? t('正在更新 dsh…') : context.restoring ? t('正在恢复界面…') : t('正在载入界面…')
+  }
+
+  function loadBootContext(attempt) {
+    if (realBarIsReady()) return
+    invokeHost('desktop_boot_context').then(function (context) {
+      if (context) applyBootContext(context)
+      else if (attempt < 5) window.setTimeout(function () { loadBootContext(attempt + 1) }, 40 * (attempt + 1))
+    })
+  }
+
   /**
    * The DeepSeek mark, as the bar's inline SVG path.
    *
@@ -145,6 +240,18 @@
    * `theme.css`, so the strip does not change colour when the real bar replaces
    * this one.
    */
+  var PROGRESS_CSS = [
+    '.' + CLS('loading') + '{position:fixed;inset:44px 0 0;z-index:1199;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;',
+    'background:var(--dsh-desktop-titlebar-bg,#f9fafb);color:var(--dsh-desktop-titlebar-fg,#0f1115);font:14px/1.7 system-ui;}',
+    'body[data-ds-dark-theme] .' + CLS('loading') + '{background:var(--dsh-desktop-titlebar-bg,#1b1b1c);color:var(--dsh-desktop-titlebar-fg,#f9fafb);}',
+    '.' + CLS('progress') + '{position:relative;display:grid;place-items:center;align-self:center;justify-self:center;width:112px;height:112px;margin:0 auto 12px;color:inherit;}',
+    '.' + CLS('progress') + ' .' + CLS('logo') + '{width:48px;height:48px;color:inherit;opacity:.9;}',
+    '.' + CLS('spinner') + '{position:absolute;inset:0;box-sizing:border-box;border:2px solid color-mix(in srgb,currentColor 14%,transparent);border-top-color:currentColor;border-radius:50%;animation:dsh-boot-spin 1.4s linear infinite;}',
+    '.' + CLS('loadingLabel') + '{font-size:16px;font-weight:600;text-align:center;}',
+    '.' + CLS('loadingHint') + '{font-size:13px;opacity:.65;text-align:center;}',
+    '@keyframes dsh-boot-spin{to{transform:rotate(360deg)}}',
+  ].join('')
+
   var CSS = [
     '#' + HOST_ID + '{',
     'position:fixed;inset:0 0 auto 0;height:' + BAR_HEIGHT + 'px;z-index:1200;',
@@ -531,7 +638,7 @@
       menu = h('div', { class: CLS('menu'), role: 'menu' }, [item])
       menu.style.left = Math.round(rect.left) + 'px'
       menu.style.top = Math.round(rect.bottom + 4) + 'px'
-      document.body.appendChild(menu)
+      appendToPage(menu)
       var menuBox = menu.getBoundingClientRect()
       menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - menuBox.width - 8)) + 'px'
       menu.style.top = Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - menuBox.height - 8)) + 'px'
@@ -609,7 +716,7 @@
         if (event.key === 'Escape') closeAbout()
       }
       document.addEventListener('keydown', overlayKeydown)
-      document.body.appendChild(overlay)
+      appendToPage(overlay)
 
       var api = window.__TAURI__
       if (!api || !api.app || typeof api.app.getVersion !== 'function') return
@@ -766,7 +873,7 @@
     document.addEventListener('mousedown', onDocumentMouseDown, true)
     document.addEventListener('keydown', onDocumentKeyDown)
 
-    document.body.appendChild(bar)
+    appendToPage(bar)
     syncMaximized()
 
     // Handed back to `retire` so the real bar's lifetime is not spent with this
@@ -838,32 +945,29 @@
 
     var bar = document.getElementById(HOST_ID)
     if (bar && bar.parentNode) bar.parentNode.removeChild(bar)
+    // The title bar can mount before drafts and attachments have restored.
+    // The state bridge hands off this animation once its own status is visible.
+    if (!restoring) finishLoading()
     var style = document.getElementById(HOST_ID + '-style')
     if (style && style.parentNode) style.parentNode.removeChild(style)
     document.removeEventListener(READY_EVENT, retire)
   }
 
   /**
-   * Run `fn` as soon as `<body>` exists.
-   *
-   * A document-created script runs before the parser has produced anything, so
-   * neither `<body>` nor necessarily `<html>` is available yet. Waiting for
-   * `<body>` rather than for `DOMContentLoaded` is deliberate: DSH's own module
-   * script is deferred, and `DOMContentLoaded` waits for it, which would leave the
-   * splash — the exact page this bar is for — without a caption for as long as the
-   * app takes to execute.
+   * Run `fn` as soon as the requested document node exists. Observe the document
+   * itself because even <html> may be absent at document-created time.
    *
    * @param fn - the callback.
    */
-  function whenBody(fn) {
-    if (document.body) {
+  function whenDocumentNode(readNode, fn) {
+    if (readNode()) {
       fn()
       return
     }
 
     var done = false
     function run() {
-      if (done || !document.body) return
+      if (done || !readNode()) return
       done = true
       cleanup()
       fn()
@@ -875,9 +979,9 @@
     }
 
     var observer = null
-    if (typeof MutationObserver === 'function' && document.documentElement) {
+    if (typeof MutationObserver === 'function') {
       observer = new MutationObserver(run)
-      observer.observe(document.documentElement, { childList: true, subtree: true })
+      observer.observe(document, { childList: true, subtree: true })
     }
     document.addEventListener('readystatechange', run)
     // A last resort for an engine where neither signal arrives: a bounded poll.
@@ -885,7 +989,7 @@
     var timer = 0
     function poll() {
       if (done || polls++ > 200) return
-      if (document.body) {
+      if (readNode()) {
         run()
         return
       }
@@ -912,10 +1016,10 @@
    *       getAttributeThrew: true }
    *
    * Calling `getAttribute` on it therefore threw a `TypeError` at the TOP LEVEL of
-   * the script, which killed the whole thing before `whenBody` ever ran — so the bar
+   * the script, which killed the whole thing before `whenDocumentNode` ever ran — so the bar
    * never mounted on any page, and the boot page (whose window is
    * `decorations(false)`) had no close button at all. Note the shape of the mistake:
-   * {@link whenBody} exists precisely to wait for the DOM, and this call sat in
+   * {@link whenDocumentNode} exists precisely to wait for the DOM, and this call sat in
    * front of it, guarding for `<body>` while tripping over `<html>`.
    *
    * "Not ready" is the correct answer when there is no document yet: a real bar
@@ -933,12 +1037,20 @@
 
   if (realBarIsReady()) return
 
-  whenBody(function () {
+  whenDocumentNode(function () { return document.documentElement }, function () {
     // Re-checked here rather than only above: the real bar mounts on DSH's own
     // schedule, which can land between this script running and `<body>` existing.
     if (realBarIsReady()) return
     try {
       mount()
+      showLoading()
+      loadBootContext(0)
+      whenDocumentNode(function () { return document.body }, function () {
+        earlyNodes.forEach(function (node) {
+          if (node.parentNode === document.documentElement) document.body.appendChild(node)
+        })
+        earlyNodes = []
+      })
     } catch (error) {
       // A bar that cannot be built must not take the page down with it: the page
       // may be the app's own error screen, which is the one place the user needs

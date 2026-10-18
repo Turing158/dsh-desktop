@@ -14,6 +14,8 @@
   --focus: #91b2ff;
   --warn: #e8bc75;
   --error: #f09292;
+  --boot-mark: #e2e8f5;
+  --boot-wordmark-secondary: #b1b5bf;
 
   /* The injected title bar reads these before the DSH theme is available. */
   --dsh-desktop-titlebar-bg: var(--bg);
@@ -24,6 +26,20 @@
   --dsh-menu-shadow: 0 3px 8px rgb(0 0 0 / 12%), 0 12px 32px rgb(0 0 0 / 20%);
   --dsh-menu-accent: var(--focus);
   --dsh-menu-hover: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+:root[data-dsh-boot-scheme='light'] {
+  color-scheme: light;
+  --surface: #fff;
+  --well: #f1f3f5;
+  --border: #d8dce3;
+  --muted: #626874;
+  --focus: #315ec9;
+  --warn: #8a5c17;
+  --error: #b42332;
+  --boot-mark: var(--text);
+  --boot-wordmark-secondary: var(--muted);
+  --dsh-menu-shadow: 0 3px 8px rgb(0 0 0 / 8%), 0 12px 32px rgb(0 0 0 / 12%);
 }
 
 * {
@@ -61,6 +77,11 @@ body {
   align-items: center;
   text-align: center;
   animation: arrive 420ms ease-out both;
+}
+
+.shell[data-state='installing'] .startup,
+.shell[data-state='installing'] .body > * {
+  animation: none;
 }
 
 .boot-visual {
@@ -110,7 +131,7 @@ body {
   display: block;
   width: 52px;
   height: 52px;
-  color: #e2e8f5;
+  color: var(--boot-mark);
   animation: breathe 3.6s ease-in-out infinite;
 }
 
@@ -135,7 +156,7 @@ h1 {
 }
 
 .wordmark-secondary {
-  color: #b1b5bf;
+  color: var(--boot-wordmark-secondary);
   font-weight: 400;
 }
 

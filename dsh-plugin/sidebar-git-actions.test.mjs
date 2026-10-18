@@ -74,6 +74,44 @@ test('commit from working stages the view and preserves a multiline message with
   assert.equal(await readGit(f.workspace, ['status', '--porcelain']), '')
 })
 
+test('repeated staging skips already-staged deletions and rename sources while keeping changes readable', async t => {
+  const f = await fixture(t); await f.seed()
+  const deleted = '新建 文本文档.txt', renamed = '-重命名[1].txt'
+  await writeFile(path.join(f.workspace, deleted), 'remove\n')
+  await git(f.workspace, ['add', '.']); await git(f.workspace, ['commit', '-m', 'deletion fixture'])
+  await unlink(path.join(f.workspace, deleted))
+  await rename(path.join(f.workspace, 'code.txt'), path.join(f.workspace, renamed))
+  assert.equal(last(await f.run('stage')).phase, 'done')
+  await writeFile(path.join(f.workspace, 'new.txt'), 'new\n')
+  const result = last(await f.run('stage'))
+  assert.equal(result.phase, 'done', JSON.stringify(result))
+  assert.equal(await readGit(f.workspace, ['show', ':new.txt']), 'new')
+  assert.equal(await readGit(f.workspace, ['show', ':' + renamed]), 'before')
+  assert.equal(await readGit(f.workspace, ['ls-files', '--', deleted, 'code.txt']), '')
+  for (const source of ['working', 'staged']) {
+    const list = await f.api.listChanges(f.scope, source, signal())
+    const entry = list.entries.find(entry => entry.path === deleted)
+    assert.equal(entry.status, 'deleted')
+    const diff = await f.api.getFileDiff(f.scope, source, entry.fileId, list.revision, 0, signal())
+    assert.ok(diff.rows.some(row => row.kind === '-' && row.text === 'remove'))
+    assert.equal((await f.api.getGitContext(f.scope, source, signal())).hasCommittableChanges, true)
+  }
+})
+
+test('session staging is idempotent when all recorded deletions are already staged', async t => {
+  const f = await fixture(t); await f.seed()
+  const before = { exists: true, text: 'before\n', hash: hash('before\n'), reason: null, mode: null }
+  await f.store.finish(f.scope, 'deletion', [{ path: 'code.txt', author: f.scope.sessionId, callId: 'delete', sequence: 0,
+    origin: 'structured', finalStatus: 'success', execution: 'deletion', before, after: absent() }])
+  await unlink(path.join(f.workspace, 'code.txt'))
+  assert.equal(last(await f.run('stage', 'session')).phase, 'done')
+  const index = await readFile(path.join(f.workspace, '.git/index'))
+  const result = last(await f.run('stage', 'session'))
+  assert.equal(result.phase, 'done', JSON.stringify(result))
+  assert.deepEqual(await readFile(path.join(f.workspace, '.git/index')), index)
+  assert.equal(await readGit(f.workspace, ['rev-list', '--count', 'HEAD']), '1')
+})
+
 test('commit from staged preserves the working file and untracked files', async t => {
   const f = await fixture(t); await f.seed()
   await writeFile(path.join(f.workspace, 'code.txt'), 'staged\n'); await git(f.workspace, ['add', '.'])
@@ -220,9 +258,35 @@ test('client locks immediately, exposes each phase, retains failures and sends o
   release(); const failed = await first
   assert.equal(failed.phase, 'error'); assert.equal(failed.commitId, 'a'.repeat(40)); assert.equal(failed.message, request.message)
   assert.ok(phases.includes('committing')); assert.ok(phases.includes('pushing'))
+  operation.dismissError()
+  assert.equal(operation.getSnapshot().error, null)
+  assert.equal(operation.getSnapshot().phase, 'error')
+  assert.equal(operation.getSnapshot().commitId, failed.commitId)
+  assert.equal(operation.getSnapshot().message, request.message)
   assert.equal((await operation.run({ ...request, committedId: failed.commitId })).phase, 'done')
   assert.equal(args[5], failed.commitId); assert.equal(changed, 2); assert.equal(gitBusy(operation.getSnapshot()), false)
   off()
+})
+
+test('dismissed stage errors allow retry, while an unknown write result remains protected', async () => {
+  let calls = 0
+  const remote = { async *runGitAction() {
+    calls++
+    yield calls === 1 ? { phase: 'error', error: { code: 'git-failed', detail: 'pathspec' } } : { phase: 'done' }
+  } }
+  const operation = createGitOperation(remote)
+  const request = { sessionId: 'one', action: 'stage', source: 'working', revision: 'r' }
+  await operation.run(request)
+  operation.dismissError()
+  assert.equal(operation.getSnapshot().error, null)
+  assert.equal((await operation.run(request)).phase, 'done')
+  const unknown = createGitOperation({ async *runGitAction() { throw Error('connection lost') },
+    async getGitOperation() { return { phase: 'unknown', error: { code: 'git-result-unknown', detail: '' } } } })
+  await unknown.run({ ...request, context: {} })
+  unknown.dismissError()
+  assert.equal(unknown.getSnapshot().phase, 'unknown')
+  assert.equal(unknown.getSnapshot().error.code, 'git-result-unknown')
+  assert.equal(await unknown.run(request), null)
 })
 
 test('commit previews reuse only matching list statistics and preserve unknown counts', () => {

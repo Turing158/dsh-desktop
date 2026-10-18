@@ -55,6 +55,7 @@ let installCommand = 'npm install -g @deepseek-ai/dsh@latest';
 function render(node, state = 'loading') {
   el.app.setAttribute('data-state', state);
   el.body.replaceChildren(node);
+  window.__DSH_DESKTOP_BOOT__?.contentReady();
 }
 
 /** Build an element with attributes and children. */
@@ -119,10 +120,10 @@ function renderPhase(status) {
       renderNeedsNode(phase);
       break;
     case 'installing':
-      renderInstalling(phase);
+      renderInstalling(phase, status.updating_dsh);
       break;
     case 'starting':
-      render(statusLine(t('正在启动工作空间…')));
+      render(statusLine(status.updating_dsh ? t('更新已安装，正在启动 dsh…') : t('正在启动工作空间…')));
       break;
     case 'running':
       render(statusLine(t('界面已就绪，正在载入…')), 'ready');
@@ -162,17 +163,17 @@ function renderNeedsNode(phase) {
 }
 
 /** The automatic install is running: report progress, offer a way out. */
-function renderInstalling(phase) {
+function renderInstalling(phase, updating = false) {
   const log = h('pre', { class: 'log', role: 'log', get 'aria-label'() { return t('安装日志') }, 'aria-live': 'off' });
-  const heading = phase.version ? t("正在安装 dsh {0}", [phase.version]) : t('正在安装 DeepSeek Harness');
+  const heading = updating ? t('正在更新 dsh…') : phase.version ? t("正在安装 dsh {0}", [phase.version]) : t('正在安装 DeepSeek Harness');
 
   render(
     h(
       'div',
       { class: 'stack' },
       h('h2', { text: heading }),
-      statusLine(t('首次启动需要下载并安装，请稍候…')),
-      h('details', { class: 'more' }, h('summary', { get text() { return t('查看安装进度') } }), log),
+      statusLine(t('正在下载并安装，完成后将自动启动，请稍候…')),
+      h('details', { class: 'more', open: updating ? '' : null }, h('summary', { get text() { return t('查看安装进度') } }), log),
       h('div', { class: 'actions' }, button(t('取消'), () => cancelInstall(), 'secondary')),
     ),
     'installing',

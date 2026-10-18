@@ -78,7 +78,7 @@ async function ready(page, url) {
   await page.waitForFunction(() => {
     if (document.body.textContent.includes('Failed to load plugins')) throw Error(document.body.textContent)
     const forms = window.__SETTINGS_SMOKE__?.configForms
-    return forms && ['desktop-appearance', 'desktop-terminal-dock'].every(ns => forms.get(ns).getSnapshot().status === 'ready')
+    return forms && ['desktop-appearance', 'desktop-terminal-dock', 'ui-theme'].every(ns => forms.get(ns).getSnapshot().status === 'ready')
   }, undefined, { timeout: 30000 })
 }
 async function values(page) {
@@ -91,12 +91,15 @@ try {
   const firstUrl = await start()
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   const page = await browser.newPage({ viewport: { width: 1280, height: 840 } })
+  // Desktop preferences persist on the Host. Ordinary browser pages deliberately
+  // keep their palette in localStorage, scoped to the current origin instead.
+  await page.addInitScript(() => { window.__DSH_DESKTOP_BOOT_HOST__ = true })
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await ready(page, firstUrl)
   const imported = await values(page)
   assert.deepEqual(imported, {
-    'desktop-appearance': { animation: 'off', ui: 'vanilla', fontSizeOverride: 10 },
+    'desktop-appearance': { animation: 'off', ui: 'vanilla', titlebar: 'full', titlebarHover: 'on', fontSizeOverride: 10 },
     'desktop-terminal-dock': { layout: { height: 312, collapsed: false }, profileId: 'cmd', position: 'right' },
   })
   report.checks.legacyImport = imported

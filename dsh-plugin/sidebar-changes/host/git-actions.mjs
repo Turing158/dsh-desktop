@@ -132,7 +132,14 @@ export class GitActions {
         paths.add(relative(scope.root, absolute))
       }
     }
+    // HEAD/session changes still include deletions and rename sources after
+    // staging removed them from the index. Git add rejects these absent paths.
+    const tracked = new Set((await git(scope.root, ['ls-files', '-z'], signal)).toString('utf8').split('\0').filter(Boolean))
+    for (const name of paths) {
+      if (!tracked.has(name) && !(await readEndpoint(scope.root, name)).exists) paths.delete(name)
+    }
     signal?.throwIfAborted()
+    if (!paths.size) return
     // NUL-delimited literal paths cover spaces, renames, removals and leading '-'.
     await writeGit(scope.root, ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'], [...paths].join('\0') + '\0')
   }

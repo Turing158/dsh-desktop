@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { bootPatches } from '../dsh-plugin/plugin-control/model.mjs'
+import { handleOnboarding, dismissInitialWelcome, openDshSettings, offlineModelPatch } from './dsh-ui-helpers.mjs'
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const dshBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
@@ -22,12 +23,11 @@ const patchPath = join(root, 'desktop.patch.yml'), bootPath = join(root, 'boot.j
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')).replace(/name: \.\/([^\s]+)/g, (_, name) => 'name: ' + pathToFileURL(resolve('dsh-plugin', name)).href)
   + '\n- insert:\n    - id: profile-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href
   + '\n    - id: profile-cold-probe\n      name: ' + pathToFileURL(join(root, 'cold/index.mjs')).href + '\n'
-// Suppress first-run model setup in this plugin-only fixture.
-await writeFile(patchPath, patch + '\n- id: ui-settings-models\n  disabled: true\n')
+await writeFile(patchPath, patch + offlineModelPatch)
 const catalog = JSON.parse(await readFile('dsh-plugin/plugin-control/catalog.json', 'utf8'))
 const core = JSON.parse(await readFile('dsh-plugin/plugin-control/core.json', 'utf8'))
 await writeFile(builtinFile, JSON.stringify({ version: 1, enabled: {} }))
-const env = { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_PLUGINS_FILE: builtinFile, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes') }
+const env = { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_PLUGINS_FILE: builtinFile, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes'), DSH_UI_SMOKE_KEY: 'offline-fixture' }
 let child, browser, page, output = '', generation = 0
 const report = { root, checks: [] }, pageErrors = []
 const pass = name => { report.checks.push(name); console.log('PASS: ' + name) }
@@ -69,14 +69,15 @@ async function ready(url) {
 }
 async function settings() {
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (!await page.locator('[data-shortcut-modal="settings"]').count()) await page.locator('button[aria-haspopup="dialog"]').first().evaluate(button => button.click())
+    await openDshSettings(page)
     try {
       await page.locator('[data-shortcut-modal="settings"]').getByRole('button', { name: '插件', exact: true }).click({ timeout: 3000 })
-      await page.getByRole('tab', { name: '插件列表', exact: true }).click({ timeout: 3000 }); break
+      await page.getByRole('tab', { name: '插件列表', exact: true }).click({ timeout: 3000 })
+      await page.getByRole('searchbox', { name: '搜索插件' }).waitFor({ timeout: 3000 })
+      return
     }
     catch (error) { if (attempt === 2 || await page.locator('[data-shortcut-modal="settings"]').count()) throw error }
   }
-  await page.getByRole('searchbox', { name: '搜索插件' }).waitFor()
 }
 async function browserState(enabled) {
   await page.waitForFunction(enabled => {
@@ -91,8 +92,8 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   page.on('pageerror', error => pageErrors.push(error.message))
-  for (const name of ['继续', '稍后配置']) await page.addLocatorHandler(page.getByRole('button', { name, exact: true }).and(page.locator(':enabled')), button => button.evaluate(element => element.click()))
-  await ready(url); await settings()
+  await handleOnboarding(page)
+  await ready(url); await dismissInitialWelcome(page); await settings()
   let state = await call('status')
   await writeFile(join(root, 'initial-state.json'), JSON.stringify(state, null, 2))
   const cold = statusRow(state, 'profile-cold-probe'), hot = statusRow(state, 'ui-sidebar-browser')
@@ -141,7 +142,8 @@ try {
   assert.equal(await readFile(lifecycle, 'utf8'), started, 'cold plugin never unloads during unrelated HMR')
   assert.equal(statusRow(state, 'profile-cold-probe').restart, true)
   pass('real host/client browser plugin unloads and re-registers without duplicates; deferred plugin stays running')
-  await page.reload(); await page.waitForFunction(() => Boolean(window.__PROFILE_SMOKE__))
+  await page.reload(); await browserState(true)
+  await page.waitForFunction(id => window.__PROFILE_SMOKE__.sidebarRight.mounted.getSnapshot() === id, sessionId)
   await settings(); await search.fill('profile-cold-probe')
   await page.locator('[data-dsh-plugin-inventory] .dshPlugins__restart').waitFor()
   await coldSwitch.click()

@@ -49,6 +49,7 @@ export function createRemoteState(ctx, registry, dock) {
       }
     },
     async restore(saved) {
+      if (saved.backend) throw Error('snapshot-terminal-unsupported')
       const live = await registry.snapshotSessions()
       // Never turn a missing or restarted session into a new shell or rerun input.
       if (saved.sessions.some(s => !live.some(v => v.resourceKey === s.resourceKey && v.terminalId === s.terminalId && v.runId === s.runId))) throw Error('snapshot-terminal-missing')

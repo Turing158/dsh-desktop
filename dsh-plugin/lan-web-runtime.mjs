@@ -1,6 +1,6 @@
-/** Keep upstream static frontend, authentication and webRuntime. LAN origins
- * need the actual listener address in the ready line and shell environment;
- * upstream 0.1.5-rc.2 hardcodes loopback for both, even with --host.
+/** Keep upstream static frontend, authentication and webRuntime. The desktop
+ * ready URL uses our loopback listener so browser login has a local callback;
+ * the shared web surface still advertises the selected LAN address.
  */
 import { runtimeImport } from './runtime-import.mjs'
 const upstream = await runtimeImport('@deepseek-ai/dsh-web-app')
@@ -18,7 +18,7 @@ export function apply(ctx, config) {
   }
   if (config.printUrl) ctx.inject(['connection'], c => {
     const announce = () => {
-      if (c.get('webServer') && c.get('connection')) console.log(`dsh web: ${c.connection.authenticatedUrl(origin())}`)
+      if (c.get('webServer') && c.get('connection')) console.log(`dsh web: ${c.connection.authenticatedUrl(`http://127.0.0.1:${ctx.webServer.port}`)}`)
     }
     const settled = c.get('loader')?.await()
     if (settled) settled.then(announce, () => {})

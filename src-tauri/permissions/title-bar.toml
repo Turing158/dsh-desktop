@@ -97,6 +97,7 @@ the window stays resizable and snapping to screen edges continues to work. \
 Nothing here touches the filesystem, the network, or any other window.
 """
 commands.allow = [
+  "desktop_boot_context",
   "window_start_drag",
   "window_start_resize",
   "window_minimize",

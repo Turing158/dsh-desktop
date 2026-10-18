@@ -138,8 +138,31 @@ try {
   assert.match(await trigger().textContent(), /Medium/)
   const slider = () => page.getByRole('slider', { name: '推理等级', exact: true })
   async function openPanel() {
+    // Some upstream versions keep the picker open after choosing a model.
+    if (await trigger().getAttribute('aria-expanded') === 'true') await trigger().click()
+    await page.waitForFunction(() => !document.querySelector('[data-dsh-ghost]'))
     await trigger().click()
     await slider().waitFor()
+  }
+  async function closePanelWithMotion(animated) {
+    const exit = await page.evaluate(async () => {
+      const panel = document.querySelector('[data-dsh-reasoning-slider]:not([data-dsh-ghost])')
+      const value = panel.querySelector('input').value
+      const position = { left: panel.style.left, top: panel.style.top }
+      document.querySelector('[data-slot="conversation.input.model"] button[aria-expanded="true"]').click()
+      await new Promise(requestAnimationFrame)
+      const ghosts = document.querySelectorAll('[data-dsh-reasoning-slider][data-dsh-ghost="menu"]')
+      const ghost = ghosts[0]
+      return { count: ghosts.length, value, position, ghost: ghost && {
+        value: ghost.querySelector('input').value, position: { left: ghost.style.left, top: ghost.style.top },
+        inert: ghost.inert, hidden: ghost.getAttribute('aria-hidden'), animation: getComputedStyle(ghost).animationName,
+      } }
+    })
+    assert.equal(exit.count, animated ? 1 : 0, 'slider menu exit follows the animation preference')
+    if (animated) assert.deepEqual(exit.ghost, {
+      value: exit.value, position: exit.position, inert: true, hidden: 'true', animation: 'dsh-desktop-menu-out',
+    }, 'the closing clone preserves the slider and anchor without taking input')
+    await page.waitForFunction(() => !document.querySelector('[data-dsh-ghost]'))
   }
   async function expectEffort(effort) {
     await page.waitForFunction(({ sessionId, effort }) => {
@@ -149,14 +172,31 @@ try {
   }
   // The composer keeps its original model trigger with no extra control.
   assert.equal(await page.locator('[data-composer-card] .dshReasoning').count(), 0)
-  await page.evaluate(() => document.querySelector('button[aria-haspopup="dialog"]').click())
-  await page.getByRole('button', { name: '外观', exact: true }).click()
-  const styleGroup = page.getByRole('group', { name: '推理等级控件', exact: true })
-  await styleGroup.getByRole('button', { name: '滑块', exact: true }).click()
+  await trigger().evaluate(node => { if (node.getAttribute('aria-expanded') === 'true') node.click() })
+  await page.waitForFunction(() => !document.querySelector('[data-dsh-ghost]'))
+  await page.evaluate(() => window.__REASONING_SMOKE__.configForms.get('desktop-appearance').set('reasoningControl', 'slider'))
   await page.waitForFunction(() => window.__REASONING_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.reasoningControl === 'slider')
-  assert.equal(await styleGroup.getByRole('button', { name: '滑块', exact: true }).getAttribute('aria-pressed'), 'true')
-  await page.screenshot({ path: join(root, 'reasoning-appearance.png') })
-  await page.keyboard.press('Escape')
+  for (const [preference, reducedMotion, animated] of [
+    ['system', 'no-preference', true], ['off', 'no-preference', false],
+    ['system', 'reduce', false], ['on', 'reduce', true], ['system', 'no-preference', true],
+  ]) {
+    await page.emulateMedia({ reducedMotion })
+    await page.evaluate(preference => window.__REASONING_SMOKE__.configForms.get('desktop-appearance').set('animation', preference), preference)
+    await page.waitForFunction(preference => (document.documentElement.dataset.dshDesktopAnimation || 'system') === preference, preference)
+    const entrance = await page.evaluate(async () => {
+      document.querySelector('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]').click()
+      await new Promise(requestAnimationFrame)
+      await new Promise(requestAnimationFrame)
+      const panel = document.querySelector('[data-dsh-reasoning-slider]:not([data-dsh-ghost])')
+      return { role: panel?.getAttribute('role'), animation: panel && getComputedStyle(panel).animationName,
+        running: panel?.getAnimations().length }
+    })
+    assert.deepEqual(entrance, { role: 'group', animation: animated ? 'dsh-desktop-menu-in' : 'none', running: animated ? 1 : 0 },
+      'slider adaptation preserves the menu entrance: ' + preference + ', ' + reducedMotion)
+    await page.waitForFunction(() => !document.querySelector('[data-dsh-reasoning-slider]').getAnimations().length)
+    await closePanelWithMotion(animated)
+  }
+  console.log('PASS: slider menu enter/exit, preserved exit content and position, on/off/system motion preferences')
   await openPanel()
   await slider().waitFor()
   assert.equal(await page.getByRole('menuitem', { name: /推理等级/ }).count(), 0, 'slider is already in the root model menu')
@@ -189,6 +229,10 @@ try {
   await page.mouse.up()
   await expectEffort('off')
   assert.equal(await slider().isVisible(), true, 'dragging commits without closing the menu')
+  await closePanelWithMotion(true)
+  await openPanel()
+  assert.equal(await page.locator('[data-dsh-reasoning-slider]').evaluate(el => getComputedStyle(el).animationName), 'dsh-desktop-menu-in',
+    'the menu still animates when reopened after dragging')
   await slider().waitFor()
   // A refused write leaves the current value intact and allows a retry.
   await page.evaluate(id => {
@@ -242,12 +286,18 @@ try {
   // Changing models rebuilds the panel from that model's current directory.
   await page.locator('[data-dsh-reasoning-model]').click()
   await page.getByRole('menuitemradio', { name: /Other Model/ }).click()
-  await page.waitForFunction(id => window.__REASONING_SMOKE__.modelDirectories.directoryFor(id).store.getSnapshot().current?.model === 'other-model', sessionId)
+  await page.waitForFunction(id => {
+    const state = window.__REASONING_SMOKE__.modelDirectories.directoryFor(id).store.getSnapshot()
+    return state.current?.model === 'other-model' && state.pending === null
+  }, sessionId)
   await openPanel()
   assert.equal(await slider().getAttribute('aria-valuetext'), 'High')
   await page.locator('[data-dsh-reasoning-model]').click()
   await page.getByRole('menuitemradio', { name: /Smoke Model/ }).click()
-  await page.waitForFunction(id => window.__REASONING_SMOKE__.modelDirectories.directoryFor(id).store.getSnapshot().current?.model === 'custom-model', sessionId)
+  await page.waitForFunction(id => {
+    const state = window.__REASONING_SMOKE__.modelDirectories.directoryFor(id).store.getSnapshot()
+    return state.current?.model === 'custom-model' && state.pending === null
+  }, sessionId)
   await openPanel()
   // A different main-view session owns its own reasoning selection.
   const otherSession = await page.evaluate(async root => {

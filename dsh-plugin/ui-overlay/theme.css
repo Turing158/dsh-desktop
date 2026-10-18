@@ -1178,8 +1178,9 @@ html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] [class*
 }
 
 /* Small composited movement leaves the menu's anchor coordinates untouched.
+   Keep the animation when the reasoning slider changes the menu role to group.
    No fill: transforms disappear after entering, including for fixed submenus. */
-html:not([data-dsh-ui='vanilla']) body [role='menu']:not([data-dsh-ghost]) {
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-dsh-reasoning-slider]):not([data-dsh-ghost]) {
   transform-origin: top left;
   animation: dsh-desktop-menu-in 160ms cubic-bezier(.2, .8, .2, 1);
 }
@@ -1624,7 +1625,7 @@ html:not([data-dsh-ui='vanilla']) body svg[viewBox='0 0 16 16']:has(> path[d^='M
   }
 
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='alertdialog'],
-  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body [role='menu']:not([data-dsh-ghost]) {
+  html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body :is([role='menu'], [data-dsh-reasoning-slider]):not([data-dsh-ghost]) {
     animation: none;
   }
 
@@ -1686,7 +1687,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [conten
 }
 
 html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='alertdialog'],
-html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body [role='menu']:not([data-dsh-ghost]) {
+html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body :is([role='menu'], [data-dsh-reasoning-slider]):not([data-dsh-ghost]) {
   animation: none;
 }
 
@@ -2728,7 +2729,8 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sideb
   background-repeat: no-repeat;
   background-attachment: fixed;
 }
-/* The saved Right preference controls both sidebar locations. */
+/* The saved Right preference controls both sidebar locations and Automations. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-testid='task-manager-page'],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body .dshTerminalDock[data-dsh-terminal-dock],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm) {
@@ -2759,6 +2761,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-titlebar] .dshTb,
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
+  [data-dsh-background-right] [data-testid='task-manager-page'],
   [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
   [data-dsh-background-right] .dshTerminalDock[data-dsh-terminal-dock],
   [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
@@ -2769,6 +2772,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
+  [data-dsh-background-right] [data-testid='task-manager-page'],
   [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
   [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
 ) {
@@ -2778,6 +2782,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-titlebar] .dshTb,
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
+  [data-dsh-background-right] [data-testid='task-manager-page'],
   [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
   [data-dsh-background-right] .dshTerminalDock[data-dsh-terminal-dock],
   [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
@@ -2797,6 +2802,12 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [data-dsh-archi
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_centerCol'] [class*='_composerSeat'],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-sidebar-right-panel] :is([data-dockkit-pane], [data-dockkit-strip-chrome], [data-dockkit-tab-strip], [class*='_tabBody'], .dshTerminal, .dshTerminal__content),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-dsh-terminal-dock] :is(.dshTerminal, .dshTerminal__content) {
+  background: transparent;
+}
+/* Task details are shared by Automations and the right sidebar. Their base
+ * fills must reveal the containing region, including the editor and save bar. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-testid='task-manager-page'], [data-sidebar-right-panel]) aside:has([data-detail-tab='rule']),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-testid='task-manager-page'], [data-sidebar-right-panel]) aside:has([data-detail-tab='rule']) :is(textarea[class*='_instruction'], [class*='_saveFooter'], [class*='_saveFailure'], [class*='_detailNotice']) {
   background: transparent;
 }
 /* xterm writes its scrolling surfaces inline. Reveal the region's layers while

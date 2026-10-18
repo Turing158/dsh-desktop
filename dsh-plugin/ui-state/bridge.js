@@ -19,6 +19,8 @@
   const codes = {
     get 'snapshot-terminal-active'() { return t('当前操作无法保留桌面终端，请先关闭终端后重试。') },
     get 'snapshot-terminal-missing'() { return t('原终端会话已不可用，未自动新建或重新执行命令。') },
+    get 'snapshot-terminal-unsupported'() { return t('当前终端接口或标签状态不兼容，原界面或快照仍保留。') },
+    get 'snapshot-terminal-conflict'() { return t('终端标签的会话或 Shell 绑定已变化，恢复已暂停，原快照仍保留。') },
     get 'snapshot-form-unsupported'() { return t('有尚未适配的弹窗或表单，请先完成或关闭它。') },
     get 'snapshot-panel-unsupported'() { return t('当前面板尚未支持恢复，请先回到聊天并关闭右侧面板。') },
     get 'snapshot-adapter-version'() { return t('DSH 版本在保存后发生变化，请使用保存时的版本重试恢复。') },
@@ -55,12 +57,21 @@
   }
   function display(text, retry = false, blocking = false) {
     if (!document.body) { document.addEventListener('DOMContentLoaded', () => display(text, retry, blocking), { once: true }); return }
-    overlay?.remove()
-    if (!text) { overlay = undefined; return }
+    const previous = overlay
+    previous?.remove()
+    if (!text) {
+      overlay = undefined
+      if (previous) window.__DSH_DESKTOP_BOOT__?.contentReady()
+      return
+    }
     overlay = document.createElement('div')
     overlay.dataset.dshUiStatus = 'true'
     overlay.setAttribute('role', retry ? 'alert' : 'status')
-    overlay.style.cssText = `position:fixed;z-index:2147483000;${blocking ? 'inset:44px 0 0;display:grid;place-content:center;' : 'right:20px;bottom:calc(20px + var(--dsh-terminal-dock-height, 0px));max-width:440px;'}padding:24px;background:var(--dsw-alias-bg-base,#f9f9fb);color:var(--dsw-alias-label-primary,#202124);font:14px/1.7 system-ui;border:1px solid #8884;border-radius:12px;box-sizing:border-box;`
+    overlay.style.cssText = `position:fixed;z-index:2147483000;${blocking ? 'inset:44px 0 0;display:grid;place-content:center;' : 'right:20px;bottom:calc(20px + var(--dsh-terminal-dock-height, 0px));max-width:440px;'}padding:24px;background:var(--dsw-alias-bg-base,var(--dsh-desktop-titlebar-bg,#f9f9fb));color:var(--dsw-alias-label-primary,var(--dsh-desktop-titlebar-fg,#202124));font:14px/1.7 system-ui;border:1px solid #8884;border-radius:12px;box-sizing:border-box;`
+    if (blocking && !retry) {
+      const visual = window.__DSH_DESKTOP_BOOT__?.progressVisual()
+      if (visual) overlay.append(visual)
+    }
     const label = document.createElement('div'); label.textContent = text; overlay.append(label)
     if (retry) {
       const button = document.createElement('button'); button.textContent = t('重试恢复'); button.dataset.dshUiRetry = 'true'
@@ -72,6 +83,7 @@
       button.onclick = () => overlay?.remove(); overlay.append(button)
     }
     document.body.append(overlay)
+    if (blocking) window.__DSH_DESKTOP_BOOT__?.contentReady()
   }
   function blockInput(event) {
     if (!frozen) return
@@ -204,7 +216,7 @@
       packet = next
       if (next.phase === 'active') { restoreKey = undefined; setFrozen(false); display(next.error ? message(next.error) : '') }
       else if (next.phase === 'restore-failed') { setFrozen(!local()); display(message(next.error), true, !local()) }
-      else if (next.phase === 'restoring') maybeRestore()
+      else if (next.phase === 'restoring') { window.__DSH_DESKTOP_BOOT__?.markRestoring(); maybeRestore() }
     },
     capture,
     // Settings restarts use the audited adapter even while optional WebView
@@ -249,6 +261,7 @@
     pendingOperation() { return composing || picker },
   }
   if (boot.restoring) {
+    window.__DSH_DESKTOP_BOOT__?.markRestoring()
     display(t('正在恢复界面…'), false, true)
     document.addEventListener('DOMContentLoaded', () => setFrozen(true), { once: true })
   }

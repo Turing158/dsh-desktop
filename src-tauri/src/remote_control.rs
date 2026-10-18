@@ -112,6 +112,10 @@ impl Config {
             address: self.bind_address.clone(),
             port: self.port,
         }];
+        // The desktop document and OAuth callback always use loopback, even
+        // when remote browsers reach this same backend through a LAN listener.
+        let desktop = ListenerAddress { address: "127.0.0.1".into(), port: self.port };
+        if !listeners.contains(&desktop) { listeners.push(desktop); }
         for host in &self.trusted_hosts {
             let Some(listener) = ListenerAddress::from_host(host, self.port) else {
                 continue;
@@ -622,7 +626,7 @@ fn current_context(
         }
     }
 }
-fn caller(window: &WebviewWindow, claimed: Identity) -> Result<(), Error> {
+pub(crate) fn caller(window: &WebviewWindow, claimed: Identity) -> Result<(), Error> {
     let url = window
         .url()
         .map_err(|_| Error::new("origin", "", "无法确认当前页面"))?;
@@ -787,7 +791,7 @@ pub struct ApplyReply {
     changed: bool,
 }
 
-struct ApplyingGuard(Shared);
+pub(crate) struct ApplyingGuard(pub(crate) Shared);
 impl Drop for ApplyingGuard {
     fn drop(&mut self) {
         if let Ok(mut s) = self.0.lock() {
@@ -972,13 +976,8 @@ pub fn cold_config(app: &AppHandle, shared: &Shared) -> Config {
 }
 pub fn check_ready(config: &Config, url: &str) -> Result<(), String> {
     let url = url.parse::<tauri::Url>().map_err(|_| "DSH 就绪地址无效")?;
-    let expected_host = if config.enabled {
-        config.bind_address.as_str()
-    } else {
-        "127.0.0.1"
-    };
     if url.scheme() != "http"
-        || url.host_str() != Some(expected_host)
+        || url.host_str() != Some("127.0.0.1")
         || config.enabled && url.port_or_known_default() != Some(config.port)
         || !url.username().is_empty()
     {
@@ -1391,7 +1390,7 @@ mod tests {
         );
         assert_eq!(config.host_schemes["localhost"], AccessScheme::Http);
         let listeners = config.listen_addresses(&addresses());
-        let backend = "http://192.168.1.20:3080/?token=fixture";
+        let backend = "http://127.0.0.1:3080/?token=fixture";
         for (host, supplied, origin) in [
             (
                 "desktop.local",
@@ -1525,16 +1524,13 @@ mod tests {
         config.trusted_hosts.retain(|host| host != "localhost");
         assert_eq!(
             config.listen_addresses(&available),
-            vec![
-                expected[0].clone(),
-                expected[2].clone(),
-                expected[3].clone()
-            ]
+            expected,
+            "the desktop keeps its loopback listener without a whitelist entry"
         );
         config.trusted_hosts.clear();
         assert_eq!(
             config.listen_addresses(&available),
-            vec![expected[0].clone()]
+            vec![expected[0].clone(), expected[1].clone()]
         );
         config.enabled = false;
         assert!(config.listen_addresses(&available).is_empty());
@@ -1557,7 +1553,7 @@ mod tests {
             AccessScheme::Http
         );
         assert_eq!(config.trusted_hosts, ["127.0.0.1", "localhost:4080"]);
-        let backend = "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=x#return";
+        let backend = "http://127.0.0.1:3080/?token=fixture%2Bsecret%3D&keep=x#return";
         assert_eq!(config.access_origin(&listeners), "http://127.0.0.1:3080/");
         assert_eq!(
             config.connection_url(backend, None, &listeners).unwrap(),
@@ -1657,7 +1653,7 @@ mod tests {
     }
     #[test]
     fn preferred_link_preserves_credentials_and_uses_its_own_scheme_and_port() {
-        let backend = "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return";
+        let backend = "http://127.0.0.1:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return";
         for (scheme, host, origin) in [
             (
                 AccessScheme::Https,
@@ -1700,14 +1696,14 @@ mod tests {
             assert!(check_ready(&c, backend).is_ok());
             assert!(check_ready(&c, &url).is_err());
             assert_eq!(
-                c.connection_url("http://192.168.1.20:3080/?token=next-launch", None, &[])
+                c.connection_url("http://127.0.0.1:3080/?token=next-launch", None, &[])
                     .unwrap(),
                 format!("{origin}?token=next-launch")
             );
         }
         assert_eq!(
             config().connection_url(backend, None, &[]).unwrap(),
-            backend
+            "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return"
         );
     }
     #[test]
@@ -1722,7 +1718,7 @@ mod tests {
         }
         .validate(&addresses())
         .unwrap();
-        let backend = "http://192.168.1.20:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return";
+        let backend = "http://127.0.0.1:3080/?token=fixture%2Bsecret%3D&keep=a%2Fb#return";
         let original = config.clone();
         for (host, scheme, origin) in [
             (
@@ -1764,7 +1760,7 @@ mod tests {
     #[test]
     fn connection_targets_require_an_active_exact_host_and_a_valid_scheme() {
         let config = config().validate(&addresses()).unwrap();
-        let backend = "http://192.168.1.20:3080/?token=fixture";
+        let backend = "http://127.0.0.1:3080/?token=fixture";
         for (host, code) in [
             ("unlisted.example.com", "access-host-untrusted"),
             ("desktop.local", "access-host-untrusted"),
@@ -1855,7 +1851,7 @@ mod tests {
         let c = c.validate(&available).unwrap();
         assert_eq!(c.effective_hosts(), ["192.168.1.89:3080"]);
         assert_eq!(
-            c.connection_url("http://192.168.1.89:3080/?token=fixture", None, &[])
+            c.connection_url("http://127.0.0.1:3080/?token=fixture", None, &[])
                 .unwrap(),
             "http://192.168.1.89:3080/?token=fixture"
         );
@@ -1879,9 +1875,10 @@ mod tests {
     #[test]
     fn readiness_and_origin_use_exact_scheme_host_and_port() {
         let c = config();
-        assert!(check_ready(&c, "http://192.168.1.20:3080/?token=x").is_ok());
-        assert!(check_ready(&c, "http://127.0.0.1:3080/").is_err());
-        assert!(check_ready(&c, "http://192.168.1.20:3081/").is_err());
+        assert!(check_ready(&c, "http://127.0.0.1:3080/?token=x").is_ok());
+        for bad in ["http://192.168.1.20:3080/", "http://127.0.0.1:3081/", "https://127.0.0.1:3080/", "http://user@127.0.0.1:3080/"] {
+            assert!(check_ready(&c, bad).is_err());
+        }
         let phase = Phase::Running {
             url: "http://192.168.1.20:3080/?token=x".into(),
             version: None,

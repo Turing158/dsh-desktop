@@ -1,4 +1,6 @@
 {
+  "正在保存界面并更新 dsh…": "Saving the interface and updating dsh…",
+  "正在下载并安装，完成后将自动启动，请稍候…": "Downloading and installing. The app will start automatically when finished…",
   "打开 ": "Open ",
   " 失败": " failed",
   "当前版本无法读取完整会话内容": "This version cannot read the complete conversation",
@@ -265,6 +267,8 @@
   "复制删除指令": "Copy remove command",
   "当前操作无法保留桌面终端，请先关闭终端后重试。": "This operation cannot preserve native terminals. Close them and try again.",
   "原终端会话已不可用，未自动新建或重新执行命令。": "The original terminal session is unavailable. No terminal was recreated and no command was rerun.",
+  "当前终端接口或标签状态不兼容，原界面或快照仍保留。": "The terminal interface or tab state is incompatible. The original page or snapshot has been retained.",
+  "终端标签的会话或 Shell 绑定已变化，恢复已暂停，原快照仍保留。": "A terminal tab's session or shell binding has changed. Restore is paused and the original snapshot has been retained.",
   "有尚未适配的弹窗或表单，请先完成或关闭它。": "An open dialog or form cannot be restored yet. Complete or close it first.",
   "当前面板尚未支持恢复，请先回到聊天并关闭右侧面板。": "This panel cannot be restored yet. Return to chat and close the right panel first.",
   "DSH 版本在保存后发生变化，请使用保存时的版本重试恢复。": "The DSH version changed after saving. Retry restoration with the original version.",
@@ -783,5 +787,8 @@
   "推理等级": "Reasoning effort",
   "推理控件设置保存失败，请重试。": "Could not save the reasoning control. Please try again.",
   "展开目标": "Expand goal",
-  "收起目标": "Collapse goal"
+  "收起目标": "Collapse goal",
+  "更新已安装，正在启动 dsh…": "Update installed, starting dsh…",
+  "正在载入界面…": "Loading the interface…",
+  "请稍候，完成后将自动恢复界面。": "Please wait. Your interface will return automatically when ready."
 }

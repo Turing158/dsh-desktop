@@ -553,6 +553,7 @@ function runtimeProbe() {
       installUpstreamTerminalInteractions: () => resource('upstream-interactions'),
       bindUpstreamShortcut: () => resource('upstream-shortcut'),
       createUpstreamDock: () => ({ store: {}, dispose: resource('upstream-dock') }),
+      createUpstreamRemoteState: () => ({}),
       createRemoteState: () => ({}),
       bindShortcut: () => resource('shortcut'),
       hideDesktopTerminals: () => resource('cleanup'),
@@ -565,7 +566,7 @@ for (const legacySettings of [false, true]) {
     const document = createDocument(), { ctx, state } = createContext({ legacySettings }), probe = runtimeProbe()
     ctx.sidebarRightTabs.register(upstreamTerminal)
     loadBundle(document, probe).apply(ctx)
-    assert.deepEqual(probe.started, ['cleanup', 'upstream-preferences', 'upstream-defaults', 'upstream-interactions', 'upstream-dock', 'upstream-shortcut'], 'uses DSH in the dock without native sessions or duplicate shortcuts')
+    assert.deepEqual(probe.started, ['cleanup', 'upstream-preferences', 'upstream-defaults', 'upstream-interactions', 'upstream-dock', 'snapshot', 'upstream-shortcut'], 'uses DSH in the dock with one snapshot provider and no duplicate shortcuts')
     document.announce('vanilla'); document.announce('desktop')
     assert.deepEqual([...state.types.values()], [upstreamTerminal])
     assert.equal(state.bodies.size, 0)
@@ -584,7 +585,7 @@ test('late upstream registration fully tears down the fallback and its removal r
   assert.equal(state.settings.size, 2)
   assert.deepEqual([...probe.active].sort(), ['dock', 'preferences', 'registry', 'shortcut', 'snapshot'])
   const removeUpstream = ctx.sidebarRightTabs.register(upstreamTerminal)
-  assert.deepEqual([...probe.active], ['cleanup', 'upstream-preferences', 'upstream-defaults', 'upstream-interactions', 'upstream-dock', 'upstream-shortcut'])
+  assert.deepEqual([...probe.active], ['cleanup', 'upstream-preferences', 'upstream-defaults', 'upstream-interactions', 'upstream-dock', 'snapshot', 'upstream-shortcut'])
   assert.deepEqual([...state.types.values()], [upstreamTerminal])
   assert.equal(state.bodies.size, 0)
     assert.equal(state.settings.size, 2)

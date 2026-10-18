@@ -147,10 +147,23 @@ test('strict saved schema and exact package/runtime capability matching', () => 
   const record = { moduleName: 'module', packageName: 'package', version: '1.0', runtimeVersion: '2.0', hint: 'verified' }
   const saved = { patchId: 'a', moduleName: 'module', enabled: false, runtimeVersion: '2.0' }
   assert.deepEqual(parseSwitches({ version: 1, entries: [saved] }), [saved])
-  assert.equal(startupSwitches([saved], [{ id: 'a', name: 'module' }], [], '2.1').patches.length, 0)
+  assert.equal(startupSwitches([saved], [{ id: 'a', name: 'module' }], [], '2.1').patches.length, 1)
   assert.equal(startupSwitches([saved], [{ id: 'a', name: 'module' }], [], '2.0').patches.length, 1)
   assert.equal(hotCapability(record, '2.0', [record], true).hot, true)
   for (const [item, runtime, hmr] of [[record, '2.1', true], [{ ...record, version: '1.1' }, '2.0', true], [record, '2.0', false], [{ ...record, packageName: 'alias' }, '2.0', true]]) {
     assert.equal(hotCapability(item, runtime, [record], hmr).hot, false)
+  }
+})
+
+test('upgrades preserve saved enable and disable intent only for unchanged unique manageable entries', () => {
+  for (const enabled of [true, false]) {
+    const saved = [{ patchId: 'a', moduleName: 'module', enabled, runtimeVersion: '0.2.0-rc.2' }]
+    const boot = startupSwitches(saved, [{ id: 'a', name: 'module', disabled: enabled }], [], '0.2.1-rc.2')
+    assert.deepEqual(boot.patches, [{ id: 'a', name: 'module', disabled: !enabled }])
+    assert.deepEqual(boot.notices, [])
+    for (const [entries, protectedModules] of [
+      [[{ id: 'a', name: 'replacement' }], []], [[{ id: 'a', name: 'module' }], ['module']],
+      [[{ id: 'a', name: 'module' }, { id: 'a', name: 'other' }], []], [[], []],
+    ]) assert.equal(startupSwitches(saved, entries, protectedModules, '0.2.1-rc.2').patches.length, 0)
   }
 })

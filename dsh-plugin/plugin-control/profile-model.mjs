@@ -46,9 +46,6 @@ export class ProfilePluginControl {
     })
     const notices = this.saved.filter(s => !rows.some(r => r.patchId === s.patchId && r.moduleName === s.moduleName))
       .map(s => `已保存的 ${s.patchId} 已不存在或模块已更换，未应用其开关。`)
-    for (const saved of this.saved) if (inventory.runtimeVersion && saved.runtimeVersion !== inventory.runtimeVersion) {
-      notices.push(`${saved.patchId} 的设置来自其他 DSH 版本，请重新设置开关以确认当前版本的行为。`)
-    }
     return { ...inventory, rows, notices, restartRequired: rows.some(row => row.restart) }
   }
   setEnabled(id, enabled) {
@@ -80,9 +77,11 @@ export function startupSwitches(saved, entries, protectedModules, runtimeVersion
   for (const intent of saved) {
     const matches = rows.filter(row => row.id === intent.patchId)
     const row = matches[0]
-    if (runtimeVersion && intent.runtimeVersion !== runtimeVersion || matches.length !== 1 || row.name !== intent.moduleName || row.group
+    // Version changes do not change saved intent. Revalidate the target and
+    // current protections at boot; hot switching keeps its separate allowlist.
+    if (matches.length !== 1 || row.name !== intent.moduleName || row.group
       || protectedReason({ patchId: row.id, moduleName: row.name }, protectedModules)) {
-      notices.push(`未应用 ${intent.patchId}：DSH 版本或条目已变更、无法唯一定位或属于受保护插件。`)
+      notices.push(`未应用 ${intent.patchId}：条目已变更、无法唯一定位或属于受保护插件。`)
       continue
     }
     patches.push({ id: intent.patchId, name: intent.moduleName, disabled: !intent.enabled })

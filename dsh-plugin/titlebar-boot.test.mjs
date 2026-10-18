@@ -35,7 +35,28 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import vm from 'node:vm'
-import { apply as applyTitleBarHost } from './title-bar/index.js'
+import { apply as applyTitleBarHost, paintableBootInjections } from './title-bar/index.js'
+
+test('bootstrap downloads allow first paint while preserving module execution order', () => {
+  const rows = [
+    { kind: 'script', placement: 'head', text: 'window.__ModuleLoader__ = {}' },
+    { kind: 'script-preload', src: 'app.js' },
+    { kind: 'script-src', placement: 'head', src: 'loader.js' },
+    { kind: 'script-src', placement: 'head', src: 'bootstrap.js' },
+    { kind: 'script-src', placement: 'head', src: 'unrelated.js' },
+    { kind: 'script', placement: 'body', text: 'theme()' },
+    { kind: 'global', name: '__DSH_BOOT__', value: { batches: [
+      { phase: 'bootstrap', url: 'loader.js' }, { phase: 'bootstrap', url: 'bootstrap.js' }, { phase: 'application', url: 'app.js' },
+    ] } },
+  ]
+  const output = paintableBootInjections(rows)
+  assert.deepEqual(output.filter(row => row.placement === 'body').map(row => row.src || row.text), ['loader.js', 'bootstrap.js', 'theme()'])
+  assert.equal(output[0], rows[0], 'inline queue still precedes downloads')
+  assert.equal(output[1], rows[1], 'application preloads stay in head')
+  assert.equal(output[4], rows[4], 'unrelated scripts retain their original semantics')
+  assert.equal(rows[2].placement, 'head', 'the shared upstream table is not mutated')
+  assert.deepEqual(paintableBootInjections(rows.slice(0, 6)), rows.slice(0, 6), 'unknown graph versions are untouched')
+})
 
 test('the title-bar host publishes functional chrome without the optional UI overlay', () => {
   let render
@@ -137,6 +158,7 @@ class FakeElement {
   }
 
   appendChild(child) {
+    if (child.parentNode) child.parentNode.removeChild(child)
     child.parentNode = this
     this.children.push(child)
     return child
@@ -312,6 +334,7 @@ function createSandbox(document, options = {}) {
   const sandbox = {
     document,
     console,
+    CSS: { supports: (_property, value) => /^rgb\(/.test(value) },
     // Timers are recorded rather than run, so a test drives the host-detection
     // ladder explicitly with `drainTimers` instead of racing a clock.
     setTimeout: (fn) => {
@@ -351,7 +374,7 @@ function createSandbox(document, options = {}) {
       core: {
         invoke: (command, args) => {
           invoked.push({ command, args })
-          return Promise.resolve(command === 'window_is_maximized' ? false : undefined)
+          return Promise.resolve(command === 'desktop_boot_context' ? options.bootContext : command === 'window_is_maximized' ? false : undefined)
         },
       },
       // `withApp` installs the app namespace the about dialog reads its version
@@ -392,6 +415,91 @@ function runBoot(document, options = {}) {
 async function settle() {
   for (let tick = 0; tick < 8; tick += 1) await Promise.resolve()
 }
+
+for (const dark of [false, true]) {
+  test(`update chrome retains the previous ${dark ? 'dark' : 'light'} palette through installation and slow DSH loading`, async () => {
+    const palette = { dark, background: dark ? 'rgb(27, 28, 30)' : 'rgb(246, 248, 250)',
+      foreground: dark ? 'rgb(244, 245, 246)' : 'rgb(23, 25, 29)', border: 'rgb(80, 85, 90)' }
+    for (const local of [true, false]) {
+      const { document } = createDocument()
+      const sandbox = runBoot(document, { bootContext: { local, restoring: true, palette } })
+      await settle()
+      const style = document.documentElement.style
+      assert.equal(style.getPropertyValue('--dsh-desktop-titlebar-bg'), palette.background)
+      assert.equal(style.getPropertyValue('--dsh-desktop-titlebar-fg'), palette.foreground)
+      assert.equal(style.getPropertyValue('--dsh-desktop-titlebar-border'), palette.border)
+      const loading = document.getElementById(HOST_ID + '-loading')
+      if (local) {
+        assert.ok(loading, 'the fallback covers the local page until its content renders')
+        sandbox.__DSH_DESKTOP_BOOT__.contentReady()
+        assert.equal(document.getElementById(HOST_ID + '-loading'), null, 'the installation controls take over')
+        assert.equal(document.documentElement.getAttribute('data-dsh-boot-scheme'), dark ? 'dark' : 'light')
+      } else {
+        assert.equal(loading.getAttribute('role'), 'status')
+        assert.ok(flatten(loading).some(node => node.textContent === '正在恢复界面…'), 'status exists before any DSH module')
+        assert.ok(loading.querySelector('.dshBoot__spinner'))
+        document.dispatchEvent({ type: READY_EVENT })
+        assert.ok(document.getElementById(HOST_ID + '-loading'), 'title-bar readiness does not claim that restoration finished')
+        sandbox.__DSH_DESKTOP_BOOT__.contentReady()
+        assert.equal(document.getElementById(HOST_ID + '-loading'), null)
+        assert.equal(document.getElementById(HOST_ID), null)
+      }
+    }
+  })
+}
+
+test('a late boot-context response cannot cover the restored interface', async () => {
+  const { document } = createDocument()
+  let resolve
+  runBoot(document, { bootContext: new Promise(done => { resolve = done }) })
+  document.documentElement.setAttribute(READY_ATTRIBUTE, '')
+  document.dispatchEvent({ type: READY_EVENT })
+  resolve({ local: false, restoring: true })
+  await settle()
+  assert.equal(document.getElementById(HOST_ID + '-loading'), null)
+})
+
+test('a head script cannot leave the update blank while body parsing is blocked', async () => {
+  const { document, body } = createDocument()
+  document.documentElement.removeChild(body)
+  document.body = null
+  const sandbox = runBoot(document, { bootContext: { local: false, restoring: true } })
+  await settle()
+  const bar = document.getElementById(HOST_ID)
+  const loading = document.getElementById(HOST_ID + '-loading')
+  assert.equal(bar.parentNode, document.documentElement)
+  assert.ok(flatten(loading).some(node => node.textContent === '正在恢复界面…'))
+  controlsOf(document)[0].dispatch('click', { button: 0 })
+  assert.ok(sandbox.__invoked.some(({ command }) => command === 'window_minimize'))
+  document.body = body
+  document.documentElement.appendChild(body)
+  document.dispatchEvent({ type: 'readystatechange' })
+  assert.equal(bar.parentNode, body)
+  assert.equal(loading.parentNode, body)
+  document.dispatchEvent({ type: READY_EVENT })
+  assert.equal(document.getElementById(HOST_ID), null)
+  sandbox.__DSH_DESKTOP_BOOT__.contentReady()
+  assert.equal(document.getElementById(HOST_ID + '-loading'), null)
+})
+
+test('the central animation mounts without waiting for a boot-context reply', async () => {
+  for (const reply of [() => new Promise(() => {}), () => Promise.reject(new Error('stale-origin')), () => undefined]) {
+    const { document } = createDocument()
+    const sandbox = runBoot(document, { bootContext: reply() })
+    const loading = document.getElementById(HOST_ID + '-loading')
+    assert.ok(loading, 'the first paint does not depend on IPC')
+    assert.ok(loading.querySelector('.dshBoot__spinner'))
+    assert.ok(loading.querySelector('.dshBoot__logo'))
+    assert.equal(loading.querySelector('.dshBoot__loadingLabel').textContent, '正在载入界面…')
+    await drainTimers(sandbox)
+    assert.ok(document.getElementById(HOST_ID + '-loading'), 'exhausting IPC retries must not remove the animation')
+    sandbox.__DSH_DESKTOP_BOOT__.markRestoring()
+    document.dispatchEvent({ type: READY_EVENT })
+    assert.ok(document.getElementById(HOST_ID + '-loading'))
+    sandbox.__DSH_DESKTOP_BOOT__.contentReady()
+    assert.equal(document.getElementById(HOST_ID + '-loading'), null)
+  }
+})
 
 /**
  * Run every pending timer, then let the promise chains they start settle.
@@ -703,7 +811,7 @@ test('the window controls call the real host commands', async () => {
   // mount, which is not an action these assertions are about.
   const commands = sandbox.__invoked.map((call) => call.command)
   assert.deepEqual(
-    commands.filter((command) => command !== 'window_is_maximized'),
+    commands.filter((command) => !['window_is_maximized', 'desktop_boot_context'].includes(command)),
     ['window_minimize', 'window_close'],
     'the buttons must call the commands the Rust side actually registers',
   )

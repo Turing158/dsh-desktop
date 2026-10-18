@@ -169,6 +169,9 @@ pub struct Selection {
 pub struct Draft {
     pub session_id: String,
     pub text: String,
+    /// DSH's portable draft document (references and command token, no closures).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<Value>,
     pub editor: Value,
     pub selection: Option<Selection>,
     pub attachment_keys: Vec<String>,
@@ -334,6 +337,18 @@ impl UiPayload {
                 }
             }
             bounded_json(&draft.editor, 0)?;
+            if let Some(content) = &draft.semantic {
+                bounded_json(content, 0)?;
+                if !content.is_object()
+                    || content.get("text").and_then(Value::as_str) != Some(draft.text.as_str())
+                    || !content.get("references").is_some_and(Value::is_array)
+                    || content.get("command").is_some_and(|command| {
+                        !command.get("token").is_some_and(Value::is_string)
+                    })
+                {
+                    return Err("snapshot-draft".into());
+                }
+            }
         }
         if self.page.kind == "boot"
             && (!self.drafts.is_empty() || !self.assets.is_empty() || !self.dialogs.is_empty())
@@ -423,6 +438,8 @@ pub struct UiSnapshot {
     pub source: Identity,
     pub captured_at: u64,
     pub payload: UiPayload,
+    /// Only an explicit, verified dsh update may restore across frontend versions.
+    pub restore_frontend_version: Option<String>,
     files: Option<SnapshotFiles>,
 }
 #[derive(Serialize)]
@@ -432,6 +449,7 @@ pub struct SnapshotWire {
     source: Identity,
     captured_at: u64,
     payload: UiPayload,
+    restore_frontend_version: Option<String>,
 }
 impl UiSnapshot {
     /// Validate and stage on a worker before acknowledging that destruction is safe.
@@ -483,6 +501,7 @@ impl UiSnapshot {
             source,
             captured_at,
             payload,
+            restore_frontend_version: None,
             files,
         })
     }
@@ -507,6 +526,7 @@ impl UiSnapshot {
             source: self.source,
             captured_at: self.captured_at,
             payload,
+            restore_frontend_version: self.restore_frontend_version.clone(),
         })
     }
 }
@@ -1033,6 +1053,46 @@ mod tests {
         payload = UiPayload::boot();
         payload.page.route = "/?token=private".into();
         assert!(payload.validate().is_err());
+    }
+    #[test]
+    fn semantic_drafts_survive_native_transport_and_legacy_snapshots_still_load() {
+        let legacy = serde_json::json!({
+            "sessionId": "s1", "text": "/goal @file", "editor": null,
+            "selection": { "start": 2, "end": 2, "focused": true },
+            "attachmentKeys": [], "revision": 1, "view": null
+        });
+        let mut draft: Draft = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(draft.semantic.is_none());
+        assert_eq!(serde_json::to_value(&draft).unwrap(), legacy);
+        let semantic = serde_json::json!({
+            "text": "/goal @file", "command": { "token": "/goal " },
+            "references": [{ "source": "file", "ref": "file", "label": "file",
+                "clipboardText": "@file", "offset": 6, "length": 5, "appearance": "file" }]
+        });
+        draft.semantic = Some(semantic.clone());
+        let mut payload = UiPayload::boot();
+        payload.page.kind = "dsh".into();
+        payload.drafts.push(draft);
+        let snapshot = UiSnapshot::capture(payload, UiState::default().identity()).unwrap();
+        assert_eq!(snapshot.wire().unwrap().payload.drafts[0].semantic, Some(semantic));
+    }
+    #[test]
+    fn semantic_drafts_reject_inconsistent_text_malformed_shapes_and_unbounded_content() {
+        let mut payload = UiPayload::boot();
+        payload.page.kind = "dsh".into();
+        payload.drafts.push(serde_json::from_value(serde_json::json!({
+            "sessionId": "s1", "text": "draft", "editor": null, "selection": null,
+            "attachmentKeys": [], "revision": 0, "view": null
+        })).unwrap());
+        for invalid in [
+            serde_json::json!({"text": "different", "references": []}),
+            serde_json::json!({"text": "draft", "references": {}}),
+            serde_json::json!({"text": "draft", "references": [], "command": {"token": 42}}),
+            serde_json::json!({"text": "draft", "references": ["x".repeat(512 * 1024 + 1)]}),
+        ] {
+            payload.drafts[0].semantic = Some(invalid);
+            assert!(payload.validate().is_err());
+        }
     }
     #[test]
     fn terminal_provider_is_supported_without_accepting_unknown_snapshot_providers() {

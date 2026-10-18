@@ -10,7 +10,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use crate::dsh::CommandExt;
 use crate::{
@@ -277,44 +277,128 @@ pub async fn check_dsh_update(window: WebviewWindow) -> Result<Versions, String>
 #[tauri::command]
 pub async fn install_dsh_update(
     window: WebviewWindow,
+    identity: crate::remote_control::Identity,
+    payload: crate::ui_snapshot::UiPayload,
+    palette: Option<crate::boot_bar::Palette>,
     channel: Channel,
     target_version: Option<String>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let node = caller(&window)?;
+    crate::remote_control::caller(&window, identity).map_err(|e| e.message)?;
     let args = channel.args(target_version.as_deref())?;
     let operation = window.state::<UpdateManager>().begin()?;
+    let app = window.app_handle().clone();
+    let shared = app.state::<Shared>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let _operation = operation;
-        let mut installer = npm::Installer::start_with_args(&node, &args)?;
-        let events = installer.take_events().ok_or("无法读取安装输出")?;
-        let transcript = std::thread::spawn(move || {
-            let mut tail = VecDeque::new();
-            for progress in events {
-                if tail.len() == 20 { tail.pop_front(); }
-                tail.push_back(progress.line);
+        let (guard, source, mut runtime, config) = {
+            let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
+            if s.remote.applying || s.boot_in_progress || s.installer.is_some()
+                || s.ui.phase != crate::ui_snapshot::UiPhase::Active || s.ui.snapshot.is_some()
+            {
+                return Err("启动、保存或恢复仍在进行，请完成后重试".into());
             }
-            tail.into_iter().collect::<Vec<_>>().join("\n")
-        });
-        let result = installer.wait();
-        // Close the job before joining readers, including on wait errors.
-        drop(installer);
-        let transcript = transcript.join().unwrap_or_default();
-        if !result? { return Err(format!("安装失败：\n{transcript}")); }
-        // Verify the global prefix used by npm, including a custom npm prefix.
+            let runtime = s.runtime.clone().ok_or("后台未就绪")?;
+            let config = s.remote.active.clone().ok_or("后台未就绪")?;
+            s.remote.applying = true;
+            (crate::remote_control::ApplyingGuard(shared.clone()), s.ui.identity(), runtime, config)
+        };
+        // Resolve npm and stage drafts before touching the running service.
         let root = output(npm_command(&node)?.args(["root", "-g"]), "npm root -g", Duration::from_secs(20))?;
         let bin = Path::new(root.trim()).join("@deepseek-ai/dsh/lib/bin.js");
-        let installed = crate::dsh::probe_version(&node, &bin)
-            .ok_or("安装命令已完成，但 dsh --version 校验失败，请重新检测")?;
-        let installed = version(&installed)?;
-        if matches!(channel, Channel::Preview) && target_version.as_deref() != Some(installed.as_str()) {
-            return Err(format!("安装后的 dsh 版本为 {installed}，与选择的预览版不一致，请重新检测"));
-        }
-        let current = current_version()?;
-        if installed != current {
-            return Err(format!("已安装 dsh {installed}，但 PATH 中的 dsh 仍为 {current}。请检查 npm 全局目录与 PATH 后重新检测。"));
-        }
-        Ok(installed)
+        if payload.page.kind != "dsh" { return Err("无法安全保存当前页面".into()); }
+        let snapshot = crate::ui_snapshot::UiSnapshot::capture(payload, source)
+            .map_err(|_| "草稿或附件保存失败，原页面和服务已保留")?;
+        crate::remote_control::caller(&window, identity).map_err(|e| e.message)?;
+        let previous = {
+            let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
+            if s.ui.phase != crate::ui_snapshot::UiPhase::Active
+                || crate::remote_control::identity(&s) != identity
+            { return Err("页面已变化，请重试".into()); }
+            // Invalidate the old stream before stopping it. Its exit must not
+            // overwrite the install page or trigger a second backend restart.
+            s.ui.backend_instance += 1;
+            s.ui.loaded = false;
+            s.remote.active = None;
+            s.remote.operation_id += 1;
+            s.ui.snapshot = Some(Arc::new(snapshot));
+            s.update_presentation = Some(crate::boot_bar::UpdatePresentation {
+                palette: palette.and_then(crate::boot_bar::Palette::bounded),
+            });
+            s.phase = Phase::Installing { version: Some(target_version.clone().unwrap_or_else(|| "latest".into())) };
+            s.process.take()
+        };
+        // Acknowledge ownership; the old document is about to be replaced.
+        std::thread::spawn(move || {
+            let _operation = operation;
+            let _guard = guard;
+            crate::navigate_current(&app);
+            crate::publish(&app, &shared);
+            let result = (|| {
+                if let Some(mut previous) = previous {
+                    previous.stop_and_wait().map_err(|e| format!("无法停止旧版 dsh：{e}"))?;
+                }
+                crate::terminal::suspend(&app);
+                if crate::exiting(&shared) { return Err("更新已取消".into()); }
+                install_package(&app, &shared, &node, &args)?;
+                let installed = crate::dsh::probe_version(&node, &bin)
+                    .ok_or("安装命令已完成，但 dsh --version 校验失败，请重新检测")?;
+                let installed = version(&installed)?;
+                if matches!(channel, Channel::Preview) && target_version.as_deref() != Some(installed.as_str()) {
+                    return Err(format!("安装后的 dsh 版本为 {installed}，与选择的预览版不一致，请重新检测"));
+                }
+                let current = current_version()?;
+                if installed != current {
+                    return Err(format!("已安装 dsh {installed}，但 PATH 中的 dsh 仍为 {current}。请检查 npm 全局目录与 PATH 后重新检测。"));
+                }
+                let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
+                let snapshot = s.ui.snapshot.as_mut().and_then(Arc::get_mut)
+                    .ok_or("无法准备新版界面恢复，请重新检测")?;
+                snapshot.restore_frontend_version = Some(installed.clone());
+                runtime.dsh_bin = bin;
+                runtime.source = crate::dsh::DshSource::Global;
+                runtime.version = Some(installed);
+                Ok::<_, String>(())
+            })();
+            if crate::exiting(&shared) { return; }
+            match result {
+                Ok(()) => crate::restart_backend(&app, &shared, runtime, config),
+                Err(error) => {
+                    crate::fail(&app, &shared, format!("dsh 更新失败：{error}"),
+                        "界面草稿和附件仍保留在本次运行中。请点击「重新检测」恢复启动。");
+                    crate::navigate_current(&app);
+                }
+            }
+        });
+        Ok(())
     }).await.map_err(|e| e.to_string())?
+}
+
+fn install_package(app: &AppHandle, shared: &Shared, node: &Path, args: &[String]) -> Result<(), String> {
+    let mut installer = npm::Installer::start_with_args(node, args)?;
+    {
+        let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
+        if s.ui.phase == crate::ui_snapshot::UiPhase::Exiting { return Err("更新已取消".into()); }
+        s.installer = Some(installer.handle());
+    }
+    let events = installer.take_events().ok_or("无法读取安装输出")?;
+    let app = app.clone();
+    let state = shared.clone();
+    let transcript = std::thread::spawn(move || {
+        let mut tail = VecDeque::new();
+        for progress in events {
+            if let Ok(mut s) = state.lock() { s.push_log(progress.line.clone()); }
+            let _ = app.emit(crate::EVENT_INSTALL_PROGRESS, &progress);
+            if tail.len() == 20 { tail.pop_front(); }
+            tail.push_back(progress.line);
+        }
+        tail.into_iter().collect::<Vec<_>>().join("\n")
+    });
+    let result = installer.wait();
+    drop(installer);
+    crate::clear_installer(shared);
+    let transcript = transcript.join().unwrap_or_default();
+    if !result? { return Err(format!("安装失败：\n{transcript}")); }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -2298,7 +2298,8 @@
     if (CHANGES_COLLAPSE_CLASSES.some(function (name) { return classes.includes(name) })) return GHOST_COLLAPSE
     var role = node.getAttribute('role')
     if (role === 'alertdialog') return 'surface'
-    if (role === 'menu') return GHOST_MENU
+    // The inline reasoning slider changes its menu's accessible role to group.
+    if (role === 'menu' || node.hasAttribute('data-dsh-reasoning-slider')) return GHOST_MENU
     if (
       role === 'presentation' ||
       role === 'dialog' ||

@@ -8,13 +8,14 @@ import { selectionText } from './selection.mjs'
 import { currentSessionId } from './session-context.mjs'
 import { installMobileTerminalInput as mobileInput } from './mobile-input.mjs'
 import { installUpstreamTerminalInteractions as upstreamInteractions } from './upstream-interactions.mjs'
-import { createUpstreamDock as upstreamDock } from './upstream-dock.mjs'
+import { createUpstreamDock as upstreamDock, createUpstreamRemoteState as upstreamRemoteState } from './upstream-dock.mjs'
 import { createUpstreamPreferences, installUpstreamShellDefault as upstreamShellDefault, bindUpstreamShortcut as upstreamShortcut } from './upstream-preferences.mjs'
 export function installUpstreamShellDefault(...args) { return upstreamShellDefault(...args) }
 export function bindUpstreamShortcut(...args) { return upstreamShortcut(...args) }
 export function installUpstreamTerminalInteractions(...args) { return upstreamInteractions(...args) }
 
 export function createRemoteState(...args) { return remoteState(...args) }
+export function createUpstreamRemoteState(...args) { return upstreamRemoteState(...args) }
 export function hideDesktopTerminals(...args) { return hideDesktop(...args) }
 export function installMobileTerminalInput(...args) { return mobileInput(...args) }
 export { selectionText }

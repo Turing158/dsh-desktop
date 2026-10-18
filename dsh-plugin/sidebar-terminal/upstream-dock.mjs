@@ -1,5 +1,5 @@
 import { t, useLocale } from '../i18n/api.mjs'
-import { createDockStore, createDockComponent, createDockToggleComponent, createDockWorkspaceSource } from './dock.mjs'
+import { createDockStore, createDockComponent, createDockToggleComponent, createDockWorkspaceSource, dockWorkspaceKey } from './dock.mjs'
 import { currentSessionId } from './session-context.mjs'
 import { createTerminalTabMenuRows, installSidebarTerminalMenu } from './upstream-tab-menu.mjs'
 
@@ -35,6 +35,16 @@ export function createUpstreamRegistry(ctx, options = {}) {
   const sync = () => retain(sidebarTabs)
   return {
     get sessions() { return [...bindings].map(([resourceKey, value]) => ({ resourceKey, ...value })) },
+    restoreBindings(sessions) {
+      // Install owners before dock.restore holds the keys. Otherwise inactive
+      // projects would inherit the currently selected conversation and shell.
+      for (const { resourceKey, sessionId, cwd, shellPath } of sessions) {
+        const existing = bindings.get(resourceKey)
+        if (existing && (existing.sessionId !== sessionId || existing.cwd !== cwd || existing.shellPath !== shellPath)) throw Error('snapshot-terminal-conflict')
+      }
+      for (const { resourceKey, sessionId, cwd, shellPath } of sessions) if (!bindings.has(resourceKey)) bindings.set(resourceKey, { sessionId, cwd, shellPath })
+      persist()
+    },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
     hold(key) {
       if (!bindings.has(key)) {
@@ -87,6 +97,57 @@ export function createUpstreamRegistry(ctx, options = {}) {
         service.retainTabs = retainTabs
         retainTabs.call(service, sidebarTabs)
       }
+    },
+  }
+}
+
+/** Carry native dock presentation across origins; never serialize shell input. */
+export function createUpstreamRemoteState(ctx, registry, dock) {
+  function validate(saved) {
+    if (saved?.backend !== 'dsh' || !Array.isArray(saved.sessions) || !saved.dock
+      || !Array.isArray(saved.dock.workspaces) || !Number.isFinite(saved.dock.height)
+      || typeof saved.dock.collapsed !== 'boolean' || typeof saved.dock.shortcutVisible !== 'boolean') throw Error('snapshot-terminal-unsupported')
+    const listed = ctx.sessions.list.getSnapshot(), keys = new Map(), folders = new Set(), used = new Set()
+    for (const session of saved.sessions) {
+      if (!session || typeof session.resourceKey !== 'string' || !session.resourceKey.startsWith(UPSTREAM_PREFIX)
+        || keys.has(session.resourceKey) || typeof session.sessionId !== 'string'
+        || (session.cwd !== null && typeof session.cwd !== 'string')
+        || (session.shellPath !== undefined && typeof session.shellPath !== 'string')) throw Error('snapshot-terminal-unsupported')
+      if (!listed.byId?.[session.sessionId]) throw Error('snapshot-session-missing')
+      keys.set(session.resourceKey, session)
+    }
+    for (const workspace of saved.dock.workspaces) {
+      if (!workspace || (workspace.cwd !== null && typeof workspace.cwd !== 'string') || !Array.isArray(workspace.tabs)
+        || !workspace.tabs.length || !workspace.tabs.includes(workspace.active) || folders.has(dockWorkspaceKey(workspace.cwd))) throw Error('snapshot-terminal-unsupported')
+      folders.add(dockWorkspaceKey(workspace.cwd))
+      for (const key of workspace.tabs) {
+        if (!keys.has(key) || used.has(key) || dockWorkspaceKey(keys.get(key).cwd) !== dockWorkspaceKey(workspace.cwd)) throw Error('snapshot-terminal-unsupported')
+        used.add(key)
+      }
+    }
+    if (used.size !== keys.size) throw Error('snapshot-terminal-unsupported')
+  }
+  return {
+    version: 1,
+    owns: node => Boolean(node?.closest?.('[data-dsh-terminal-dock]')),
+    ownsSidebar: () => false,
+    capture() {
+      const sessions = registry.sessions
+      const layout = dock.capture(new Set(sessions.map(value => value.resourceKey)))
+      const keys = new Set(layout.workspaces.flatMap(value => value.tabs))
+      if (!keys.size) return null
+      const saved = { backend: 'dsh', sessions: sessions.filter(value => keys.has(value.resourceKey))
+        .map(({ resourceKey, sessionId, cwd, shellPath }) => ({ resourceKey, sessionId, cwd, ...(shellPath !== undefined ? { shellPath } : {}) }))
+        .sort((a, b) => a.resourceKey.localeCompare(b.resourceKey)), dock: layout }
+      validate(saved)
+      return saved
+    },
+    restore(saved) {
+      validate(saved)
+      registry.restoreBindings(saved.sessions)
+      // The native service reconnects an existing PTY within a backend lifetime
+      // or opens a fresh shell after restart. No commands or output are replayed.
+      dock.restore(saved.dock)
     },
   }
 }

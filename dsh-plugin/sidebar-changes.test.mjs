@@ -230,12 +230,15 @@ test('real DSH execution records write/edit, nested calls, cancelled post-policy
   const { LocalFileSystem } = await imp('@deepseek-ai/dsh-fs-local')
   const fsTools = await imp('@deepseek-ai/dsh-tool-fs')
   const { workspace, store } = await fixture(t), ctx = new Context()
+  t.after(() => ctx.fiber.dispose())
   ctx.plugin(SystemPrompt, {}); ctx.plugin(Tools, {}); ctx.plugin(LocalFileSystem, { cwd: workspace })
-  await new Promise(resolve => setTimeout(resolve, 20))
+  // This fixture has a fixed directory; actual session-directory transitions are
+  // exercised by the full Agent integration in session-changes-smoke.mjs.
+  ctx.provide('workingDirectory', { ensure: async agent => agent.session.header.cwd })
   const agent = { id: 'session', session: { header: { cwd: workspace } } }
   installRecorder(ctx, store)
-  // Register the shipped file tools against the actual runtime and local FS.
-  fsTools.apply(ctx, { readLimit: 2000, readMaxLineLength: 2000, readMaxBytes: 1024 * 1024, readStreamMinSize: 1024 * 1024 })
+  // Let Cordis resolve Config defaults and dependencies before registration.
+  await ctx.plugin(fsTools, {}).await()
   const run = (name, args, extra = {}) => ctx.tools.execute({ name, arguments: args, callId: Math.random().toString(), signal: new AbortController().signal, agent, ...extra })
   const write = await run('write', { file_path: path.join(workspace, 'a'), content: 'one\n' })
   assert.equal(write.isError, false, JSON.stringify(write))

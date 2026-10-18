@@ -894,6 +894,9 @@
       reset: () => {
         if (!gitBusy(state) && state.phase !== "unknown") publish({ phase: "idle", error: null, commitId: "", context: null });
       },
+      dismissError: () => {
+        if (!gitBusy(state) && state.phase !== "unknown") publish({ error: null });
+      },
       async recover() {
         if (!state.request || state.phase === "recovering") return;
         publish({ phase: "recovering" });
@@ -1258,7 +1261,11 @@
         { className: "dshChanges__gitError", role: "alert" },
         retry && h("p", null, state.action === "pushOnly" ? t("\u63A8\u9001\u5931\u8D25") : t("\u63D0\u4EA4\u5DF2\u4FDD\u5B58 \xB7 \u63A8\u9001\u5931\u8D25")),
         h("p", null, reason(shownError)),
-        shownError.detail && shownError.detail !== reason(shownError) && h("pre", null, shownError.detail)
+        shownError.detail && shownError.detail !== reason(shownError) && h("pre", null, shownError.detail),
+        !dialog && !busy && !uncertain && h(Button, { size: "sm", onClick: () => {
+          setError(null);
+          operation.dismissError();
+        } }, t("\u5173\u95ED"))
       );
       return h(
         React.Fragment,
@@ -1404,13 +1411,14 @@
   function createFileMenu(React, primitives) {
     const h = React.createElement, {
       Menu,
+      FileTypeIcon,
       IconFolderOpenOutlineRegular: Folder,
-      IconFileOutlineRegular: File,
       IconCompareSplitOutlineRegular: Compare,
       IconChevronDownOutlineRegular: Down,
       IconChevronUpOutlineRegular: Up
     } = primitives;
     const icon = (Icon) => Icon ? h(Icon, { size: 16 }) : void 0;
+    const fileIcon = h(FileTypeIcon, { kind: "other", size: 16 });
     return function FileMenu({ ctx, tab, sessionId, source, entry, workspaceRoot, point, expanded, toggle, dismiss, onError }) {
       useLocale(React);
       const path = absoluteFilePath(entry, workspaceRoot);
@@ -1471,7 +1479,7 @@
       const applications = apps?.map((app) => ({
         id: "app:" + app.id,
         label: app.default ? t("{0}\uFF08\u9ED8\u8BA4\uFF09", [app.name]) : app.name,
-        icon: app.icon ? h("img", { src: app.icon, alt: "", width: 16, height: 16, className: "dshChanges__appIcon" }) : icon(File)
+        icon: app.icon ? h("img", { src: app.icon, alt: "", width: 16, height: 16, className: "dshChanges__appIcon" }) : fileIcon
       })) || [];
       return h(Menu, {
         open: true,
@@ -1484,7 +1492,7 @@
         onSelect: select,
         getAnchorRect: () => ({ left: point.x, right: point.x, top: point.y, bottom: point.y }),
         items: [
-          { id: "file", label: t("\u6253\u5F00\u6587\u4EF6"), icon: icon(File), disabled: !path || entry.status === "deleted" },
+          { id: "file", label: t("\u6253\u5F00\u6587\u4EF6"), icon: fileIcon, disabled: !path || entry.status === "deleted" },
           { id: "diff", label: t("\u67E5\u770B\u66F4\u6539"), icon: icon(Compare) },
           { id: "toggle", label: expanded ? t("\u6536\u8D77\u66F4\u6539") : t("\u5C55\u5F00\u66F4\u6539"), icon: icon(expanded ? Up : Down) },
           { type: "separator", id: "native" },

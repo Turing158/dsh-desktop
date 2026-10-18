@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { bootPatches } from '../dsh-plugin/plugin-control/model.mjs'
+import { openDshSettings } from './dsh-ui-helpers.mjs'
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const dshBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
@@ -36,7 +37,7 @@ const call = (method, ...args) => page.evaluate(async ([method, args]) => {
   return result.value
 }, [method, args])
 async function settings() {
-  if (!await page.locator('[data-shortcut-modal="settings"]').count()) await page.locator('button[aria-haspopup="dialog"]').first().evaluate(button => button.click())
+  await openDshSettings(page)
   await page.locator('[data-shortcut-modal="settings"]').getByRole('button', { name: '插件', exact: true }).click()
   await page.getByRole('tab', { name: '内置插件', exact: true }).click()
 }

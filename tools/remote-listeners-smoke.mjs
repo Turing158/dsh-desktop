@@ -113,11 +113,13 @@ function upgradedSocket(cookie) {
   })
 }
 try {
-  await start([main])
+  const desktopUrl = await start([main])
+  assert.equal(desktopUrl.origin, `http://127.0.0.1:${port}`)
   assert.equal((await http(mainAddress, port, domains[0], '/')).status, 401)
-  await assert.rejects(http(loopback, port, loopback + ':' + port, '/'), { code: 'ECONNREFUSED' })
+  assert.equal((await http('127.0.0.1', port, '127.0.0.1:' + port, desktopUrl.pathname + desktopUrl.search)).status, 303)
+  if (loopback !== '127.0.0.1') await assert.rejects(http(loopback, port, loopback + ':' + port, '/'), { code: 'ECONNREFUSED' })
   await stop()
-  pass('without a local Host entry only the selected main address listens')
+  pass('the desktop retains an authenticated loopback listener without a local Host entry')
 
   const loginUrl = await start([main, ...extra])
   const cookies = new Map()
@@ -141,10 +143,14 @@ try {
   pass('LAN and added loopback ports share login, session RPC, Host checks and authenticated HTTP upgrades')
 
   await start([main])
-  for (const item of extra) await assert.rejects(http(item.address, item.port, item.address + ':' + item.port, '/'), { code: 'ECONNREFUSED' })
+  for (const item of extra) {
+    if (item.address === '127.0.0.1' && item.port === port) continue
+    await assert.rejects(http(item.address, item.port, item.address + ':' + item.port, '/'), { code: 'ECONNREFUSED' })
+  }
+  assert.equal((await http('127.0.0.1', port, '127.0.0.1:' + port, '/api/nonexistent')).status, 401)
   assert.equal((await http(mainAddress, port, domains[0], '/api/nonexistent', { Cookie: cookies.get(domains[0]) })).status, 404)
   await stop()
-  pass('removing local entries closes their sockets while the main listener and domain login remain usable')
+  pass('removing extra local entries closes their sockets while desktop, LAN and domain login remain usable')
 
   const occupied = await hold(loopback, extraPort)
   try { await start([main, ...extra], true); await stop() } finally { await close(occupied) }

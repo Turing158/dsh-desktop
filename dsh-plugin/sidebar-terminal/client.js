@@ -537,6 +537,7 @@ var React = require('react')
           var offDefaults = window.DSHTerminal.installUpstreamShellDefault(child.webTerminals, upstreamSettings.preferences)
           var offInteractions = window.DSHTerminal.installUpstreamTerminalInteractions(document, function (error) { warn(child, 'copy or paste terminal text', error) })
           dock = window.DSHTerminal.createUpstreamDock(React, child, scope, isVanilla, typeId, upstreamSettings.preferences, primitives)
+          var offRemoteState = window.__DSH_UI_STATE__?.registerProvider('desktop-terminal', window.DSHTerminal.createUpstreamRemoteState(child, dock.registry, dock.store))
           var offSettings = []
           ;[['profile', upstreamSettings.ProfileRow], ['position', upstreamSettings.PositionRow]].forEach(function (entry, index) {
             offSettings.push(child.slots.inject('settings.general.item', function () {
@@ -556,6 +557,7 @@ var React = require('react')
               delete window.__DSH_UPSTREAM_DOCK_SMOKE__
             }
             offShortcut()
+            offRemoteState?.()
             offInteractions()
             release(offSettings)
             offDefaults()

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { handleOnboarding, offlineModelPatch } from './dsh-ui-helpers.mjs'
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const dshBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
@@ -29,17 +30,18 @@ await writeFile(join(probe, 'index.js'), 'export function apply() {}\n')
 await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({ id:'@dsh-desktop/editor-smoke',factory:()=>({inject:['sessions','workspaces','uiWorkspace','sidebarRight','remote','remote.desktopFileEditor','slots'],apply(ctx){window.__EDITOR_SMOKE__=ctx}})})`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')).replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
   + '\n- insert:\n    - id: editor-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
-await writeFile(join(root, 'patch.yml'), patch)
+await writeFile(join(root, 'patch.yml'), patch + offlineModelPatch)
 let child, browser, page, output = ''
 const report = { root, checks: [] }, sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 try {
-  child = spawn(process.execPath, [dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], { cwd: workspace, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes') }, stdio: ['ignore', 'pipe', 'pipe'] })
+  child = spawn(process.execPath, [dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], { cwd: workspace, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes'), DSH_UI_SMOKE_KEY: 'offline-fixture' }, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
   let url
   for (let i = 0; i < 400; i++) { url = output.match(/dsh web: (http:\/\/[^\s\u001b]+)/)?.[1]; if (url) break; if (child.exitCode !== null) throw Error(output); await sleep(100) }
   if (!url) throw Error(output)
   browser = await chromium.launch({ headless: true, channel: 'msedge' })
   page = await browser.newPage({ viewport: { width: 1600, height: 950 } })
+  await handleOnboarding(page)
   const errors = []
   page.on('pageerror', error => { errors.push(error.message); console.error(error.message) })
   await page.addInitScript(() => { window.__EDITOR_PROVIDERS__ = new Map(); window.__DSH_UI_STATE__ = { registerProvider(id, provider) { window.__EDITOR_PROVIDERS__.set(id, provider); return () => window.__EDITOR_PROVIDERS__.delete(id) } } })
@@ -49,15 +51,6 @@ try {
     const ctx = window.__EDITOR_SMOKE__, work = await ctx.workspaces.create({ path: workspace })
     const id = await ctx.sessions.create({ workspaceId: work.workspaceId }); await ctx.uiWorkspace.openSession(id); return id
   }, workspace)
-  await page.getByRole('button', { name: '继续', exact: true }).waitFor()
-  await page.waitForFunction(() => {
-    for (const button of document.querySelectorAll('button')) {
-      if (button.textContent.trim() === '稍后配置') return true
-      if (['继续', '我知道了'].includes(button.textContent.trim())) button.click()
-    }
-    return false
-  })
-  await page.getByRole('button', { name: '稍后配置', exact: true }).click()
   const chooseViewer = async label => {
     await page.locator('[data-document-viewer-menu]:visible').click()
     await page.getByRole('menuitem', { name: label, exact: true }).click()
@@ -232,9 +225,10 @@ try {
   assert.equal(captured.drafts[0].state.text, 'keep this draft')
   page.once('dialog', dialog => dialog.accept())
   await page.reload()
-  await page.waitForFunction(() => Boolean(window.__EDITOR_SMOKE__))
-  const setup = page.getByRole('button', { name: '稍后配置', exact: true })
-  await setup.waitFor({ timeout: 10000 }); await setup.click()
+  await page.waitForFunction(id => {
+    const ctx = window.__EDITOR_SMOKE__, state = ctx?.sessions.list.getSnapshot()
+    return state?.phase === 'ready' && state.byId[id] && ctx.sessions.scope(id)
+  }, sessionId)
   await page.evaluate(saved => window.__EDITOR_PROVIDERS__.get('desktop-file-editor').restore(saved), captured)
   await page.locator('.dshFileEditor:visible .cm-content').waitFor()
   assert.match(await editor().innerText(), /keep this draft/)
