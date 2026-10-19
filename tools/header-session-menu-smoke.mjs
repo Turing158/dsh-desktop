@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { offlineModelPatch, handleOnboarding, dismissInitialWelcome } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -22,12 +23,13 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({ id: '@
     apply(ctx) { window.__MOTION_SMOKE__ = ctx; window.__MENU_REACT__ = require("react"); window.__MENU_PRIMITIVES__ = require("@deepseek-ai/dsh-client-ui-primitives") } }) })`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8'))
   .replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
+  + offlineModelPatch
   + '\n- insert:\n    - id: desktop-motion-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 const patchPath = join(root, 'desktop.patch.yml')
 await writeFile(patchPath, patch)
 const child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--no-open', '--port', '0'], {
   cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin },
+  env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_UI_SMOKE_KEY: 'mock-key' },
 })
 let output = '', browser, page
 child.stdout.on('data', data => { output += data })
@@ -43,16 +45,15 @@ try {
  assert.ok(url)
  browser=await chromium.launch({channel:'msedge',headless:true})
  page=await browser.newPage({viewport:{width:1280,height:840}})
+ await handleOnboarding(page)
  page.on('pageerror',e=>errors.push(e.message))
  page.on('console',message=>{if(message.type()==='error'&&message.text().includes('slot entry crashed'))errors.push(message.text())})
  await page.route('**/open-in-app/apps',route=>route.fulfill({json:{apps:['explorer','vscode']}}))
  await page.route('**/open-in-app/open',route=>{launches.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}})})
  await page.goto(url)
  await page.waitForFunction(()=>window.__MOTION_SMOKE__?.configForms.get('desktop-appearance').getSnapshot().status==='ready')
- await page.getByRole('button',{name:'继续',exact:true}).waitFor()
- for(const name of ['继续','我知道了','稍后配置']){const b=page.getByRole('button',{name,exact:true});if(await b.count()){await b.click();await page.waitForTimeout(350)}}
+ await dismissInitialWelcome(page)
  if(await page.locator('[data-shortcut-modal="settings"]').count())await page.keyboard.press('Escape')
- await page.addLocatorHandler(page.getByRole('button',{name:'稍后配置',exact:true}),b=>b.click())
  await page.waitForTimeout(300)
  const ids=await page.evaluate(async path=>{
   const c=window.__MOTION_SMOKE__,w=await c.workspaces.create({path}),ids=[]
@@ -63,13 +64,14 @@ try {
   }
   c.uiWorkspace.openSession(ids[0]);c.sessions.binding(ids[0]).session.beginSubmission({mode:'queue',text:'Header A',attachments:[]});window.__menuCalls=[]
   window.__TAURI__={core:{invoke:async(command,args)=>{window.__menuCalls.push({command,args});return null}}}
+  Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__menuCalls.push({command:'native-clipboard',text})}}})
   return ids
  },root)
  const trigger=page.getByRole('button',{name:'更多操作',exact:true})
  const menu=page.locator('[role="menu"][data-dsh-header-session-id]:not([data-dsh-ghost])')
  async function open(){await trigger.click();await menu.waitFor();await menu.locator('[data-dsh-desktop="reveal-item"]').waitFor()}
  async function close(){await page.keyboard.press('Escape');await page.waitForTimeout(220)}
- const labels=()=>menu.locator('[role="menuitem"]').allTextContents()
+ const labels=()=>menu.locator('[role="menuitem"]:visible').allTextContents()
  await open()
  assert.deepEqual((await labels()).map(x=>x.replace(/Ctrl[^\n]*/, '').trim()),['置顶会话','重命名','分叉会话','归档会话','复制...','打开…','下载 Session 日志','反馈'])
  assert.equal(await menu.locator('[data-dsh-header-menu-divider]').count(),1)
@@ -106,7 +108,15 @@ try {
  await menu.getByRole('menuitem',{name:'复制...',exact:true}).click()
  const copyMenu=page.locator('[data-dsh-desktop="copy-submenu"]')
  await copyMenu.waitFor({state:'visible'})
- assert.deepEqual(await copyMenu.getByRole('menuitem').allTextContents(),['复制深度链接','复制会话内容','保存会话内容'])
+ assert.deepEqual(await copyMenu.getByRole('menuitem').allTextContents(),['复制 Session ID','复制深度链接','复制会话内容','保存会话内容'])
+ await menu.locator('[data-dsh-desktop="copy-id-source"]').waitFor({state:'attached'})
+ assert.equal(await menu.locator('[data-dsh-desktop="copy-id-source"]').isVisible(),false)
+ assert.equal(await menu.locator('[data-dsh-desktop="copy-id-source"]').isDisabled(),true)
+ await copyMenu.getByRole('menuitem',{name:'复制 Session ID',exact:true}).click()
+ await page.waitForFunction(id=>window.__menuCalls.some(x=>x.command==='native-clipboard'&&x.text===id),ids[0])
+ await page.waitForTimeout(220)
+ await open()
+ await menu.getByRole('menuitem',{name:'复制...',exact:true}).click()
  await copyMenu.getByRole('menuitem',{name:'复制深度链接',exact:true}).click()
  await page.waitForFunction(link=>window.__menuCalls.some(x=>x.command==='clipboard_write_text' && x.args.text===link),'deepseekharness://session/'+ids[0].replace(/^session-/,''))
  await page.waitForTimeout(220)
@@ -210,6 +220,7 @@ try {
 } catch(error) {
  report.error=error.stack
  report.pageErrors=errors
+ if(page)report.menus=await page.locator('[role="menu"]').evaluateAll(nodes=>nodes.map(node=>node.outerHTML)).catch(()=>null)
  if(page)report.header=await page.locator('[data-slot="conversation.session.header"] nav').evaluateAll(nodes=>nodes.map(node=>node.outerHTML)).catch(()=>null)
  if(page)await page.screenshot({path:join(root,'failure.png')}).catch(()=>{})
  throw error

@@ -48,10 +48,17 @@ async function preference(animation, reduced = false, mode = 'desktop') {
   await c.evaluate(`T.configForms.get('desktop-appearance').set('animation', ${JSON.stringify(animation)})`)
   await sleep(350)
 }
-async function sample(seat) {
+async function sample(seat, geometry = true) {
+  if (process.env.SIDEBAR_PROFILE) { await c.send('Profiler.enable'); await c.send('Profiler.start') }
+  await c.send('Performance.enable')
+  const metricsBefore = (await c.send('Performance.getMetrics')).metrics
   const values = await c.evaluate(`(async () => {
-    const seat = ${JSON.stringify(seat)}, samples = [];
+    const seat = ${JSON.stringify(seat)}, samples = [], frames = [];
+    let lastFrame = performance.now(), styleWrites = 0;
+    const mutations = new MutationObserver(records => styleWrites += records.length);
+    mutations.observe(document.documentElement, {attributes:true, attributeFilter:['style']});
     const take = () => {
+      if (!${geometry}) return 0;
       const frame = document.querySelector('[class*="_frame"]');
       const panel = document.querySelector('[data-sidebar-right-panel]');
       const dock = document.querySelector('[data-dsh-terminal-dock]');
@@ -60,17 +67,39 @@ async function sample(seat) {
         seat === 'mobile-right' ? Math.round(Number(getComputedStyle(panel).opacity) * 100) :
         seat === 'left' ? document.querySelector('[class*="_sidebarCol"]').getBoundingClientRect().width :
         seat === 'right' ? (host ? Number(new DOMMatrix(getComputedStyle(host).transform).m41.toFixed(2)) : -1) :
-        Number.parseFloat(document.documentElement.style.getPropertyValue('--dsh-terminal-dock-height')) || 0;
+        Number.parseFloat(getComputedStyle(document.querySelector('[class*="_centerCol"]')).paddingBottom) || 0;
     };
     samples.push(take());
     if (seat.endsWith('left')) document.querySelector('.dshTb__mark').click();
     else if (seat.endsWith('right')) T.sidebarRight.toggleExpanded();
     else { const d = window.__DSH_UPSTREAM_DOCK_SMOKE__.dock; d.getSnapshot().collapsed ? d.open() : d.collapse(true); }
     const started = performance.now();
-    while (performance.now() - started < 420) { await new Promise(requestAnimationFrame); samples.push(take()); }
+    while (performance.now() - started < 420) {
+      await new Promise(requestAnimationFrame);
+      const now = performance.now(); frames.push(now-lastFrame); lastFrame = now;
+      samples.push(take());
+    }
+    mutations.disconnect();
+    window.__sidebarPerformance = {frames, styleWrites};
     return samples;
   })()`)
-  report.samples.push({ seat, values })
+  const metricsAfter = (await c.send('Performance.getMetrics')).metrics
+  const metrics = Object.fromEntries(metricsAfter.filter(m => ['LayoutCount', 'RecalcStyleCount', 'LayoutDuration', 'RecalcStyleDuration', 'TaskDuration'].includes(m.name))
+    .map(m => [m.name, m.value - metricsBefore.find(before => before.name === m.name).value]))
+  report.samples.push({ seat, geometry, values, ...await c.evaluate('window.__sidebarPerformance'), metrics })
+  if (process.env.SIDEBAR_PROFILE) {
+    const { profile } = await c.send('Profiler.stop')
+    await writeFile(join(root, `profile-${report.samples.length}-${seat}.json`), JSON.stringify(profile))
+    if (report.samples.length <= 6) {
+      const totals = new Map()
+      profile.samples.forEach((id, i) => totals.set(id, (totals.get(id) || 0) + profile.timeDeltas[i]))
+      const scripts = new Set(profile.nodes.filter(n => totals.get(n.id) > 10000 && n.callFrame.url.includes('/plugins/')).map(n => n.callFrame.scriptId))
+      for (const scriptId of scripts) {
+        const { scriptSource } = await c.send('Debugger.getScriptSource', { scriptId })
+        await writeFile(join(root, `script-${scriptId}.js`), scriptSource)
+      }
+    }
+  }
   return new Set(values.map(v => Math.round(v))).size
 }
 try {
@@ -89,25 +118,57 @@ try {
     window.__TAURI__ = { core: { Channel: class {}, invoke: async () => null }, event: { listen: async () => () => {} } }
   })
   const session = await page.context().newCDPSession(page)
+  if (process.env.SIDEBAR_PROFILE) await session.send('Debugger.enable')
   c = { evaluate: expression => page.evaluate(expression), send: (method, params) => session.send(method, params), close() {} }
   await page.goto(url)
   await until("window.__DSH_SMOKE_CONTEXT__?.sessions.list.getSnapshot().phase === 'ready'")
   await c.evaluate("window.__DSH_SMOKE_CONTEXT__.inject(['sidebarRight', 'configForms'], ctx => { window.T = ctx })")
   await until("Boolean(T?.configForms.get('desktop-appearance'))")
   for (let i = 0; i < 6; i++) {
-    await c.evaluate("(()=>{for(const b of document.querySelectorAll('button'))if(['稍后配置','继续'].includes(b.textContent))b.click()})()")
+    await c.evaluate(`(()=>{
+      for(const b of document.querySelectorAll('button')) if(['稍后配置','继续'].includes(b.textContent)) b.click();
+      for(const dialog of document.querySelectorAll('[role="dialog"], [role="presentation"]')) {
+        if(dialog.textContent.includes('开始使用')) dialog.querySelector('button[aria-label="关闭"], button[title="关闭"]')?.click();
+      }
+    })()`)
     await sleep(150)
   }
   await c.evaluate(`(async()=>{const ctx=window.__DSH_SMOKE_CONTEXT__, w=await ctx.workspaces.create({path:${JSON.stringify(root)}});const id=await ctx.sessions.create({workspaceId:w.workspaceId});ctx.uiWorkspace.openSession(id)})()`)
   await until('Boolean(T.sidebarRight.mounted.getSnapshot()) && Boolean(window.__DSH_UPSTREAM_DOCK_SMOKE__)')
   await c.evaluate("T.sidebarRight.openTab('guide')")
   await preference('on', true)
+  // Current DSH opens onboarding after the first session mounts. Dismiss it
+  // before measuring the workspace, rather than profiling underneath its mask.
+  if (await page.getByText('开始使用', { exact: true }).isVisible()) await page.keyboard.press('Escape')
   for (const seat of ['left', 'right', 'bottom']) {
     for (let i = 0; i < 2; i++) assert.ok(await sample(seat) > 3, seat + ' must animate both directions, even with OS reduced motion')
   }
   pass('left, right and bottom animate both ways with animation on, including OS reduced motion')
+  for (const seat of ['left', 'right', 'bottom']) {
+    for (let i = 0; i < 2; i++) {
+      // Measure scheduling without geometry reads that would themselves force
+      // extra layouts between the browser's animation and ResizeObserver phases.
+      await sample(seat, false)
+      assert.ok(report.samples.at(-1).styleWrites <= 2, seat + ' must not rewrite inherited root styles every frame')
+    }
+  }
+  pass('sidebar motion avoids per-frame root writes; frame timing is recorded without forced measurement layouts')
   await c.evaluate("window.__DSH_UPSTREAM_DOCK_SMOKE__.dock.open()")
   await sleep(350)
+  await until("Boolean(document.querySelector('[data-dsh-terminal-dock] .xterm'))")
+  report.retainedTerminal = await c.evaluate(`(async()=>{
+    const store=window.__DSH_UPSTREAM_DOCK_SMOKE__.dock;
+    const panel=document.querySelector('[data-dsh-terminal-dock]'), screen=panel.querySelector('.xterm');
+    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+    store.collapse(true); await sleep(350);
+    const closed={rects:panel.getClientRects().length,display:getComputedStyle(panel).display,inert:panel.inert,aria:panel.getAttribute('aria-hidden'),animations:panel.getAnimations().length};
+    const hidden=closed.rects===0 && closed.inert && closed.aria==='true';
+    const unfocused=!panel.contains(document.activeElement);
+    store.open(); await sleep(350);
+    return {hidden,unfocused,reused:document.querySelector('[data-dsh-terminal-dock] .xterm')===screen,closed};
+  })()`)
+  assert.ok(report.retainedTerminal.hidden && report.retainedTerminal.unfocused && report.retainedTerminal.reused, JSON.stringify(report.retainedTerminal))
+  pass('collapsed native terminal is hidden and inert, and reopening reuses its emulator')
   report.tabMotion = await c.evaluate(`(async()=>{
     const dock=window.__DSH_UPSTREAM_DOCK_SMOKE__.dock, checks=[];
     const selector='[data-sidebar-right-panel], [data-sidebar-right-panel] [data-dockkit-host], [data-sidebar-right-panel] [data-dockkit-empty], [data-sidebar-right-panel] [data-dockkit-content], [data-dsh-terminal-dock], #dsh-terminal-dock-viewport';
@@ -163,7 +224,7 @@ try {
     const el=document.querySelector('[data-dsh-terminal-dock]');
     const result={count:document.querySelectorAll('[data-dsh-terminal-dock]').length,height:el.getBoundingClientRect().height,bottom:el.getBoundingClientRect().bottom,viewport:innerHeight,transform:getComputedStyle(el).transform};
     d.collapse(true);await sleep(60);document.documentElement.setAttribute('data-dsh-desktop-animation','off');await sleep(30);
-    result.afterOff=document.querySelectorAll('[data-dsh-terminal-dock]').length;
+    result.afterOff=[...document.querySelectorAll('[data-dsh-terminal-dock]')].filter(node=>node.getClientRects().length).length;
     result.reserved=document.documentElement.style.getPropertyValue('--dsh-terminal-dock-height');
     return result;
   })()`)
@@ -179,7 +240,11 @@ try {
   assert.equal(await c.evaluate("getComputedStyle(document.body).getPropertyValue('--dsh-sidebar-motion-duration').trim()"), '')
   pass('vanilla withdraws the custom sidebar motion and bottom panel')
   await preference('on')
-  await c.evaluate("window.__DSH_UPSTREAM_DOCK_SMOKE__.dock.open()")
+  await c.evaluate(`(()=>{
+    if(document.querySelector('[class*="_frame"]').hasAttribute('data-sidebar-collapsed')) document.querySelector('.dshTb__mark').click();
+    T.sidebarRight.openTab('guide');
+    window.__DSH_UPSTREAM_DOCK_SMOKE__.dock.open();
+  })()`)
   await sleep(350)
   const shot = await c.send('Page.captureScreenshot', { format: 'png' })
   await writeFile(join(root, 'sidebars.png'), Buffer.from(shot.data, 'base64'))

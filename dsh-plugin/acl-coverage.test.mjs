@@ -56,7 +56,7 @@ test('every client plugin the patch mounts is packaged complete', () => {
   const resources = config.bundle.resources
   const patch = readFileSync(join(here, 'desktop-notify.patch.yml'), 'utf8')
 
-  for (const plugin of ['i18n', 'title-bar', 'ui-client', 'sidebar-terminal', 'file-editor', 'directory-picker', 'sidebar-archive']) {
+  for (const plugin of ['i18n', 'title-bar', 'ui-client', 'account-popover', 'sidebar-terminal', 'file-editor', 'directory-picker', 'sidebar-archive']) {
     assert.ok(
       patch.includes(`./${plugin}/index.js`),
       `${plugin} is not mounted by the patch, so nothing serves its browser half`,

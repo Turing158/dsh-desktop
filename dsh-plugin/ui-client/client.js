@@ -146,7 +146,7 @@ var React = require('react')
     var FONT_MAX = 18
 
     /**
-     * The bounds `theme.setFontSize` accepts.
+     * The bounds the legacy `theme.setFontSize(px)` accepts.
      *
      * The runtime throws outside 12..17 — its guard and the `ui-theme` schema
      * (`Schema.number().step(1).min(12).max(17)`) agree on the pair — so a choice
@@ -160,6 +160,12 @@ var React = require('react')
 
     /** The fallback when neither the runtime nor an override names a size. */
     var FONT_DEFAULT = 14
+
+    /** New runtimes expose content size as fontSizes.text; older ones use fontSize. */
+    function readThemeFontSize(snapshot) {
+      var value = snapshot && (snapshot.fontSizes ? snapshot.fontSizes.text : snapshot.fontSize)
+      return Number.isFinite(value) && value > 0 ? value : FONT_DEFAULT
+    }
 
     /**
      * The body variable carrying the user's content font size.
@@ -546,13 +552,13 @@ var React = require('react')
       get glass() { return t('模糊背景，搭配柔和高光与阴影，呈现玻璃质感。') },
       get frosted() { return t('只模糊背景，保留平面磨砂质感，没有立体高光或阴影。') },
       get transparent() { return t('调节底色透明度，不添加模糊效果；文字和按钮保持清晰。') },
-      get opaque() { return t('使用主题纯色底板，完整遮住输入框后方的背景。') },
+      get opaque() { return t('使用主题纯色底板，完整遮住后方的背景。') },
     }
     function composerMaterial(value) {
       return COMPOSER_MATERIAL_OPTIONS.some(function (option) { return option.id === value }) ? value : 'opaque'
     }
     var COMPOSER_TUNING = {
-      transparent: { field: 'composerTransparency', get label() { return t('输入框透明度') }, defaultValue: 20, variable: '--dsh-composer-transparent-tint' },
+      transparent: { field: 'composerTransparency', get label() { return t('底色透明度') }, defaultValue: 20, variable: '--dsh-composer-transparent-tint' },
       frosted: { field: 'composerFrostedIntensity', get label() { return t('纯磨砂效果程度') }, defaultValue: 50, variable: '--dsh-composer-frosted-strength' },
       glass: { field: 'composerGlassIntensity', get label() { return t('毛玻璃效果程度') }, defaultValue: 50, variable: '--dsh-composer-glass-strength' },
     }
@@ -1182,8 +1188,8 @@ var React = require('react')
             },
           }),
           h(OptionGroup, {
-            title: t('输入框材质'),
-            note: COMPOSER_MATERIAL_NOTES[state.composerMaterial],
+            title: t('输入框/面板效果'),
+            note: t('应用于输入框和账号面板。') + COMPOSER_MATERIAL_NOTES[state.composerMaterial],
             options: COMPOSER_MATERIAL_OPTIONS,
             value: state.composerMaterial,
             onChange: deps.setComposerMaterial,
@@ -1313,7 +1319,63 @@ var React = require('react')
       })
     }
 
+    /** Keep the account launcher intact and add a separate settings action beside it. */
+    function bindSettingsLauncher(ctx) {
+      var IconSettings = primitives && (primitives.IconSettingsOutline16 || primitives.IconSettingsOutlineRegular || primitives.IconSettingsOutlineMedium)
+      if (!IconSettings || typeof ctx.slots.entries !== 'function' || typeof ctx.slots.subscribe !== 'function') return
+      var slot = 'settings.launcher'
+      ctx.slots.inject(slot, function () {
+        var original, remove, syncing = false, disposed = false
+        function SettingsLauncher(props) {
+          useLocale(React)
+          var button = h('button', {
+            type: 'button',
+            className: 'dshSidebarSettings__button',
+            'aria-label': t('设置'),
+            'aria-haspopup': 'dialog',
+            'aria-expanded': props.settingsOpen,
+            'aria-keyshortcuts': props.settingsShortcut?.aria,
+            onClick: props.openSettings,
+          }, h(IconSettings, { size: 18 }))
+          return h(React.Fragment, null,
+            h(original.component, Object.assign({}, props, { hasDesktopSettingsLauncher: !!props.wide })),
+            props.wide && h('span', { className: 'dshSidebarSettings' }, Tooltip
+              ? h(Tooltip, { label: t('设置'), shortcutKeys: props.settingsShortcut?.keys, disabled: props.settingsOpen }, button)
+              : button))
+        }
+        SettingsLauncher.__dshSettingsLauncher = true
+        function sync() {
+          if (disposed || syncing) return
+          syncing = true
+          try {
+            var next = document.documentElement.getAttribute(MODE_ATTRIBUTE) === VANILLA ? undefined :
+              ctx.slots.entries(slot).filter(function (entry) { return entry.component !== SettingsLauncher })
+                .sort(function (a, b) { return (a.options.priority || 0) - (b.options.priority || 0) })[0]
+            if (next === original) return
+            if (remove) { var off = remove; remove = undefined; off() }
+            original = next
+            if (!next) return
+            remove = ctx.slots.register(Object.assign({}, next.options, {
+              name: slot, priority: (next.options.priority || 0) - 1,
+              inject: next.inject, locale: next.locale, store: next.store,
+            }), SettingsLauncher)
+          } finally { syncing = false }
+        }
+        var unsubscribe = ctx.slots.subscribe(slot, sync)
+        var modeObserver = new MutationObserver(sync)
+        modeObserver.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
+        sync()
+        return function () {
+          disposed = true
+          modeObserver.disconnect()
+          unsubscribe()
+          if (remove) remove()
+        }
+      })
+    }
+
     function apply(ctx) {
+      bindSettingsLauncher(ctx)
       bindTranscriptViewport(ctx)
       if (Tooltip) {
         var TriggerMenuTooltips = createTriggerMenuTooltips()
@@ -1402,7 +1464,7 @@ var React = require('react')
       var first = theme.getTheme()
       var store = createStore({
         preference: first && first.preference ? first.preference : 'system',
-        fontSize: first && typeof first.fontSize === 'number' ? first.fontSize : 14,
+        fontSize: readThemeFontSize(first),
         fontSizeOverride: readFontSizeOverride(),
         animation: readAnimation(),
         reasoningControl: reasoningControl(loadedSection()),
@@ -1425,7 +1487,7 @@ var React = require('react')
         // overlay-owned, and the theme snapshot cannot know them.
         store.update({
           preference: snapshot.preference,
-          fontSize: snapshot.fontSize,
+          fontSize: readThemeFontSize(snapshot),
         })
         // Every emit ends with the app's presenter writing the snapshot's size
         // into the CSS variable — which would erase an active override. The
@@ -1504,7 +1566,7 @@ var React = require('react')
         }
         materialQueued[field] = version
         materialQueue = materialQueue.then(function () { return scope.set(field, value) }).then(checkSaved).catch(function () {
-          if (!materialDisposed && materialVersions[field] === version) store.update({ composerMaterialError: t('输入框材质设置保存失败，请重试。') })
+          if (!materialDisposed && materialVersions[field] === version) store.update({ composerMaterialError: t('输入框/面板效果设置保存失败，请重试。') })
         }).finally(function () {
           if (materialQueued[field] === version) delete materialQueued[field]
           if (materialVersions[field] === version) delete materialDrafts[field]
@@ -1571,8 +1633,7 @@ var React = require('react')
        * @returns the snapshot's size, or the schema default when none is numeric.
        */
       var nativeFontSize = function () {
-        var snapshot = theme.getTheme()
-        return snapshot && typeof snapshot.fontSize === 'number' ? snapshot.fontSize : FONT_DEFAULT
+        return readThemeFontSize(theme.getTheme())
       }
 
       /**
@@ -1650,14 +1711,16 @@ var React = require('react')
        * publish runs this plugin's `theme/change` handler, which must already
        * see the override gone or its microtask would restore the old value.
        *
-       * Outside the bounds (10, 11, 18) the runtime would throw, so the plugin
-       * applies the variable itself and stores the choice in its own namespace.
+       * Legacy runtimes reject 10, 11, and 18, so those use a desktop override.
+       * Role-based runtimes accept the entire selector range through the text role.
        *
        * @param px - the chosen size.
        */
       var setFontSize = function (px) {
         if (!Number.isInteger(px) || px < FONT_MIN || px > FONT_MAX) return
-        if (isFontSizeOverride(px)) {
+        var snapshot = theme.getTheme()
+        var roleBased = snapshot && snapshot.fontSizes
+        if (isFontSizeOverride(px) && !roleBased) {
           store.update({ fontSizeOverride: px })
           writeContentFontSize(px)
           persistFontSize(px)
@@ -1665,9 +1728,12 @@ var React = require('react')
         }
         if (store.getState().fontSizeOverride !== null) {
           store.update({ fontSizeOverride: null })
+          // Choosing the runtime's existing size emits no change event.
+          withdrawFontSize()
           persistFontSize(null)
         }
-        theme.setFontSize(px)
+        if (roleBased) theme.setFontSize('text', px)
+        else theme.setFontSize(px)
       }
 
       // ---- the UI mode (原版 switch) --------------------------------------

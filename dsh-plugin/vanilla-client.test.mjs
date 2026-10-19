@@ -452,6 +452,76 @@ function renderSelectorMenu(component) {
   return renderSection(component, (node) => typeof node.type === 'function' && node.type.name === 'Menu')
 }
 
+test('role-based theme snapshots keep the displayed content size in sync', () => {
+  const document = createDocument()
+  const { ctx, state } = createContext()
+  let snapshot = { preference: 'system', fontSizes: { text: 16, code: 11, terminal: 13 } }
+  ctx.theme.getTheme = () => snapshot
+  loadBundle(document, recordingReact).apply(ctx)
+
+  const selected = () => renderSelectorMenu(state.sectionComponent)
+  assert.equal(selected().props.selectedId, '16')
+  assert.equal(selected().props.anchor.children[0], '16px')
+
+  snapshot = { preference: 'dark', fontSizes: { text: 17, code: 12, terminal: 15 } }
+  state.handlers.get('theme/change')(snapshot)
+  assert.equal(selected().props.selectedId, '17')
+  assert.equal(selected().props.anchor.children[0], '17px')
+})
+
+test('missing or invalid theme font sizes display the default at startup and on updates', () => {
+  for (const fontSize of [undefined, null, NaN, Infinity, '16']) {
+    const document = createDocument()
+    const { ctx, state } = createContext()
+    ctx.theme.getTheme = () => ({ preference: 'system', fontSizes: { text: fontSize } })
+    loadBundle(document, recordingReact).apply(ctx)
+    assert.equal(renderSelectorMenu(state.sectionComponent).props.anchor.children[0], '14px')
+    state.handlers.get('theme/change')({ preference: 'dark', fontSize })
+    assert.equal(renderSelectorMenu(state.sectionComponent).props.anchor.children[0], '14px')
+  }
+})
+
+test('role-based font writes use the text role and retire a saved desktop override', async () => {
+  const document = createDocument()
+  const { ctx, state } = createContext({ section: { fontSizeOverride: 10 } })
+  let snapshot = { preference: 'system', fontSizes: { text: 16, code: 11, terminal: 13 } }
+  const writes = []
+  ctx.theme.getTheme = () => snapshot
+  ctx.theme.setFontSize = (role, px) => {
+    assert.equal(role, 'text')
+    assert.ok(Number.isInteger(px))
+    writes.push([role, px])
+    if (snapshot.fontSizes[role] === px) return
+    snapshot = { ...snapshot, fontSizes: { ...snapshot.fontSizes, [role]: px } }
+    document.body.style.setProperty('--dsh-content-font-size', px + 'px')
+    state.handlers.get('theme/change')(snapshot)
+  }
+  loadBundle(document, recordingReact).apply(ctx)
+  const selected = () => renderSelectorMenu(state.sectionComponent)
+  assert.equal(selected().props.anchor.children[0], '10px')
+
+  for (const px of [16, 18, 11, 10]) {
+    selected().props.onSelect(String(px))
+    await flushMicrotasks()
+    assert.equal(selected().props.anchor.children[0], px + 'px')
+    assert.equal(document.bodyStyle.get('--dsh-content-font-size'), px + 'px')
+  }
+  assert.deepEqual(writes, [['text', 16], ['text', 18], ['text', 11], ['text', 10]])
+  assert.deepEqual(state.writes, [['fontSizeOverride', null]])
+  assert.deepEqual(snapshot.fontSizes, { text: 10, code: 11, terminal: 13 })
+})
+
+test('withdrawing a desktop override restores the role-based runtime font size', async () => {
+  const document = createDocument()
+  const { ctx, state } = createContext({ section: { fontSizeOverride: 18 } })
+  ctx.theme.getTheme = () => ({ preference: 'system', fontSizes: { text: 16, code: 11, terminal: 13 } })
+  loadBundle(document, recordingReact).apply(ctx)
+  state.setSection({})
+  await flushMicrotasks()
+  assert.equal(document.bodyStyle.get('--dsh-content-font-size'), '16px')
+  assert.equal(renderSelectorMenu(state.sectionComponent).props.anchor.children[0], '16px')
+})
+
 test('the selector\'s menu offers every size and routes 12..17 to the theme runtime', async () => {
   const document = createDocument()
   const { ctx, state } = createContext()
@@ -635,13 +705,13 @@ test('a refused composer material write restores the saved choice and exposes an
   const document = createDocument()
   const { ctx, state } = createContext({ writeResult: false, section: { composerMaterial: 'frosted' } })
   loadBundle(document, recordingReact).apply(ctx)
-  const row = renderSection(state.sectionComponent, n => n.props?.title === '输入框材质')
+  const row = renderSection(state.sectionComponent, n => n.props?.title === '输入框/面板效果')
   const pending = row.props.onChange('transparent')
   assert.equal(document.documentElement.getAttribute('data-dsh-composer-material'), 'transparent')
   await pending
   assert.deepEqual(state.writes, [['composerMaterial', 'transparent']])
   assert.equal(document.documentElement.getAttribute('data-dsh-composer-material'), 'frosted')
-  assert.equal(renderSection(state.sectionComponent, n => n.props?.title === '输入框材质').props.value, 'frosted')
+  assert.equal(renderSection(state.sectionComponent, n => n.props?.title === '输入框/面板效果').props.value, 'frosted')
   assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert'))
 })
 
@@ -652,7 +722,7 @@ test('rapid material choices keep the latest preview while earlier writes settle
     commits.push(() => { state.setSection({ [field]: value }); resolve(true) })
   }) })
   loadBundle(document, recordingReact).apply(ctx)
-  const row = renderSection(state.sectionComponent, n => n.props?.title === '输入框材质')
+  const row = renderSection(state.sectionComponent, n => n.props?.title === '输入框/面板效果')
   const first = row.props.onChange('glass')
   const last = row.props.onChange('transparent')
   await flushMicrotasks()
@@ -677,10 +747,10 @@ test('composer sliders preview immediately and preserve independent values when 
     return true
   } })
   loadBundle(document, recordingReact).apply(ctx)
-  const material = () => renderSection(state.sectionComponent, n => n.props?.title === '输入框材质')
+  const material = () => renderSection(state.sectionComponent, n => n.props?.title === '输入框/面板效果')
   const slider = () => renderSection(state.sectionComponent, n => n.type === 'input' && n.props.type === 'range' && n.props['aria-valuetext'])
   for (const [choice, label, field, value, variable, cssValue] of [
-    ['transparent', '输入框透明度', 'composerTransparency', 35, '--dsh-composer-transparent-tint', '65%'],
+    ['transparent', '底色透明度', 'composerTransparency', 35, '--dsh-composer-transparent-tint', '65%'],
     ['frosted', '纯磨砂效果程度', 'composerFrostedIntensity', 70, '--dsh-composer-frosted-strength', '0.7'],
     ['glass', '毛玻璃效果程度', 'composerGlassIntensity', 25, '--dsh-composer-glass-strength', '0.25'],
   ]) {

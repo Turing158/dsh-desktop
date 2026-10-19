@@ -580,6 +580,19 @@ function createSandbox(document) {
   }
 
   /**
+   * Deliver ADDITION records the way the browser would.
+   *
+   * A composer bubble lives only while the pointer rests on its control — shorter
+   * than the overlay's 2s pass — so the mount record is the path that has to work.
+   * The pass is only the backstop, for a node React moves instead of mounting.
+   *
+   * @param records - MutationRecord-shaped objects: `addedNodes`, `target`, `type`.
+   */
+  sandbox.deliverAdded = (records) => {
+    for (const observer of observers.slice()) observer.callback(records)
+  }
+
+  /**
    * Deliver a mutation AND let the catalog promise chain settle.
    *
    * A session menu's row is built when `/open-in-app/apps` answers, so a test that
@@ -1521,6 +1534,30 @@ test('a closing menu is replayed as a fading ghost where it was portalled', () =
   )
 })
 
+test('a closing ghost cannot shadow a reopened menu or its controls by ID', () => {
+  const { document } = createPage()
+  const sandbox = runOverlay(document)
+  setMode(document, 'desktop')
+
+  const list = menu('_list_abc123')
+  list.setAttribute('id', 'model-picker')
+  list.children[0].setAttribute('id', 'model-picker-choice')
+  document.body.append(list)
+  document.body.removeChild(list)
+  sandbox.deliverRemoval([{ removedNodes: [list], target: document.body, nextSibling: null }])
+
+  const reopened = list.cloneNode(true)
+  document.body.append(reopened)
+  assert.equal(document.querySelector('[id="model-picker"]'), reopened, 'the trigger resolves to the live menu during the fade')
+  assert.equal(document.querySelector('[id="model-picker-choice"]'), reopened.children[0], 'nested control IDs also resolve to the live menu')
+  assert.equal(list.getAttribute('id'), 'model-picker', 'the original menu keeps its ID')
+  assert.equal(list.children[0].getAttribute('id'), 'model-picker-choice', 'the original control keeps its ID')
+  const ghost = document.querySelector('[data-dsh-ghost="menu"]')
+  assert.ok(ghost, 'the exit animation still has its visual copy')
+  assert.equal(ghost.getAttribute('id'), null)
+  assert.equal(ghost.querySelectorAll('[id]').length, 0)
+})
+
 test('a closing dialog layer is ghosted and a non-layer candidate is not', () => {
   const { document } = createPage()
   const sandbox = runOverlay(document)
@@ -2329,12 +2366,12 @@ test('a SESSION menu gets 复制... and its deep-link child copies through the h
   assert.equal(submenu.style.display, 'flex')
   assert.equal(button.getAttribute('aria-expanded'), 'true')
   assert.deepEqual(submenu.children.map(entry => entry.querySelector('[class*="itemLabel"]').textContent),
-    ['复制深度链接', '复制会话内容', '保存会话内容'])
+    ['复制 Session ID', '复制深度链接', '复制会话内容', '保存会话内容'])
 
   // ACTS ON pointerdown, like the reveal entries: the app's dismissal runs on
   // the same phase and would unmount the row before any click.
-  submenu.children[0].dispatch('pointerdown')
-  submenu.children[0].dispatch('click')
+  submenu.querySelector('[data-action="copy-link"]').dispatch('pointerdown')
+  submenu.querySelector('[data-action="copy-link"]').dispatch('click')
   await new Promise(setImmediate)
 
   assert.equal(copied.length, 1, 'the press must copy exactly once')
@@ -2361,9 +2398,9 @@ test('the copy submenu forwards its row id for content actions and disappears wi
   }
   await sandbox.deliverMutationAsync()
   const submenu = document.body.querySelector('[data-dsh-desktop="copy-submenu"]')
-  submenu.children[1].dispatch('pointerdown')
-  submenu.children[1].dispatch('click')
-  submenu.children[2].dispatch('keydown', { key: 'Enter' })
+  submenu.querySelector('[data-action="copy-content"]').dispatch('pointerdown')
+  submenu.querySelector('[data-action="copy-content"]').dispatch('click')
+  submenu.querySelector('[data-action="save-content"]').dispatch('keydown', { key: 'Enter' })
   assert.deepEqual(calls, [['copy', 'background-session'], ['save', 'background-session']])
   menu.parentElement.removeChild(menu)
   sandbox.deliverRemoval([{ removedNodes: [menu], target: document.body }])
@@ -2910,3 +2947,129 @@ function readBundleFolderIcon() {
   }
   return null
 }
+
+// ── the composer's bubble leaves the material's containing block ─────────────
+//
+// The reported bug: with the composer material on 毛玻璃/纯磨砂 the card carries a
+// `backdrop-filter`, which makes it a CONTAINING BLOCK for its `position: fixed`
+// descendants. The app writes the bubble at viewport coordinates taken from
+// `getBoundingClientRect()` but renders it INSIDE the card, so the blur moved it
+// into the card's coordinate space — measured in a 1280x840 window on the send
+// button, `[1004, 473]` became `[1215, 908]`, i.e. below the window, and that
+// overflow grew the conversation's scroll size into scrollbars that then chased
+// the pointer.
+//
+// The overlay moves such a bubble under `<body>`, where its own coordinates mean
+// what they say. React still owns the node and removes it on unmount through the
+// parent it rendered into — which no longer holds it, hence the forwarding.
+
+test('a composer bubble is moved under body and stays removable by its parent', () => {
+  const { document, composerCard } = createPage()
+  const sandbox = runOverlay(document)
+
+  const trailing = new FakeElement('div', '_trailing_abc123')
+  composerCard.append(trailing)
+  const bubble = new FakeElement('div', '_bubble_abc123')
+  bubble.setAttribute('role', 'tooltip')
+  bubble.setAttribute('data-position', 'fixed')
+  trailing.append(bubble)
+
+  sandbox.deliverAdded([{ type: 'childList', target: trailing, addedNodes: [bubble], removedNodes: [] }])
+
+  assert.equal(bubble.parentElement, document.body, 'the bubble must leave the containing block')
+  assert.equal(bubble.getAttribute('data-dsh-detached'), 'tooltip')
+
+  // Unmount, through the parent React recorded rather than the one the node has.
+  assert.equal(trailing.removeChild(bubble), bubble)
+  assert.equal(bubble.parentElement, null, 'the removal must reach the real parent')
+  assert.equal(document.body.children.includes(bubble), false)
+})
+
+test('a bubble React merely moved is still caught by the periodic pass', () => {
+  const { document, composerCard } = createPage()
+  runOverlay(document)
+
+  const bubble = new FakeElement('div', '_bubble_abc123')
+  bubble.setAttribute('role', 'tooltip')
+  bubble.setAttribute('data-position', 'fixed')
+  composerCard.append(bubble)
+
+  // No mutation record at all: a re-render can move a node without adding one.
+  setMode(document, 'desktop')
+
+  assert.equal(bubble.parentElement, document.body)
+})
+
+test('原版 hands the bubble back and stops moving new ones', () => {
+  const { document, composerCard } = createPage()
+  const sandbox = runOverlay(document)
+
+  const trailing = new FakeElement('div', '_trailing_abc123')
+  composerCard.append(trailing)
+  const bubble = new FakeElement('div', '_bubble_abc123')
+  bubble.setAttribute('role', 'tooltip')
+  bubble.setAttribute('data-position', 'fixed')
+  trailing.append(bubble)
+  sandbox.deliverAdded([{ type: 'childList', target: trailing, addedNodes: [bubble], removedNodes: [] }])
+  assert.equal(bubble.parentElement, document.body)
+
+  setMode(document, 'vanilla')
+
+  assert.equal(bubble.parentElement, trailing, 'the app gets its own tree back')
+  assert.equal(bubble.hasAttribute('data-dsh-detached'), false, 'and without a mark of ours')
+
+  const later = new FakeElement('div', '_bubble_later')
+  later.setAttribute('role', 'tooltip')
+  later.setAttribute('data-position', 'fixed')
+  composerCard.append(later)
+  sandbox.deliverAdded([{ type: 'childList', target: composerCard, addedNodes: [later], removedNodes: [] }])
+  assert.equal(later.parentElement, composerCard, 'a bubble mounted in 原版 must not be touched')
+})
+
+test('a bubble the app re-renders into another container stays removable from there', () => {
+  const { document, composerCard } = createPage()
+  const sandbox = runOverlay(document)
+
+  const first = new FakeElement('div', '_trailing_abc123')
+  const second = new FakeElement('div', '_trailing_def456')
+  composerCard.append(first)
+  composerCard.append(second)
+  const bubble = new FakeElement('div', '_bubble_abc123')
+  bubble.setAttribute('role', 'tooltip')
+  bubble.setAttribute('data-position', 'fixed')
+  first.append(bubble)
+  sandbox.deliverAdded([{ type: 'childList', target: first, addedNodes: [bubble], removedNodes: [] }])
+  assert.equal(bubble.parentElement, document.body)
+
+  // The app re-renders the same node into its other container. The overlay moves it
+  // again — and the SECOND container is now the one React will remove it through,
+  // which needs its own forwarding.
+  //
+  // The detach is explicit because the stub's `append` does not take a node out of
+  // its old parent the way a real DOM `appendChild` does; what React then sees is
+  // the same either way.
+  document.body.removeChild(bubble)
+  second.append(bubble)
+  sandbox.deliverAdded([{ type: 'childList', target: second, addedNodes: [bubble], removedNodes: [] }])
+  assert.equal(bubble.parentElement, document.body, 'the re-captured bubble must be moved again')
+
+  assert.equal(second.removeChild(bubble), bubble, 'the container it belongs to now must be able to remove it')
+  assert.equal(document.body.children.includes(bubble), false, 'the removal must reach the real parent')
+  assert.equal(bubble.parentElement, null, 'the node must really be gone, not orphaned in <body>')
+  assert.equal(first.removeChild(bubble), bubble, 'and so must the one React may still hold')
+})
+
+test('a bubble the app positions against the card is left exactly where it is', () => {
+  const { document, composerCard } = createPage()
+  runOverlay(document)
+
+  const bubble = new FakeElement('div', '_bubble_abc123')
+  bubble.setAttribute('role', 'tooltip')
+  // No `data-position`, so the stub reports `static`: standing in for a bubble the
+  // app positions itself. That placement is correct as it is — moving it would be
+  // this tier breaking something that works.
+  composerCard.append(bubble)
+  setMode(document, 'desktop')
+
+  assert.equal(bubble.parentElement, composerCard)
+})

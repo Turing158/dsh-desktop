@@ -382,6 +382,7 @@ function renderHarness(t, h, useMenu = true, presentation) {
   const sidebar = { getBoundingClientRect: () => ({ right: sidebarRight }) }
   let sidebarRight = 280
   const listeners = new Map()
+  const dockStyle = { setProperty: (key, value) => { dockStyle[key] = value }, removeProperty: key => { delete dockStyle[key] } }
   const document = {
     documentElement: { style: { setProperty: (key, value) => { document[key] = value } }, toggleAttribute() {}, removeAttribute() {} },
     addEventListener: (name, fn) => { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(fn) },
@@ -391,7 +392,7 @@ function renderHarness(t, h, useMenu = true, presentation) {
     dispatchEvent: event => { for (const fn of [...(listeners.get(event.type) ?? [])]) fn(event); return true },
     /** The handlers currently registered for an event, so a test can tell whose they are. */
     listeners: name => [...(listeners.get(name) ?? [])],
-    querySelector: selector => (selector.includes('_sidebarCol') ? sidebar : null),
+    querySelector: selector => selector.includes('_sidebarCol') ? sidebar : selector === '[data-dsh-terminal-dock]' ? { style: dockStyle } : null,
   }
   const win = { innerHeight: 800, __TAURI__: { core: { Channel() {} } }, addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener() {} }
   const previousWindow = globalThis.window, previousDocument = globalThis.document
@@ -425,11 +426,11 @@ function renderHarness(t, h, useMenu = true, presentation) {
     menu: () => nodes.find(n => n.type?.name === 'Menu' && n.props.anchor?.props?.['data-dsh-terminal-more']),
     /** The shell picker's Menu, anchored on the pill that wears the settings selector. */
     shell: () => nodes.find(n => n.type?.name === 'Menu' && n.props.anchor?.props?.className === 'dshTerminal__shell'),
-    hidden(value) { hidden = value }, document, React,
+    hidden(value) { hidden = value }, document, React, dockStyle,
     /** Run the effects a component queued during its last render, as React would. */
     flush() { const pending = effects; effects = []; pending.forEach(fn => fn()) },
     /** Move the left column, as a drag or a rail toggle does, then re-measure. */
-    sidebar(width) { sidebarRight = width; listeners.get('resize')?.(); return document['--dsh-terminal-dock-left'] },
+    sidebar(width) { sidebarRight = width; listeners.get('resize')?.(); return dockStyle.left },
   }
 }
 const textOf = n => typeof n === 'string' ? n : n?.children?.map(textOf).join('') || ''
@@ -528,7 +529,7 @@ test('shortcut can reveal the dock in vanilla, and changing mode withdraws that 
 test('the panel region starts where the left column ends, and follows it', t => {
   const h = harness(t); h.store.add(); const r = renderHarness(t, h); r.render()
   // 280 is the contract's default sidebar width; the panel must not cover it.
-  assert.equal(r.document['--dsh-terminal-dock-left'], '280px')
+  assert.equal(r.dockStyle.left, '280px')
   // A dragged-wider sidebar moves the panel's edge with it.
   assert.equal(r.sidebar(420), '420px')
   // And the collapsed rail (56) moves it back.
@@ -551,8 +552,9 @@ function leftEdgeHarness(t) {
   class MutationObserver extends Observer {}
   class ResizeObserver extends Observer {}
   const document = {
-    documentElement: { style: { setProperty: (key, value) => values.set(key, value) } },
-    querySelector: selector => selector.includes('_sidebarCol') ? sidebar : { parentElement: frame },
+    documentElement: { style: { setProperty() { assert.fail('Dock geometry must not invalidate inherited root styles') } } },
+    querySelector: selector => selector.includes('_sidebarCol') ? sidebar : selector === '[data-dsh-terminal-dock]' ?
+      { style: { setProperty: (key, value) => values.set(key, value), removeProperty: key => values.delete(key) } } : { parentElement: frame },
   }
   const context = { document, MutationObserver, ResizeObserver, window: {
     addEventListener: (name, callback) => listeners.set(name, callback),
@@ -563,7 +565,7 @@ function leftEdgeHarness(t) {
   vm.runInNewContext(source + '\nthis.stop = trackLeftEdge(document)', context)
   t.after(() => context.stop())
   return {
-    edge: () => values.get('--dsh-terminal-dock-left'),
+    edge: () => values.get('left'),
     mutation(width) { right = width; observers.filter(o => o instanceof MutationObserver).forEach(o => o.deliver(frame)) },
     layout(width) { right = width; observers.filter(o => o instanceof ResizeObserver).forEach(o => o.deliver(sidebar)) },
     replace(width) { const old = sidebar; sidebar = { getBoundingClientRect: () => ({ right }) }; this.mutation(width); return old },
@@ -594,10 +596,10 @@ test('dock observes a replacement sidebar and releases observers on unmount', t 
   r.layout(180); assert.equal(r.edge(), '180px')
   r.layout(420); assert.equal(r.edge(), '420px')
   r.stop()
-  assert.equal(r.edge(), '0px')
+  assert.equal(r.edge(), undefined)
   assert.equal(r.observers.every(o => o.targets.size === 0), true)
   assert.equal(r.listeners.size, 0)
-  r.layout(280); assert.equal(r.edge(), '0px')
+  r.layout(280); assert.equal(r.edge(), undefined)
 })
 
 test('the header control opens and closes the panel from the same button', t => {

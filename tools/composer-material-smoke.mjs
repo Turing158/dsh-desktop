@@ -87,7 +87,7 @@ async function values(page) {
 
 let page
 const controls = [
-  ['transparent', '透明', '输入框透明度', 'composerTransparency', 85],
+  ['transparent', '透明', '底色透明度', 'composerTransparency', 85],
   ['frosted', '纯磨砂', '纯磨砂效果程度', 'composerFrostedIntensity', 65],
   ['glass', '毛玻璃', '毛玻璃效果程度', 'composerGlassIntensity', 35],
 ]
@@ -98,7 +98,7 @@ async function appearance() {
 }
 async function section() { return (await values(page))['desktop-appearance'] }
 async function choose(id, label) {
-  await page.getByRole('group', {name:'输入框材质',exact:true}).getByRole('button',{name:label,exact:true}).click()
+  await page.getByRole('group', {name:'输入框/面板效果',exact:true}).getByRole('button',{name:label,exact:true}).click()
   await page.waitForFunction(id => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.composerMaterial === id, id)
 }
 async function adjust(name, field, value) {

@@ -1,6 +1,6 @@
 [
   { "id": "desktop-notify", "label": "桌面通知", "hot": true, "hint": "任务完成、错误和待回答问题的系统通知" },
-  { "id": "desktop-ui", "label": "桌面外观", "modules": ["desktop-ui", "desktop-appearance"], "hot": false, "hint": "桌面视觉增强和外观设置；关闭后保留已保存的外观偏好" },
+  { "id": "desktop-ui", "label": "桌面外观", "modules": ["desktop-ui", "desktop-appearance", "desktop-account-popover"], "hot": false, "hint": "桌面视觉增强和外观设置；关闭后保留已保存的外观偏好" },
   { "id": "desktop-sidebar-changes", "label": "更改面板", "hot": false, "hint": "包含正在执行的工具调用记录，重启后切换" },
   { "id": "desktop-sidebar-terminal", "label": "终端增强", "hot": false, "hint": "终端停靠、交互增强和相关设置；不控制 DSH 自带终端的启用" }
 ]

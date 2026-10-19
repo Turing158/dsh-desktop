@@ -283,7 +283,11 @@ function trackLeftEdge(doc) {
   // into) must leave the panel usable at its default edge rather than throw
   // during a render.
   if (typeof doc.querySelector !== 'function') return () => {}
+  const panel = doc.querySelector('[data-dsh-terminal-dock]')
+  if (!panel) return () => {}
   let sidebar = null, previousLeft = null, disposed = false
+  // This property is consumed by one fixed panel. Writing it on <html> during
+  // every grid frame invalidates inherited styles across the entire transcript.
   const measure = () => {
     if (disposed) return
     const next = doc.querySelector(SIDEBAR_SELECTOR)
@@ -296,7 +300,7 @@ function trackLeftEdge(doc) {
     // window's edge: the app's own boot state, corrected on the first mutation.
     const left = sidebar ? Math.max(0, Math.round(sidebar.getBoundingClientRect().right)) : 0
     if (left !== previousLeft) {
-      doc.documentElement.style.setProperty('--dsh-terminal-dock-left', left + 'px')
+      panel.style.setProperty('left', left + 'px')
       previousLeft = left
     }
   }
@@ -317,7 +321,7 @@ function trackLeftEdge(doc) {
     sizes?.disconnect()
     observer?.disconnect()
     window.removeEventListener('resize', measure)
-    doc.documentElement.style.setProperty('--dsh-terminal-dock-left', '0px')
+    panel.style.removeProperty('left')
   }
 }
 
@@ -338,6 +342,15 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
     const desktop = Boolean(window.__TAURI__?.core?.Channel)
     const active = state.tabs.find(t => t.contentId === state.active)
     const v = desktop && active ? registry.view(active) : null
+    // The native terminal already supports a retained, non-visible tab. Keep its
+    // emulator for reopening this tab instead of rebuilding xterm on every click.
+    const retained = React.useRef(null)
+    if (hidden || retained.current !== active?.contentId) retained.current = null
+    if (open && ui.Body && active) retained.current = active.contentId
+    const mounted = rendered || (!hidden && retained.current !== null)
+    // DSH versions using React 18 omit an unknown boolean `inert` prop. Set the
+    // native property so closing/retained terminals cannot receive focus there.
+    React.useLayoutEffect(() => { if (root.current) root.current.inert = !open }, [open, mounted])
     React.useEffect(() => {
       const offs = [store.subscribe(bump), registry.subscribe(bump)]
       const resize = () => { store.resize(store.getSnapshot().height); bump() }
@@ -347,9 +360,8 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
       return () => { offs.forEach(off => off()); document.removeEventListener('dsh-desktop:ui-mode', mode); window.removeEventListener('resize', resize) }
     }, [])
     // The region: this panel is the frame's bottom strip MINUS the left column,
-    // which keeps its full height. Published as a variable for the same reason the
-    // height is — the stylesheet and the measurement cannot drift.
-    React.useLayoutEffect(() => trackLeftEdge(document), [])
+    // which keeps its full height. Only the visible panel needs this measurement.
+    React.useLayoutEffect(() => rendered ? trackLeftEdge(document) : undefined, [rendered])
     React.useLayoutEffect(() => {
       motion.current = createDockMotion(document, () => setPresent(false))
       return () => { motion.current.dispose(); motion.current = null }
@@ -363,7 +375,7 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
       return () => { if (!ui.Body) v?.unmount() }
     }, [v, rendered])
     React.useLayoutEffect(() => {
-      root.current?.querySelector('[role="tab"][aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      if (open) root.current?.querySelector('[role="tab"][aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
     }, [state.active, state.collapsed, hidden])
     const focusTab = key => queueMicrotask(() => {
       if (store.getSnapshot().collapsed) {
@@ -388,9 +400,9 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
       const title = (typeof info.title === 'string' && info.title.trim()) || t('终端 ') + tab.number
       return { ...info, title, description: [title, info.description].filter(Boolean).join('\n') }
     }
-    // Keep the closing surface mounted only for its slide, with input disabled.
-    // At rest a collapsed panel has no strip and reserves no space.
-    if (!rendered) return null
+    // A retained native terminal is display:none and inert after its closing
+    // slide. It reserves no space and cannot take focus or keyboard input.
+    if (!mounted) return null
     const tabKey = (e, tab) => {
       if (ui.TabMenu && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {
         e.preventDefault(); e.stopPropagation()
@@ -407,9 +419,8 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
     }
     const endDrag = e => { drag.current = null; if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }
     // The section id is the disclosure target the header toggle's `aria-controls`
-    // names; it exists only while the panel is shown, which is the shape every
-    // aria-expanded/aria-controls pair with a collapsible region takes.
-    return h('section', { className: 'dshTerminalDock dshTerminal', ref: root, 'data-dsh-terminal-dock': true, id: 'dsh-terminal-dock', 'aria-label': t('底部终端'), 'aria-hidden': open ? undefined : true, inert: open ? undefined : true, style: { height: state.height } },
+    // names; a retained native terminal remains a hidden disclosure target.
+    return h('section', { className: 'dshTerminalDock dshTerminal', ref: root, 'data-dsh-terminal-dock': true, id: 'dsh-terminal-dock', 'aria-label': t('底部终端'), 'aria-hidden': open ? undefined : true, style: { height: state.height, display: rendered ? undefined : 'none' } },
       h('div', {
         className: 'dshTerminalDock__resize', role: 'separator', tabIndex: 0, 'aria-orientation': 'horizontal', 'aria-label': t('调整终端面板高度'),
         'aria-valuemin': 120, 'aria-valuemax': Math.max(120, Math.floor(window.innerHeight * .6)), 'aria-valuenow': state.height,
@@ -457,7 +468,7 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
       // rather than left as a dead `&&` that a later reader would take for a live
       // path.
       h('div', { className: 'dshTerminal__viewport', id: 'dsh-terminal-dock-viewport', role: 'tabpanel', 'aria-labelledby': active ? 'dock-tab-' + active.number : undefined, ref: host },
-        active && desktop && ui.Body && h(ui.Body, { key: active.contentId, tab: active, view: v, store }),
+        active && desktop && ui.Body && h(ui.Body, { key: active.contentId, tab: active, view: v, store, visible: open }),
         !active && h('p', { className: 'dshTerminalDock__empty' }, state.restoring ? t('正在恢复终端…') : t('点击 + 新建终端')),
         active && !desktop && h('p', { className: 'dshTerminalDock__empty' }, t('请在桌面应用中打开终端。'))))
   }

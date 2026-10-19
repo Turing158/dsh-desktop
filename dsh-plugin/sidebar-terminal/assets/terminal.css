@@ -321,7 +321,7 @@ html body .dshTerminal .xterm { height:100%; }
 
    THE REGION EXCLUDES THE LEFT COLUMN. The panel is anchored to the BOTTOM edge,
    so its left edge starts where the sidebar ends and the sidebar keeps its full
-   height beside it. `--dsh-terminal-dock-left` is measured by the component (the
+   height beside it. The component writes the panel's own `left` inset (the
    sidebar's width is a solved grid track with no variable to read), and the frame
    reserves the row with `padding-bottom` on the columns to the right of the
    sidebar rather than on the frame — see the paired rules in `ui-overlay/theme.css`.
@@ -331,7 +331,9 @@ html body .dshTerminal .xterm { height:100%; }
    so the columns would not even be visible to complain about. */
 /* Both insets determine the remaining width. Override the shared terminal's
    width:100% in this file and theme.css, which would extend past the right edge. */
-html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock.dshTerminal { position:fixed; left:var(--dsh-terminal-dock-left,0px); right:0; width:auto; bottom:0; z-index:0; pointer-events:auto; box-sizing:border-box; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); border-top:1px solid var(--dsw-alias-border-l3); }
+/* A top border reveals an unblurred strip of the fixed background outside the
+   inset blur layer. Keep the surfaces flush; the resize handle is independent. */
+html:is(:not([data-dsh-ui='vanilla']), [data-dsh-terminal-dock-visible]) body .dshTerminalDock.dshTerminal { position:fixed; left:var(--dsh-terminal-dock-left,0px); right:0; width:auto; bottom:0; z-index:0; pointer-events:auto; box-sizing:border-box; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); border-top:0; }
 html[data-dsh-ui='vanilla']:not([data-dsh-terminal-dock-visible]) body .dshTerminalDock { display:none; }
 /* A shortcut may explicitly reveal the terminal while using the original UI. */
 html[data-dsh-terminal-dock-visible] body [class*='_centerCol'] { padding-bottom:min(var(--dsh-terminal-dock-height,0px),100%); }

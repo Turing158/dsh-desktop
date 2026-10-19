@@ -278,6 +278,7 @@
     var tagged = overlayQueryAll('[data-dsh-desktop], [data-dsh-relocated], [data-dsh-danger]')
     for (var i = 0; i < tagged.length; i++) {
       var node = tagged[i]
+      if (node.getAttribute('data-dsh-desktop') === 'copy-id-source') node.disabled = false
       if (node.getAttribute('data-dsh-desktop') === 'nested-menu') {
         node.style.removeProperty('--dsh-menu-left')
         node.style.removeProperty('--dsh-menu-top')
@@ -306,6 +307,11 @@
       document.title = DEFAULT_TITLE
       changed = true
     }
+
+    // A moved bubble belongs to the app, not to this tier: put it back, and drop
+    // the removeChild forwarding with it, so 原版 carries neither the node in
+    // `<body>` nor a patched parent.
+    if (restoreDetachedTooltips()) changed = true
 
     marked = new WeakSet()
     return changed
@@ -566,6 +572,16 @@
     if (typeof MutationObserver !== 'function') return
     var scheduled = false
     var observer = new MutationObserver(function (records) {
+      // Geometry owned by the shell/dock cannot introduce a popup or a settings
+      // control. Resizing it must not recursively re-inspect all its descendants.
+      // Mounts, class/role changes and popup positioning still take the normal path.
+      var hadRecords = records.length > 0
+      records = records.filter(function (record) {
+        return record.type !== 'attributes' || record.attributeName !== 'style' ||
+          (layoutStyleStamp(record.oldValue) !== layoutStyleStamp(record.target.getAttribute('style')) &&
+          !record.target.hasAttribute('data-dsh-terminal-dock'))
+      })
+      if (hadRecords && !records.length) return
       if (!affectsOverlay(records)) return
       // NOTE what is NOT here: a vanilla guard. It used to be the first line, and it
       // was a real bug — the frame callback below applies the LAYOUT tag (which both
@@ -609,7 +625,7 @@
     })
     // A fullscreen toggle can change positioning without mounting any nodes.
     // Re-evaluate its chrome offset in the mutation microtask, before paint.
-    var options = { childList: true, subtree: true, attributes: true, attributeFilter: ['data-sidebar-right-panel', 'role', 'aria-modal', 'class', 'style'] }
+    var options = { childList: true, subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ['data-sidebar-right-panel', 'role', 'aria-modal', 'class', 'style'] }
     if (isRemotePage()) {
       options.attributeFilter.push('data-sidebar-right-open', 'hidden', 'aria-selected')
       window.addEventListener('resize', syncRemotePanelChrome)
@@ -902,9 +918,17 @@
     return changed
   }
 
+  // These native Conversation measurements change during sidebar motion. They
+  // affect content sizing, never whether a node is a viewport-fixed overlay.
+  function layoutStyleStamp(style) {
+    return (style || '').split(';').map(function (part) { return part.trim() }).filter(function (part) {
+      return part && !/^--dsh-(?:conversation-column-width|chat-user-width|composer-height|conversation-viewport-height)\s*:/.test(part)
+    }).join(';')
+  }
+
   function layerStamp(node) {
-    return ['class', 'style', 'role', 'aria-modal', 'data-sidebar-right-panel', 'data-sidebar-right-open']
-      .map(function (name) { return node.getAttribute(name) }).join('|')
+    return ['class', 'role', 'aria-modal', 'data-sidebar-right-panel', 'data-sidebar-right-open']
+      .map(function (name) { return node.getAttribute(name) }).join('|') + '|' + layoutStyleStamp(node.getAttribute('style'))
   }
 
   /** Keep React's status nodes intact; the button already exposes the localized
@@ -975,6 +999,10 @@
       markReady()
       syncTitle()
       markRelocatedRows()
+      // Backstop for the mutation callback: a bubble that React moved rather than
+      // mounted produces no added node, and this is the pass that catches it.
+      detachComposerTooltips()
+      reapDetachedTooltips()
       markSettingsNavigationIcons()
       markDangerPermission()
       markUngroupedBucket()
@@ -994,6 +1022,261 @@
    */
   function decorateComposerPresent() {
     return composerElements().length > 0
+  }
+
+  // ── a bubble written for the viewport is rendered inside the card ─────────
+  //
+  // THE REPORTED BUG. With 输入框/面板效果 on 毛玻璃 or 纯磨砂, hovering the send
+  // button grew scrollbars on BOTH axes of the conversation and then oscillated:
+  // the bubble was painted outside the window, the overflow it added produced
+  // scrollbars, the scrollbars reflowed the card under a stationary pointer, the
+  // pointer left the button, the bubble unmounted, and the loop restarted.
+  //
+  // WHY. `backdrop-filter` on the card (section 2) makes that element a
+  // CONTAINING BLOCK for its `position: fixed` descendants — the same trap this
+  // file already documents for `transform`. The app's bubble is `position: fixed`
+  // with `left`/`top` written from `getBoundingClientRect()`, i.e. in REAL
+  // viewport coordinates, and it is rendered INSIDE the card rather than
+  // portalled, so the filter silently moved it into the card's coordinate space.
+  // Measured on the send button in a 1280x840 window: `[1004, 473]` with 不透明
+  // became `[1215, 908]` with 毛玻璃, and the conversation's scroll size grew from
+  // `1273x756` to `1281x850` — hence both scrollbars at once.
+  //
+  // WHY THE FIX IS A MOVE. CSS cannot undo the capture: re-declaring `position:
+  // fixed` still resolves against the card, and `absolute` resolves against the
+  // card as well. Under `<body>` the bubble regains the viewport origin its own
+  // coordinates were written for.
+  //
+  // REACT OWNS THE NODE. React drops the bubble on unmount with
+  // `recordedParent.removeChild(bubble)`, and that recorded parent is still the
+  // card's container, so the call would throw NotFoundError. The parent's
+  // `removeChild` is therefore patched to forward the removal to wherever the
+  // bubble actually lives: React gets the node it asked for, and no detached copy
+  // is left behind in `<body>`.
+  //
+  // SCOPE. Only `[role="tooltip"]` inside the composer is moved. The card's menu
+  // surfaces are captured by the same containing block, but they are positioned
+  // and dismissed by their own owners, so they are deliberately left alone.
+  var DETACHED_ATTRIBUTE = 'data-dsh-detached'
+
+  /** Original placement of every bubble this tier moved, for 原版 to restore. */
+  var detachedOrigins = new WeakMap()
+
+  /** `removeChild` forwardings installed on the parents of moved bubbles. */
+  var detachmentPatches = []
+
+  /**
+   * Bubbles currently parked in `<body>`.
+   *
+   * Kept as a list of the handful of nodes this tier actually moved, so a reap is
+   * never a document-wide query in the steady state.
+   */
+  var detachedNodes = new Set()
+
+  /**
+   * Keep a parent able to remove children this tier moved out of it.
+   *
+   * Called once per parent; the recorded original is restored by
+   * {@link restoreDetachedTooltips} so 原版 leaves no patch behind.
+   *
+   * @param {Element} parent - the element React renders the bubble into.
+   */
+  function patchDetachmentParent(parent) {
+    for (var i = 0; i < detachmentPatches.length; i++) {
+      if (detachmentPatches[i].parent === parent) return
+    }
+    var entry = { parent: parent, removeChild: parent.removeChild, patched: null }
+    entry.patched = function (child) {
+      // The test is whether THIS TIER moved the node, not whether the node still
+      // wears the marker: the marker is dropped as soon as the app moves the node
+      // back, and a guard that followed the marker would then hand React a native
+      // `removeChild` for a node that is no longer a child of this parent — exactly
+      // the NotFoundError this forwarding exists to prevent.
+      if (child && child.parentElement !== parent && detachedOrigins.has(child)) {
+        // The app asked for this node out of the tree: it must really leave
+        // `<body>`, and it stops being ours to track.
+        detachedNodes.delete(child)
+        if (child.parentElement) child.parentElement.removeChild(child)
+        return child
+      }
+      return entry.removeChild.call(parent, child)
+    }
+    parent.removeChild = entry.patched
+    detachmentPatches.push(entry)
+  }
+
+  /**
+   * Move one bubble out of any containing block and under `<body>`.
+   *
+   * ONLY a `position: fixed` bubble is moved, because that is the shape whose
+   * `left`/`top` are viewport coordinates. An absolutely positioned bubble resolves
+   * against the card on purpose; moving that one would break what works.
+   *
+   * The parent is patched on EVERY move, not just the first: the app can re-render
+   * the bubble into a different container, and that new container is the one React
+   * will later remove it through.
+   *
+   * @param {Element} node - the bubble.
+   * @returns {boolean} whether it was moved.
+   */
+  function detachTooltip(node) {
+    var parent = node.parentElement
+    if (!parent || parent === document.body) return false
+    var style = window.getComputedStyle(node)
+    if (!style || style.position !== 'fixed') return false
+    var origin = detachedOrigins.get(node)
+    if (!origin || origin.parent !== parent) {
+      detachedOrigins.set(node, { parent: parent, next: node.nextSibling })
+      patchDetachmentParent(parent)
+    }
+    detachedNodes.add(node)
+    node.setAttribute(DETACHED_ATTRIBUTE, 'tooltip')
+    document.body.appendChild(node)
+    return true
+  }
+
+  /**
+   * Re-home every bubble currently rendered inside the composer.
+   *
+   * Idempotent, and reached from two places: the mutation callback, because a
+   * bubble can live for less than the periodic interval, and the periodic pass,
+   * because React can also move an existing bubble back into the card.
+   *
+   * @returns {boolean} whether anything was moved.
+   */
+  function detachComposerTooltips() {
+    if (isVanilla()) return false
+    var bubbles = document.querySelectorAll('[role="tooltip"]')
+    var moved = false
+    for (var i = 0; i < bubbles.length; i++) {
+      // Only the composer's own bubbles: the card is what carries the blur that
+      // captures them. Expressed with `closest` rather than a descendant selector
+      // because the page-wide query is the honest one — a bubble this tier cannot
+      // place is worse than one it never moved.
+      if (!bubbles[i].closest('[data-dsh-desktop="composer"]')) continue
+      if (detachTooltip(bubbles[i])) moved = true
+    }
+    return moved
+  }
+
+  /**
+   * Drop bubbles whose original parent has unmounted, and patches that only hold a
+   * dead element.
+   *
+   * React removes a bubble through `removeChild`, which the parent forwards — but an
+   * app that tears its subtree down by another route (a card cleared with
+   * `textContent = ''`, a root cleared on the way out) never asks, and the bubble
+   * would stay parked in `<body>` for the rest of the session. This is the cheap
+   * backstop: it walks the short list of nodes this tier actually moved, never the
+   * document.
+   *
+   * @returns {boolean} whether anything was dropped.
+   */
+  function reapDetachedTooltips() {
+    // Both lists are considered: a parent that unmounted is worth forgetting even
+    // when no bubble happens to be parked at this moment.
+    if (!detachedNodes.size && !detachmentPatches.length) return false
+    var dropped = false
+    detachedNodes.forEach(function (node) {
+      if (node.parentElement !== document.body) {
+        // Moved back or removed by the app: nothing left to track, and no mark of
+        // ours may outlive the move.
+        node.removeAttribute(DETACHED_ATTRIBUTE)
+        detachedNodes.delete(node)
+        return
+      }
+      var origin = detachedOrigins.get(node)
+      if (origin && origin.parent && origin.parent.isConnected) return
+      // The container it belonged to is gone, so the app has stopped rendering it.
+      node.removeAttribute(DETACHED_ATTRIBUTE)
+      if (node.parentElement) node.parentElement.removeChild(node)
+      detachedNodes.delete(node)
+      dropped = true
+    })
+    for (var i = detachmentPatches.length - 1; i >= 0; i--) {
+      var entry = detachmentPatches[i]
+      if (entry.parent.isConnected) continue
+      // A parent is patched only while it can still be asked to remove a bubble, so a
+      // dead one gets its own method back before being forgotten.
+      if (entry.parent.removeChild === entry.patched) entry.parent.removeChild = entry.removeChild
+      detachmentPatches.splice(i, 1)
+      dropped = true
+    }
+    return dropped
+  }
+
+  /**
+   * Undo every move, so 原版 really is the frontend.
+   *
+   * The bubble belongs to the app, so it goes back where it was found — and a
+   * bubble whose original parent has since unmounted is dropped rather than
+   * re-attached to a dead subtree.
+   *
+   * @returns {boolean} whether anything was restored.
+   */
+  function restoreDetachedTooltips() {
+    // A patch exists exactly while a move has outlived every restore, and the marker
+    // below is only ever written by a move. 原版 therefore pays nothing for this.
+    if (!detachmentPatches.length) return false
+    var detached = document.querySelectorAll('[' + DETACHED_ATTRIBUTE + '="tooltip"]')
+    var restored = true
+    for (var i = 0; i < detached.length; i++) {
+      var node = detached[i]
+      // Only what this tier actually moved, and only while it is still where it was
+      // put: anything else is the app's own node in the app's own place — and it must
+      // not carry a mark of ours out of 原版 either.
+      if (node.parentElement !== document.body) {
+        node.removeAttribute(DETACHED_ATTRIBUTE)
+        continue
+      }
+      var origin = detachedOrigins.get(node)
+      node.removeAttribute(DETACHED_ATTRIBUTE)
+      detachedNodes.delete(node)
+      if (origin && origin.parent && origin.parent.isConnected) {
+        origin.parent.insertBefore(node, origin.next && origin.next.parentNode === origin.parent ? origin.next : null)
+      } else if (node.parentElement) {
+        node.parentElement.removeChild(node)
+      }
+    }
+    for (var j = 0; j < detachmentPatches.length; j++) {
+      var entry = detachmentPatches[j]
+      if (entry.parent.removeChild === entry.patched) entry.parent.removeChild = entry.removeChild
+    }
+    detachmentPatches = []
+    detachedNodes.clear()
+    return restored
+  }
+
+  /**
+   * Move composer bubbles as soon as they mount.
+   *
+   * A bubble exists only while the pointer rests on its control, so the mount
+   * itself has to be caught; only batches that add a `[role="tooltip"]` pay for
+   * the scan.
+   */
+  function watchComposerTooltips() {
+    if (typeof MutationObserver !== 'function') return
+    var observer = new MutationObserver(function (records) {
+      if (isVanilla()) return
+      // Free while nothing is parked in `<body>`: the tracked list is empty.
+      reapDetachedTooltips()
+      for (var i = 0; i < records.length; i++) {
+        var added = records[i].addedNodes || []
+        for (var j = 0; j < added.length; j++) {
+          var node = added[j]
+          if (node.nodeType !== 1) continue
+          // The bubble arrives as the added node itself. The subtree check is the
+          // fallback for a wrapper, and it stops at the content roots: a transcript
+          // patch adds thousands of nodes, and none of them can hold a composer
+          // bubble (see {@link CONTENT_ROOTS}).
+          if (node.matches('[role="tooltip"]') || (!node.matches(CONTENT_ROOTS) && node.querySelector('[role="tooltip"]'))) {
+            detachComposerTooltips()
+            return
+          }
+        }
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
   }
 
   /** Wait for the app to mount, then keep watching it. */
@@ -2145,22 +2428,30 @@
     window.__dshDesktopViewMotion = true
     var identities = new WeakMap()
     var tabSelections = new WeakMap()
+    // The main seat survives React replacing its outlet or its contents. DOM
+    // identity is not navigation: restoring the same session must stay still.
+    var mainSeat = {}
+    var mainTabs = {}
     var running = new Map()
     var scheduled = false
+    var composing = false
 
     function cancelAll() {
       running.forEach(function (animation) { animation.cancel() })
       running.clear()
     }
 
-    function present(node, identity, axis, enter) {
+    function present(node, identity, axis, owner) {
       // Slot wrappers use display:contents and cannot themselves move.
       while (node && node.style.display === 'contents') node = node.firstElementChild
       if (!node || node.closest('[data-dsh-ghost]')) return
-      var previous = identities.get(node)
-      identities.set(node, identity)
-      if (previous === identity || (previous === undefined && !enter)) return
-      if (!animationsActive() || !node.getClientRects().length || node.closest('[hidden]')) return
+      owner = owner || node
+      var previous = identities.get(owner)
+      identities.set(owner, identity)
+      // The first observation establishes a baseline, including an embedded
+      // conversation with no stable outlet. Only a known identity change moves.
+      if (previous === identity || previous === undefined) return
+      if (composing || node.querySelector('[data-composer-composing]') || !animationsActive() || !node.getClientRects().length || node.closest('[hidden]')) return
       // Fixed menus use viewport coordinates. Never turn their ancestor into a
       // temporary containing block; opening one cancels any in-flight motion.
       if (node.querySelector('[role="menu"], [role="tooltip"]')) return
@@ -2177,6 +2468,13 @@
       }
     }
 
+    function selectionIdentity(selected, list, selector) {
+      // Upstream conversation tabs currently have no DOM IDs. Their stable
+      // positions are preferable to node references or changing label text.
+      return selected.getAttribute('aria-controls') || selected.id ||
+        Array.prototype.indexOf.call(list.querySelectorAll(selector), selected)
+    }
+
     function scan() {
       scheduled = false
       if (!animationsActive()) cancelAll()
@@ -2186,36 +2484,49 @@
           running.delete(node)
         }
       })
+      var main = document.querySelector('[data-slot="main"]')
+      var mainConversation = main && main.querySelector('[data-conversation-content]')
       document.querySelectorAll('[data-conversation-content]').forEach(function (node) {
-        present(node, node.getAttribute('data-conversation-session') || 'new', 'y', true)
+        var owner = node === mainConversation ? mainSeat : node.closest('[data-slot="conversation.content"]') || node
+        present(node, 'session:' + (node.getAttribute('data-conversation-session') || 'new'), 'y', owner)
       })
       document.querySelectorAll('[data-slot="main"]').forEach(function (node) {
-        // The conversation has its own session identity; do not double-animate it.
-        if (!node.querySelector('[data-conversation-content]')) present(node, node.firstElementChild, 'y', true)
+        // A transient empty/loading conversation outlet must not erase the last
+        // session. Other pages use their named slot, never a replacement child.
+        if (node.querySelector('[data-conversation-content], [data-slot="main.conversation"]')) return
+        var page = node.querySelector('[data-slot]')
+        if (page) present(node, 'page:' + page.getAttribute('data-slot'), 'y', mainSeat)
       })
       document.querySelectorAll('[role="dialog"] [class*="_navList"]').forEach(function (nav) {
         var dialog = nav.closest('[role="dialog"]')
         var active = nav.querySelector('[aria-current="true"]')
-        present(dialog.querySelector('[class*="_options"]'), active, 'x', false)
+        if (active) present(dialog.querySelector('[class*="_options"]'), selectionIdentity(active, nav, 'button, a, [role="tab"]'), 'x', nav)
       })
       document.querySelectorAll('[role="tablist"]').forEach(function (list) {
         // Sidebar tabs update in place; only the panel's disclosure owns motion.
         if (list.closest('[data-sidebar-right-panel], [data-dsh-terminal-dock]')) return
         var selected = list.querySelector('[role="tab"][aria-selected="true"]')
-        if (!selected || selected === tabSelections.get(list)) return
+        if (!selected) return
         // DockKit keeps one content host per tab and toggles aria-hidden below.
         if (selected.hasAttribute('data-dockkit-tab')) return
         var id = selected.getAttribute('aria-controls')
         var panel = id && document.getElementById(id)
-        if (!panel && list.hasAttribute('data-conversation-tabs')) {
+        var content = null
+        if (list.hasAttribute('data-conversation-tabs')) {
           var conversation = list.closest('[data-phase], [data-slot="main.conversation"]')
-          panel = conversation && conversation.querySelector('[class*="_viewArea"]')
+          content = conversation && conversation.querySelector('[data-conversation-content]')
+          if (!panel) panel = conversation && conversation.querySelector('[class*="_viewArea"]')
         }
         if (!panel) return
-        var changed = tabSelections.has(list)
-        tabSelections.set(list, selected)
-        // A fresh identity also replays a retained panel when returning to it.
-        present(panel, { selected: selected }, 'x', changed)
+        var owner = content && content === mainConversation ? mainTabs : list
+        var session = content && content.getAttribute('data-conversation-session')
+        var key = selectionIdentity(selected, list, '[role="tab"]')
+        var previous = tabSelections.get(owner)
+        tabSelections.set(owner, { session: session })
+        // Session navigation owns the outer motion. Do not also move its view,
+        // or replay it when React replaces the selected button/tablist.
+        if (!previous || previous.session !== session) identities.set(owner, key)
+        present(panel, key, 'x', owner)
       })
       document.querySelectorAll('[data-sidebar-right-panel]').forEach(function (node) {
         var open = node.hasAttribute('data-sidebar-right-open')
@@ -2224,13 +2535,20 @@
         // the panel's fullscreen/push mode while it remains visible.
         var old = identities.get(node)
         if (!open || old === 'closed') identities.set(node, key)
-        else present(node, key, 'x', false)
+        else present(node, key, 'x')
       })
     }
 
     // Stop moving content before an interaction measures a popup anchor.
     document.addEventListener('pointerdown', cancelAll, true)
     document.addEventListener('keydown', cancelAll, true)
+    // IME/voice/paste input can arrive without a usable keydown. Never move the
+    // composing surface or prevent its native input, selection or focus events.
+    document.addEventListener('compositionstart', function () { composing = true; cancelAll() }, true)
+    document.addEventListener('compositionend', function () { composing = false }, true)
+    document.addEventListener('beforeinput', cancelAll, true)
+    document.addEventListener('input', cancelAll, true)
+    window.addEventListener('blur', function () { composing = false; cancelAll() })
     var navigationNodes = '[data-conversation-content], [data-slot="main"], [role="dialog"], [role="menu"], [role="tooltip"], [role="tablist"], [role="tabpanel"], [data-dockkit-content], [data-sidebar-right-panel]'
     var observer = new MutationObserver(function (records) {
       // Text streaming and xterm paints do not require a document-wide scan.
@@ -2340,6 +2658,10 @@
 
     var clone = node.cloneNode(true)
     if (!clone || clone.nodeType !== 1) return
+    // A quick reopen reuses the live surface's IDs. The fading copy must not
+    // shadow it in getElementById/aria-controls lookups (e.g. the reasoning slider).
+    clone.removeAttribute('id')
+    clone.querySelectorAll('[id]').forEach(function (child) { child.removeAttribute('id') })
     clone.setAttribute(GHOST_ATTRIBUTE, kind)
     // The ghost is scenery: nothing about it may take input or a reader's
     // attention while it plays. Both are guarded — `inert` is the engine's
@@ -3797,8 +4119,33 @@
     }
   }
 
+  function nativeSessionIdItem(menu) {
+    return Array.from(menu.querySelectorAll('[role="menuitem"]')).find(function (item) {
+      var label = item.querySelector('[class*="itemLabel"]') || item
+      return ['复制 Session ID', 'Copy Session ID', t('复制 Session ID')].includes(label.textContent.trim())
+    })
+  }
+
+  function copySessionId(menu, sessionId) {
+    var original = nativeSessionIdItem(menu)
+    if (original) {
+      // Keep React's native callback and toast. Its hidden first-level button
+      // stays disabled between activations so keyboard navigation skips it.
+      original.disabled = false
+      try { original.click() } finally { original.disabled = true }
+      return
+    }
+    // Older dsh versions do not provide this action; copy the complete ID.
+    try {
+      window.__TAURI__.core.invoke('clipboard_write_text', { text: sessionId }).then(
+        function () { showDesktopToast(t('已复制')) },
+        function (error) { showDesktopToast(t('复制失败'), error) },
+      )
+    } catch (error) { showDesktopToast(t('复制失败'), error) }
+  }
+
   /**
-   * Build the SESSION menu's 复制... parent and its three actions.
+   * Build the SESSION menu's 复制... parent and its copy/export actions.
    * The portalled submenu uses the same surface and positioning as 打开….
    *
    * A row whose id could not be read renders DISABLED, never absent — see
@@ -3857,6 +4204,7 @@
     if (sessionId !== undefined) {
       var submenu = buildSidebarSubmenuSurface('copy-submenu')
       var actions = [
+        { id: 'copy-id', label: t('复制 Session ID'), icon: COPY_ICON },
         { id: 'copy-link', label: t(DEEP_LINK_LABEL), icon: linkIcon },
         { id: 'copy-content', label: t('复制会话内容'), icon: COPY_ICON, method: 'copyContent' },
         { id: 'save-content', label: t('保存会话内容'), icon: DOWNLOAD_ICON, method: 'saveContent' },
@@ -3878,7 +4226,8 @@
         entry.appendChild(entryLabel)
         function activate(event) {
           event.stopPropagation()
-          if (action.id === 'copy-link') copySessionDeepLink(sessionId)
+          if (action.id === 'copy-id') copySessionId(menu, sessionId)
+          else if (action.id === 'copy-link') copySessionDeepLink(sessionId)
           else {
             var service = window.__DSH_SESSION_ACTIONS__
             if (typeof service?.[action.method] === 'function') service[action.method](sessionId)
@@ -3940,6 +4289,13 @@
    * @param {string|undefined} sessionId - the session id, when the row exposed one.
    */
   function injectDeepLinkItem(menu, sessionId) {
+    // Header slot items can mount after the submenu. Reconcile the original on
+    // every pass while leaving its React-owned DOM in place for safe unmounts.
+    var original = sessionId !== undefined && nativeSessionIdItem(menu)
+    if (original) {
+      if (original.getAttribute('data-dsh-desktop') !== 'copy-id-source') original.setAttribute('data-dsh-desktop', 'copy-id-source')
+      if (!original.disabled) original.disabled = true
+    }
     if (menu.querySelector('[data-dsh-desktop="link-item"]')) return
     appendRevealRow(menu, buildDeepLinkRow(menu, sessionId), 'link-divider')
   }
@@ -4508,6 +4864,7 @@
   document.querySelectorAll(CONTENT_SURFACES).forEach(function (node) { contentSurfaces.add(node) })
   begin()
   watchRelocatedRows()
+  watchComposerTooltips()
   watchRowMenus()
   watchRemovalGhosts()
   watchWorkspaceMotion()

@@ -160,13 +160,13 @@ export function createUpstreamBody(React, ctx, typeId, registry) {
   const subscribe = fn => ctx.slots.subscribe('sidebar.right.pane.tab', fn)
   const theme = () => ctx.theme.getTheme()
   const themeSubscribe = fn => ctx.on('theme/change', fn)
-  return function UpstreamBody({ tab, view, store }) {
+  return function UpstreamBody({ tab, view, store, visible = true }) {
       useLocale(React)
     const entry = React.useSyncExternalStore(subscribe, entrySnapshot, entrySnapshot)
     if (!entry || !view) return h('p', { role: 'status' }, t('正在加载 DSH 终端…'))
     const model = view.model
     return h(entry.component, {
-      useTabInfo: () => ({ tab: { ...tab, id: tab.contentId, visible: true, actions: {
+      useTabInfo: () => ({ tab: { ...tab, id: tab.contentId, visible, actions: {
         openTab(_kind, options) {
           if (options?.replaceTab) store.close(tab.contentId)
           if (registry) registry.withShellPath(options?.params?.shellPath, () => store.add())

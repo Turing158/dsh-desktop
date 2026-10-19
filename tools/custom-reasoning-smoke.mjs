@@ -195,8 +195,30 @@ try {
       'slider adaptation preserves the menu entrance: ' + preference + ', ' + reducedMotion)
     await page.waitForFunction(() => !document.querySelector('[data-dsh-reasoning-slider]').getAnimations().length)
     await closePanelWithMotion(animated)
+    for (const clicks of [3, 7]) {
+      // Reopen before the closing menu's animation finishes. Waiting for each
+      // paint lets React commit every click without waiting out the exit ghost.
+      const reopened = await page.evaluate(async clicks => {
+        const button = document.querySelector('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]')
+        for (let i = 0; i < clicks; i++) {
+          button.click()
+          await new Promise(requestAnimationFrame)
+          await new Promise(requestAnimationFrame)
+        }
+        const panels = Array.from(document.querySelectorAll('[data-dsh-reasoning-slider]'))
+        const live = panels.filter(panel => !panel.closest('[data-dsh-ghost]'))
+        return { expanded: button.getAttribute('aria-expanded'), sliders: live.length,
+          value: live[0]?.querySelector('input').getAttribute('aria-valuetext'),
+          closing: panels.some(panel => panel.closest('[data-dsh-ghost]')) }
+      }, clicks)
+      assert.deepEqual(reopened, { expanded: 'true', sliders: 1, value: 'Medium', closing: animated },
+        `slider survives ${clicks} rapid model-picker clicks: ${preference}, ${reducedMotion}`)
+      await page.waitForFunction(() => !document.querySelector('[data-dsh-ghost]'))
+      assert.equal(await slider().getAttribute('aria-valuetext'), 'Medium', 'retiring the old menu keeps the live slider')
+      await closePanelWithMotion(animated)
+    }
   }
-  console.log('PASS: slider menu enter/exit, preserved exit content and position, on/off/system motion preferences')
+  console.log('PASS: slider menu enter/exit, rapid reopening, preserved exit content and position, on/off/system motion preferences')
   await openPanel()
   await slider().waitFor()
   assert.equal(await page.getByRole('menuitem', { name: /推理等级/ }).count(), 0, 'slider is already in the root model menu')

@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { offlineModelPatch, handleOnboarding, dismissInitialWelcome, openDshSettings } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -24,12 +25,13 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({ id: '@
     apply(ctx) { window.__MOTION_SMOKE__ = ctx } }) })`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8'))
   .replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
+  + offlineModelPatch
   + '\n- insert:\n    - id: desktop-motion-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 const patchPath = join(root, 'desktop.patch.yml')
 await writeFile(patchPath, patch)
 const child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--no-open', '--port', '0'], {
   cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin },
+  env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_UI_SMOKE_KEY: 'mock-key' },
 })
 let output = '', browser, page
 child.stdout.on('data', data => { output += data })
@@ -48,6 +50,7 @@ try {
   assert.ok(url, 'isolated backend starts')
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   page = await browser.newPage({ viewport: { width: 1280, height: 840 } })
+  await handleOnboarding(page)
   const errors = []
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => {
@@ -62,9 +65,10 @@ try {
   await page.goto(url)
   await page.waitForFunction(() => window.__MOTION_SMOKE__?.configForms.get('desktop-appearance').getSnapshot().status === 'ready')
   await page.waitForSelector('[data-conversation-content]')
+  await dismissInitialWelcome(page)
   await page.waitForTimeout(400)
   // The browser overlay relocates this trigger into its chrome.
-  await page.locator('button[aria-haspopup="dialog"]').first().evaluate(node => node.click())
+  await openDshSettings(page)
   await page.waitForSelector('[data-shortcut-modal="settings"]')
   await page.waitForTimeout(250)
   await page.evaluate(() => { window.motionCalls = [] })
@@ -103,6 +107,42 @@ try {
   await page.waitForTimeout(250)
   assert.equal((await page.evaluate(() => window.motionCalls)).length, 0)
   pass('streamed content does not replay navigation motion')
+  const editor = page.locator('[data-composer-card] [contenteditable="true"]')
+  await editor.fill('')
+  await editor.evaluate(node => {
+    window.motionEditorRoot = node
+    window.motionEditor = node.__lexicalEditor
+    const probe = document.createElement('div')
+    probe.id = 'composition-motion-probe'
+    probe.setAttribute('role', 'tablist')
+    document.body.append(probe)
+  })
+  const cdp = await page.context().newCDPSession(page)
+  for (const text of ['n', 'ni', 'nih', 'niha', 'nihao']) {
+    await cdp.send('Input.imeSetComposition', { text, selectionStart: text.length, selectionEnd: text.length })
+    await page.evaluate(async text => {
+      motionCalls = []
+      // A non-input UI update schedules the real overlay's navigation scan.
+      document.getElementById('composition-motion-probe').setAttribute('aria-selected', String(text.length % 2 === 0))
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    }, text)
+    // Lexical keeps a U+200B composition sentinel beside the native IME text.
+    assert.equal((await editor.innerText()).replace(/\u200b/g, ''), text)
+    assert.deepEqual(await editor.evaluate(node => ({ sameRoot: node === window.motionEditorRoot,
+      sameEditor: !!window.motionEditor && node.__lexicalEditor === window.motionEditor,
+      focused: document.activeElement === node, composing: node.__lexicalEditor.isComposing(),
+      motion: window.motionCalls.length })), { sameRoot: true, sameEditor: true, focused: true, composing: true, motion: 0 })
+  }
+  await cdp.send('Input.insertText', { text: '你好' })
+  assert.equal(await editor.innerText(), '你好')
+  await editor.fill('')
+  await page.evaluate(() => {
+    document.getElementById('composition-motion-probe').remove()
+    delete window.motionEditorRoot
+    delete window.motionEditor
+  })
+  await cdp.detach()
+  pass('real Lexical composer preserves IME letters, committed Chinese, editor identity and focus during overlay updates')
   for (const kind of ['files', 'guide', 'files']) {
     await page.evaluate(kind => { window.motionCalls = []; window.__MOTION_SMOKE__.sidebarRight.openTab(kind) }, kind)
     await page.waitForTimeout(300)
@@ -150,8 +190,8 @@ try {
   }
   pass('off, system reduced motion, and explicit on are respected')
   await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await openDshSettings(page)
   const opening = await page.evaluate(async () => {
-    document.querySelector('button[aria-haspopup="dialog"]').click()
     await new Promise(requestAnimationFrame)
     const panel = document.querySelector('[data-shortcut-modal="settings"]')
     return panel.getAnimations().flatMap(animation => animation.effect.getKeyframes())
@@ -178,7 +218,7 @@ try {
   assert.equal(await page.locator('[data-dsh-ghost]').count(), 0)
   pass('menus and dialogs enter and exit with movement and scaling; ghosts are removed')
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.locator('button[aria-haspopup="dialog"]').first().evaluate(node => node.click())
+  await openDshSettings(page)
   await page.waitForTimeout(240)
   await page.locator('[class*="_navList"] button').filter({ hasText: '模型' }).click()
   await page.waitForTimeout(240)

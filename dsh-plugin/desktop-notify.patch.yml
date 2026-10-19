@@ -112,6 +112,11 @@
       inject: [settings]
       config: {}
 
+    # The signed-in account sheet keeps the upstream account store and operations.
+    - id: desktop-account-popover
+      name: ./account-popover/index.js
+      config: {}
+
     # The desktop title bar publishes its own chrome styles and makes the client
     # discoverable. It remains usable when desktop-ui is disabled.
     # Declared after the appearance plugin so both feature plugins mount in a
