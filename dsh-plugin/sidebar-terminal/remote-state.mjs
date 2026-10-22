@@ -76,6 +76,7 @@ export function createRemoteState(ctx, registry, dock) {
         store.actions.setExpanded(side.sessionId, side.expanded)
       }
     },
+    preflightRestore() { throw Error('snapshot-terminal-cold-unavailable') },
   }
 }
 

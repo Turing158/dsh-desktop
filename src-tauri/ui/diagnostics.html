@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DSH Diagnostics</title><link rel="stylesheet" href="style.css"></head>
+<body>
+  <main class="shell" data-state="attention" style="padding-top:32px">
+    <div class="startup"><section class="body local-diagnostics stack" aria-labelledby="diagnostics-title">
+      <h1 id="diagnostics-title">故障诊断</h1>
+      <p id="diagnostics-notice" role="status" aria-live="polite"></p>
+      <div class="actions"><button class="btn secondary" id="diagnostics-check" type="button">重新检测</button><button class="btn secondary" id="diagnostics-export" type="button">导出诊断报告</button></div>
+      <dl id="diagnostics-facts" class="diagnostic-facts"></dl>
+      <div id="diagnostics-checks" class="stack"></div>
+      <p class="muted" id="diagnostics-policy"></p>
+    </section></div>
+  </main>
+  <script type="module" src="diagnostics.js"></script>
+</body></html>

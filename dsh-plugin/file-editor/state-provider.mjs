@@ -30,6 +30,13 @@ export function createStateProvider(ctx, docs) {
       })
       return drafts.length || sides.length ? { drafts, sides } : null
     },
+    async preflightRestore(saved, { signal }) {
+      for (const side of saved.sides || []) {
+        if (!stores().some(value => value.sessionId === side.sessionId)) throw Error('snapshot-session-missing')
+        if (side.addresses.some(address => !parseFile(address))) throw Error('snapshot-file-address-invalid')
+      }
+      await docs.preflightRestore(saved, signal)
+    },
     restore(saved) {
       docs.restore(saved)
       for (const side of saved.sides || []) {

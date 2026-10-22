@@ -3,8 +3,9 @@ window.__ModuleLoader__.load({
   factory: () => {
     function preserveDraftAttachments(ctx) {
       const { sessions, conversation } = ctx
-      // Older DSH keeps input scopes resident without reference counting.
-      if (typeof sessions.retain !== 'function') return () => {}
+      // Older DSH keeps input scopes resident. Watch drafts without changing
+      // that lifecycle; only reference-counted services need attachment holds.
+      const referenceCounted = typeof sessions.retain === 'function'
       const watched = new Map()
       let disposed = false, syncing = false, queued = false
 
@@ -16,6 +17,7 @@ window.__ModuleLoader__.load({
       }
       function reconcile(id, entry, allowRelease = false) {
         if (disposed || watched.get(id) !== entry) return
+        if (!referenceCounted) return
         for (const attachmentId of entry.input.state.getSnapshot().attachmentIds) entry.ids.add(attachmentId)
         // Optimistic sends empty the composer before admission. The attachment
         // registry owns those bytes until success, or restores them on failure.
@@ -59,18 +61,20 @@ window.__ModuleLoader__.load({
             const input = conversation.input.for(scope), session = sessions.binding(id).session
             const entry = { scope, input, ids: new Set(), reference: null, retaining: false, offInput: () => {}, offSession: () => {} }
             watched.set(id, entry)
-            entry.offInput = input.state.subscribe(() => { reconcile(id, entry); settle() })
-            entry.offSession = session.subscribe(settle)
+            entry.offInput = input.state.subscribe(() => { reconcile(id, entry); settle();window.__DSH_UI_STATE__?.draftsChanged() })
+            entry.offSession = session.subscribe(() => { settle();window.__DSH_UI_STATE__?.draftsChanged() })
             reconcile(id, entry)
           }
         } finally { syncing = false }
         settle()
       }
       const offList = sessions.list.subscribe(sync)
+      const offCheckpointList=sessions.list.subscribe(()=>window.__DSH_UI_STATE__?.draftsChanged())
       sync()
       return () => {
         disposed = true
         offList()
+        offCheckpointList()
         for (const [id, entry] of watched) forget(id, entry)
       }
     }

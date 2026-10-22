@@ -45,6 +45,7 @@ const ID_SHOW: &str = "show";
 const ID_MINIMAL: &str = "minimal";
 /// Menu item id: the real exit.
 const ID_QUIT: &str = "quit";
+const ID_DIAGNOSTICS: &str = "diagnostics";
 
 /// Handles for confirmed-state checkmarks, busy states, and recovery labels.
 pub struct TrayMenu {
@@ -52,6 +53,7 @@ pub struct TrayMenu {
     pub minimal: CheckMenuItem<Wry>,
     pub show: MenuItem<Wry>,
     pub quit: MenuItem<Wry>,
+    pub diagnostics: MenuItem<Wry>,
 }
 
 /// Route every display request through the lifecycle owner, including when
@@ -70,6 +72,7 @@ pub(crate) fn sync_checkmark(app: &AppHandle) {
     if let Some(handles) = app.try_state::<TrayMenu>() {
         let _ = handles.minimal.set_text(crate::locale::text(app, "极简模式", "Minimal mode"));
         let _ = handles.quit.set_text(crate::locale::text(app, "退出", "Quit"));
+        let _ = handles.diagnostics.set_text(crate::locale::text(app, "查看诊断", "View diagnostics"));
         let _ = handles.minimal.set_checked(crate::minimal::is_on(app));
         let _ = handles.minimal.set_enabled(!crate::minimal::busy(app));
         let failed = app
@@ -90,7 +93,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, ID_SHOW, "显示主界面", true, None::<&str>)?;
     let minimal = CheckMenuItem::with_id(app, ID_MINIMAL, crate::locale::text(app, "极简模式", "Minimal mode"), true, false, None::<&str>)?;
     let quit = MenuItem::with_id(app, ID_QUIT, crate::locale::text(app, "退出", "Quit"), true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &minimal, &quit])?;
+    let diagnostics = MenuItem::with_id(app, ID_DIAGNOSTICS, crate::locale::text(app, "查看诊断", "View diagnostics"), true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &minimal, &diagnostics, &quit])?;
 
     // Kept past this function so the handler can sync the checkmark; see
     // [`TrayMenu`].
@@ -98,6 +102,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         minimal: minimal.clone(),
         show: show.clone(),
         quit: quit.clone(),
+        diagnostics: diagnostics.clone(),
     });
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
@@ -109,6 +114,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             ID_SHOW => show_main_window(app),
+            ID_DIAGNOSTICS => crate::diagnostics::open(app),
             ID_MINIMAL => {
                 // The shared flag is the truth; the checkbox follows it. The
                 // re-assert costs nothing when the platform already toggled the

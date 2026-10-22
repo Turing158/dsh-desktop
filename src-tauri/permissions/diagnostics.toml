@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-diagnostics-read"
+description = "Read host diagnostics and run bounded checks from the current desktop document."
+commands.allow = ["desktop_diagnostics", "desktop_diagnostics_check"]
+
+[[permission]]
+identifier = "allow-diagnostics-export"
+description = "Export a redacted diagnostic report through a host-owned native destination dialog."
+commands.allow = ["desktop_diagnostics_export"]
+
+[[permission]]
+identifier = "allow-capability-report"
+description = "Publish bounded feature-selector evidence with the current desktop identity."
+commands.allow = ["desktop_capabilities_report"]

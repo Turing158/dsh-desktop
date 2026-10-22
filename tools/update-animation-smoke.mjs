@@ -30,9 +30,32 @@ try {
     await page.waitForTimeout(150)
     assert.notEqual(await rotation(), before, 'the update ring moves even with reduced motion enabled')
     await page.screenshot({ path: join(root, `pending-${dark ? 'dark' : 'light'}.png`) })
-    await page.evaluate(dark => window.resolveBootContext({ local: false, updating: true, restoring: true,
-      palette: { dark, background: dark ? 'rgb(27, 27, 28)' : 'rgb(249, 250, 251)', foreground: dark ? 'rgb(249, 250, 251)' : 'rgb(15, 17, 21)', border: 'rgb(90, 90, 90)' } }), dark)
+    const expectedPalette = { dark, background: dark ? 'rgb(27, 27, 28)' : 'rgb(249, 250, 251)',
+      foreground: dark ? 'rgb(249, 250, 251)' : 'rgb(15, 17, 21)', border: 'rgb(90, 90, 90)',
+      contentBackground: dark ? 'rgb(18, 18, 18)' : 'rgb(255, 255, 255)',
+      secondaryForeground: dark ? 'rgb(170, 172, 178)' : 'rgb(92, 96, 104)' }
+    const palette = await page.evaluate(expected => {
+      const bar = document.createElement('div')
+      bar.className = 'dshTb'
+      bar.innerHTML = '<span class="dshTb__wordmark">dsh</span>'
+      bar.style.cssText = 'position:fixed;visibility:hidden;background-color:' + (expected.dark ? '#000' : '#fff')
+        + ';background-image:linear-gradient(#8882,#8882);border-bottom:1px solid #222;'
+      for (const [token, color] of Object.entries({ '--dsw-specific-sidebar-fill': expected.background,
+        '--dsw-alias-bg-base': expected.contentBackground, '--dsw-alias-label-primary': expected.foreground,
+        '--dsw-alias-label-secondary': expected.secondaryForeground, '--dsw-alias-border-l2': expected.border })) bar.style.setProperty(token, color)
+      document.body.append(bar)
+      const palette = window.__DSH_DESKTOP_BOOT__.capturePalette()
+      if (bar.children.length !== 1) throw new Error('palette capture leaked its color probe')
+      bar.remove()
+      return palette
+    }, expectedPalette)
+    assert.deepEqual(palette, expectedPalette, 'capture uses theme tokens rather than the background-image canvas')
+    await page.evaluate(palette => window.resolveBootContext({ local: false, updating: true, restoring: true, palette }), palette)
     await page.waitForFunction(() => document.querySelector('.dshBoot__loadingLabel')?.textContent === '正在更新 dsh…')
+    assert.equal(await loading.evaluate(node => getComputedStyle(node).backgroundColor), palette.contentBackground)
+    assert.equal(await loading.evaluate(node => getComputedStyle(node).color), palette.foreground)
+    assert.equal(await loading.locator('.dshBoot__loadingHint').evaluate(node => getComputedStyle(node).color), palette.secondaryForeground)
+    assert.equal(await page.locator('#dsh-desktop-titlebar-boot').evaluate(node => getComputedStyle(node).backgroundColor), palette.background)
     await page.screenshot({ path: join(root, `updating-${dark ? 'dark' : 'light'}.png`) })
     await page.evaluate(() => {
       document.documentElement.setAttribute('data-dsh-titlebar', '')
@@ -47,6 +70,7 @@ try {
     })
     assert.equal(await loading.count(), 0, 'the state overlay takes over without stacking two statuses')
     assert.ok(await page.locator('[data-dsh-ui-status] .dshBoot__spinner').isVisible())
+    assert.equal(await page.locator('[data-dsh-ui-status]').evaluate(node => getComputedStyle(node).backgroundColor), palette.contentBackground)
     const savingRotation = () => page.locator('[data-dsh-ui-status] .dshBoot__spinner').evaluate(node => getComputedStyle(node).transform)
     const savingBefore = await savingRotation()
     await page.waitForTimeout(150)
@@ -54,8 +78,23 @@ try {
     await page.screenshot({ path: join(root, `saving-${dark ? 'dark' : 'light'}.png`) })
     await page.evaluate(() => window.__DSH_UI_STATE__.finishRemoteApply())
     assert.equal(await page.locator('[data-dsh-ui-status]').count(), 0)
+    // The local installation page uses the same captured content and text colors.
+    const local = await browser.newPage({ viewport: { width: 1280, height: 840 } })
+    const localCss = await readFile('src-tauri/ui/style.css', 'utf8')
+    await local.route('http://localhost/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><style>' + localCss + '</style></head><body></body></html>' }))
+    await local.goto('http://localhost')
+    await local.evaluate(palette => {
+      window.__DSH_DESKTOP_BOOT_HOST__ = true
+      window.__TAURI__ = { core: { invoke: async command => command === 'desktop_boot_context' ? { local: true, updating: true, restoring: true, palette } : false } }
+    }, palette)
+    await local.addScriptTag({ content: boot })
+    await local.waitForFunction(() => document.documentElement.hasAttribute('data-dsh-boot-scheme'))
+    assert.equal(await local.locator('body').evaluate(node => getComputedStyle(node).backgroundColor), palette.contentBackground)
+    assert.equal(await local.locator('body').evaluate(node => getComputedStyle(node).color), palette.foreground)
+    await local.screenshot({ path: join(root, `local-${dark ? 'dark' : 'light'}.png`) })
+    await local.close()
     await page.close()
   }
-  console.log('PASS: with reduced motion enabled, animation paints before IPC, keeps moving, and hands off to the animated saving/restoring overlay')
+  console.log('PASS: light/dark theme colors survive image canvases, installation and restoration; loading stays visible and animated')
   console.log('Screenshots: ' + root)
 } finally { await browser.close() }

@@ -305,6 +305,13 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   assert.throws(() => rehydrated({ reasoningControl: 'high' }), /reasoningControl/)
   assert.equal(module.normalize({ reasoningControl: 'high' }), undefined)
   assert.deepEqual(module.SettingsSchema['~standard'].validate({ reasoningControl: 'high' }).issues[0].path, ['reasoningControl'])
+  for (const colorScheme of ['default', 'blue', 'teal', 'moss', 'violet', 'amber', 'rose']) {
+    assert.deepEqual(rehydrated({ colorScheme }), module.normalize({ colorScheme }))
+  }
+  for (const colorScheme of ['unknown', 2]) {
+    assert.throws(() => rehydrated({ colorScheme }), /colorScheme/)
+    assert.deepEqual(module.SettingsSchema['~standard'].validate({ colorScheme }).issues[0].path, ['colorScheme'])
+  }
   for (const field of ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity']) {
     for (const level of [0, 25.5, 50, 100]) {
       const value = { [field]: level }
@@ -328,6 +335,7 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
     'backgroundBlur', 'backgroundChat', 'backgroundChatSurfaceTransparency', 'backgroundChatTransparency', 'backgroundImage',
     'backgroundLeft', 'backgroundLeftSurfaceTransparency', 'backgroundLeftTransparency', 'backgroundRight', 'backgroundRightSurfaceTransparency', 'backgroundRightTransparency',
     'backgroundTitlebar', 'backgroundTitlebarSurfaceTransparency', 'backgroundTitlebarTransparency', 'backgroundTransparency',
+    'colorScheme',
     'composerFrostedIntensity', 'composerGlassIntensity', 'composerMaterial', 'composerTransparency',
     'fontSizeOverride',
     'reasoningControl',
@@ -809,8 +817,8 @@ test('the composer’s tool buttons and the 外观 controls animate their hover'
     'and it must be a transition, not a static style',
   )
   assert.ok(
-    css.includes(".dshAppearance__option[aria-pressed='true']:hover"),
-    'the selected option must keep its own fill while hovered',
+    optionHoverRule.includes(":not([aria-pressed='true'])"),
+    'hover must exclude the selected option so its fill stays unchanged',
   )
 
   // The 外观 option buttons are BACKGROUND-ONLY TOO. They used to rise 1px on

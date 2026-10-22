@@ -115,12 +115,156 @@
     };
   }
 
+  // dsh-plugin/account-popover/update-badge-motion.mjs
+  function createBadgeMotion(doc) {
+    const win = doc.defaultView, root = doc.documentElement;
+    const media = win.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const active = () => root.getAttribute("data-dsh-ui") !== "vanilla" && root.getAttribute("data-dsh-desktop-animation") !== "off" && (root.getAttribute("data-dsh-desktop-animation") === "on" || !media?.matches);
+    let previous = null, animations = [], ghost = null, disposed = false;
+    function cancel() {
+      for (const animation of animations) {
+        animation.onfinish = null;
+        animation.cancel();
+      }
+      animations = [];
+      ghost?.replaceChildren();
+      ghost = null;
+    }
+    const preferenceChanged = () => {
+      if (!active()) cancel();
+    };
+    const observer = new win.MutationObserver(preferenceChanged);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-dsh-ui", "data-dsh-desktop-animation"] });
+    media?.addEventListener?.("change", preferenceChanged);
+    return {
+      update(key, pill, content, outgoing) {
+        if (disposed || previous?.key === key && previous.pill === pill) return;
+        const continuing = previous?.pill === pill && animations.length > 0;
+        const currentWidth = continuing ? win.getComputedStyle(pill).width : previous?.width;
+        const current = continuing ? win.getComputedStyle(content) : null;
+        const from = { opacity: current?.opacity || 0, transform: current?.transform || "translateY(3px)" };
+        const outgoingFrom = current ? { opacity: current.opacity, transform: current.transform } : { opacity: 1, transform: "none" };
+        cancel();
+        if (!pill || !content) {
+          previous = null;
+          return;
+        }
+        const width = win.getComputedStyle(pill).width;
+        const snapshot = { key, pill, width, content: content.cloneNode(true) };
+        if (active() && typeof content.animate === "function") {
+          const options = { duration: 180, easing: "cubic-bezier(.2, .8, .2, 1)" };
+          if (previous?.pill === pill && outgoing) {
+            ghost = outgoing;
+            ghost.replaceChildren(previous.content);
+            animations.push(ghost.animate([
+              outgoingFrom,
+              { opacity: 0, transform: "translateY(-3px)" }
+            ], { ...options, fill: "forwards" }));
+            if (currentWidth !== width) animations.push(pill.animate([{ width: currentWidth }, { width }], options));
+          }
+          const entering = content.animate([from, { opacity: 1, transform: "none" }], options);
+          animations.push(entering);
+          entering.onfinish = cancel;
+        }
+        previous = snapshot;
+      },
+      dispose() {
+        disposed = true;
+        cancel();
+        previous = null;
+        observer.disconnect();
+        media?.removeEventListener?.("change", preferenceChanged);
+      }
+    };
+  }
+
+  // dsh-plugin/account-popover/update-badge.mjs
+  function createUpdateBadge(React, ui) {
+    const h = React.createElement;
+    return function UpdateBadge({ wide }) {
+      window.__DSH_I18N__?.use(React);
+      const t = (text2, values) => window.__DSH_I18N__?.t(text2, values) ?? text2.replace(/\{(\w+)\}/g, (match, key) => values?.[key] ?? match);
+      const read = () => window.__DSH_DSH_UPDATE__?.getSnapshot() ?? null;
+      const [update, setUpdate] = React.useState(read);
+      const pill = React.useRef(null), content = React.useRef(null), outgoing = React.useRef(null), motion = React.useRef(null);
+      React.useLayoutEffect(() => {
+        motion.current = createBadgeMotion(document);
+        return () => {
+          motion.current.dispose();
+          motion.current = null;
+        };
+      }, []);
+      React.useEffect(() => {
+        const sync = () => setUpdate(read());
+        document.addEventListener("dsh-desktop:dsh-update", sync);
+        sync();
+        return () => document.removeEventListener("dsh-desktop:dsh-update", sync);
+      }, []);
+      const available = Boolean(update?.versions?.stableUpdateAvailable);
+      const waiting = update?.busy === "waiting";
+      const installing = Boolean(update?.busy && !["waiting", "check"].includes(update.busy));
+      const busy = waiting || installing;
+      const failed = Boolean(update?.error);
+      const state = waiting ? "waiting" : installing ? "installing" : failed ? "error" : "available";
+      const text = waiting ? t("\u7B49\u5F85\u4E2D") : installing ? t("\u66F4\u65B0\u4E2D") : failed ? t("\u91CD\u8BD5") : t("\u65B0\u7248\u672C");
+      const contentKey = JSON.stringify([available, state, Boolean(wide), wide ? text : ""]);
+      React.useLayoutEffect(() => {
+        motion.current.update(contentKey, pill.current, content.current, outgoing.current);
+      }, [contentKey]);
+      if (!available) return null;
+      const label = waiting ? t("\u7B49\u5F85\u4F1A\u8BDD\u7ED3\u675F\u540E\u66F4\u65B0\u2026") : installing ? t("\u6B63\u5728\u66F4\u65B0 dsh\u2026") : failed ? t("\u66F4\u65B0\u5931\u8D25\uFF0C\u70B9\u51FB\u67E5\u770B\u5E76\u91CD\u8BD5") : t("\u66F4\u65B0\u5230 dsh \u7A33\u5B9A\u7248 {version}", { version: update.versions.latest });
+      const button = h("button", {
+        type: "button",
+        className: "dshUpdateBadge",
+        "data-state": state,
+        "data-compact": !wide,
+        "aria-label": label,
+        "aria-busy": busy,
+        disabled: installing || update.busy === "check",
+        title: ui.Tooltip ? void 0 : label,
+        onClick: () => {
+          const service = window.__DSH_DSH_UPDATE__;
+          if (waiting || failed) service?.show();
+          else void service?.installStable();
+        }
+      }, h(
+        "span",
+        { ref: pill, className: "dshUpdateBadge__pill" },
+        h(
+          "span",
+          { ref: content, className: "dshUpdateBadge__content" },
+          busy ? h("span", { className: "dshUpdateBadge__spinner", "aria-hidden": true }) : h(
+            "svg",
+            { width: 11, height: 11, viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+            h("path", { d: failed ? "M8 3v6m0 3v.1" : "M8 12V3m-4 4 4-4 4 4", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" })
+          ),
+          wide && h("span", null, text)
+        ),
+        h("span", { ref: outgoing, className: "dshUpdateBadge__ghost", "aria-hidden": true })
+      ));
+      return h(
+        "span",
+        { className: "dshUpdateBadge__anchor" },
+        ui.Tooltip ? h(ui.Tooltip, { label, portal: true, side: "top", delayMs: 250 }, button) : button,
+        h("span", { className: "dshUpdateBadge__status", role: "status", "aria-live": "polite" }, label)
+      );
+    };
+  }
+
   // dsh-plugin/account-popover/view.mjs
   function createAccountLauncher(React, ReactDOM, ui, Original) {
     const h = React.createElement;
     const LogoutIcon = createLogoutIcon(React);
+    const UpdateBadge = createUpdateBadge(React, ui);
     function AccountLauncher(props) {
-      if (typeof props.useAccount !== "function" || typeof props.contactUs !== "function" || typeof props.signOut !== "function" || typeof props.hasRunningAccountTasks !== "function") return h(Original, props);
+      if (typeof props.useAccount !== "function" || typeof props.contactUs !== "function" || typeof props.signOut !== "function" || typeof props.hasRunningAccountTasks !== "function") {
+        return h(
+          "div",
+          { className: "dshAccountLauncher", "data-collapsed": !props.wide },
+          h("div", { className: "dshAccountLauncher__native" }, h(Original, props)),
+          h(UpdateBadge, { wide: props.wide })
+        );
+      }
       return h(EnhancedLauncher, props);
     }
     function EnhancedLauncher(props) {
@@ -406,6 +550,7 @@
         "div",
         { className: "dshAccountLauncher", "data-collapsed": !props.wide, onClickCapture: activate, onKeyDownCapture: activate },
         h("div", { ref: native, className: "dshAccountLauncher__native" }, h(Original, props)),
+        h(UpdateBadge, { wide: props.wide }),
         signedIn && !props.hasDesktopSettingsLauncher && iconButton(t("settings"), "dshAccount__settings", () => {
           close();
           props.openSettings();
@@ -557,7 +702,7 @@
   }
 
   // dsh-plugin/account-popover/style.css
-  var style_default = ".dshAccountLauncher { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }\n.dshAccountLauncher__native { flex: 1; min-width: 0; }\n.dshAccountLauncher[data-collapsed=true] { flex-direction: column; }\n.dshAccountLauncher .dshAccount__settings { width: 36px; height: 36px; }\n.dshAccount {\n  --dsh-account-surface-tint: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 30%, transparent);\n  --dsh-surface-overlay: linear-gradient(var(--dsh-account-surface-tint), var(--dsh-account-surface-tint));\n  box-sizing: border-box; position: fixed; z-index: 1000; width: 318px; max-width: calc(100vw - 16px);\n  max-height: calc(100dvh - 16px); overflow: auto; overscroll-behavior: contain;\n  background-color: var(--dsw-alias-bg-base, #fff);\n  background-image: var(--dsh-surface-overlay), linear-gradient(var(--dsw-menu-surface-fill, transparent), var(--dsw-menu-surface-fill, transparent));\n  color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px; box-shadow: var(--dsw-elevation-panel, 0 12px 28px #0003);\n  font-family: inherit; font-size: 13px; line-height: 1.5; outline: none;\n}\nbody[data-ds-dark-theme] .dshAccount { --dsh-account-surface-tint: rgb(0 0 0 / .3); }\n.dshAccount *, .dshAccount *::before, .dshAccount *::after { box-sizing: border-box; }\n.dshAccount[data-state=closing] { pointer-events: none; }\n.dshAccount__profile { display: grid; grid-template-columns: 32px minmax(0, 1fr) 20px; column-gap: 10px; row-gap: 4px; align-items: center; padding: 14px 16px; }\n.dshAccount__avatar { grid-column: 1; grid-row: 1 / 3; width: 32px; height: 32px; border-radius: 50%; background: var(--dsw-alias-bg-skeleton); overflow: hidden; display: grid; place-items: center; color: var(--dsw-alias-label-tertiary); }\n.dshAccount__avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }\n.dshAccount__name { grid-column: 2; grid-row: 1; font-size: 13px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.dshAccount__contact { grid-column: 2 / 4; grid-row: 2; display: flex; align-items: center; min-width: 0; gap: 6px; }\n.dshAccount__phone { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }\n.dshAccount__icon { display: inline-grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }\n.dshAccount__icon:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }\n.dshAccount__logout { grid-column: 3; grid-row: 1; width: 20px; height: 20px; }\n.dshAccount__logout:hover { color: var(--dsw-alias-state-error-primary, #d74d64); }\n.dshAccount__feedback { width: 18px; height: 18px; }\n.dshAccount__finance { border-top: 1px solid var(--dsw-alias-border-l2); padding: 14px 16px; }\n.dshAccount__balance + .dshAccount__balance { margin-top: 12px; }\n.dshAccount__label { font-size: 11px; line-height: 16px; margin-bottom: 4px; color: var(--dsw-alias-label-secondary); }\n.dshAccount__valueRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-height: 28px; }\n.dshAccount__amounts { min-width: 0; }\n.dshAccount__amount { display: block; height: 28px; font-size: 24px; font-weight: 550; line-height: 28px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.dshAccount__bonus .dshAccount__amount { font-size: 20px; }\n.dshAccount__amount[data-long=true] { font-size: 18px; }\n.dshAccount__bonus .dshAccount__amount[data-long=true] { font-size: 16px; }\n.dshAccount__currency { font-size: .58em; font-weight: 400; color: var(--dsw-alias-label-secondary); margin-right: 2px; }\n.dshAccount__action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: none; height: 28px; min-width: 48px; padding: 0 10px; border: 0; border-radius: 6px; font: inherit; font-size: 11px; line-height: 28px; white-space: nowrap; text-decoration: none; cursor: pointer; }\n.dshAccount__topup { background: var(--dsw-alias-button-primary-fill, #4176e6); color: var(--dsw-alias-label-primary-foreground, #fff); }\n.dshAccount__topup:hover { filter: brightness(.94); }\n.dshAccount__usage { background: transparent; color: var(--dsw-alias-link, #4176e6); padding-left: 7px; padding-right: 0; }\n.dshAccount__usage:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dshAccount :is(button, a):focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #5686fe); outline-offset: 2px; }\n.dshAccount :is(button:disabled, [aria-disabled=true]) { opacity: .5; cursor: default; }\n.dshAccount__unavailable { font-size: 11px; line-height: 28px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }\n.dshAccount__error { margin: 0; padding: 0 16px 12px; font-size: 11px; color: var(--dsw-alias-state-error-primary, #d74d64); }\n.dshAccount__confirmError { color: var(--dsw-alias-state-error-primary, #d74d64); }\n[data-dsh-account-settings-hidden] { display: none !important; }\n";
+  var style_default = ".dshAccountLauncher { position: relative; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }\n.dshAccountLauncher__native { flex: 1; min-width: 0; }\n.dshAccountLauncher[data-collapsed=true] { flex-direction: column; }\n.dshAccountLauncher .dshAccount__settings { width: 36px; height: 36px; }\n.dshUpdateBadge__anchor { position: absolute; inset-inline-end: 4px; top: 50%; transform: translateY(-50%); z-index: 1; display: inline-flex; }\n.dshAccountLauncher[data-collapsed=true] .dshUpdateBadge__anchor { inset-inline-end: 50%; top: 0; transform: translate(50%, -100%); }\n.dshUpdateBadge { display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 32px; padding: 0 2px; border: 0; border-radius: 6px; background: transparent; color: #246541; font: inherit; cursor: pointer; }\n.dshUpdateBadge__pill { position: relative; display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 6px; border: 1px solid #31865735; border-radius: 6px; background: #31865714; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms cubic-bezier(.2, .8, .2, 1); }\n.dshUpdateBadge__content { display: inline-flex; align-items: center; gap: 3px; flex: none; }\n.dshUpdateBadge__ghost { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }\n.dshUpdateBadge__ghost .dshUpdateBadge__spinner { animation: none; }\n.dshUpdateBadge:enabled:is(:hover, :focus-visible) .dshUpdateBadge__pill { transform: var(--dsh-update-badge-hover, translateY(-1px) scale(1.03)); }\n.dshUpdateBadge:enabled:active .dshUpdateBadge__pill { transform: var(--dsh-update-badge-press, scale(.97)); }\n.dshUpdateBadge:hover .dshUpdateBadge__pill { background: #31865728; border-color: #31865760; }\n.dshUpdateBadge:focus-visible { outline: 2px solid var(--dsw-alias-link, #4176e6); outline-offset: 1px; }\n.dshUpdateBadge:disabled { cursor: default; }\n.dshUpdateBadge[data-state=waiting], .dshUpdateBadge[data-state=installing] { color: var(--dsw-alias-label-secondary, #555); }\n.dshUpdateBadge[data-state=waiting] .dshUpdateBadge__pill, .dshUpdateBadge[data-state=installing] .dshUpdateBadge__pill { background: var(--dsw-alias-interactive-bg-hover, #8881); border-color: var(--dsw-alias-border-l2, #8883); }\n.dshUpdateBadge[data-state=error] { color: var(--dsw-alias-state-error-primary, #b33948); }\n.dshUpdateBadge[data-state=error] .dshUpdateBadge__pill { background: #cf435514; border-color: #cf435540; }\n.dshUpdateBadge[data-compact=true] { min-width: 32px; }\n.dshUpdateBadge[data-compact=true] .dshUpdateBadge__pill { width: 24px; height: 24px; justify-content: center; padding: 0; }\n.dshUpdateBadge__spinner { box-sizing: border-box; width: 11px; height: 11px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: dsh-update-badge-spin .85s linear infinite; }\n.dshUpdateBadge__status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }\nbody[data-ds-dark-theme] .dshUpdateBadge[data-state=available] { color: #8bd6aa; }\nbody[data-ds-dark-theme] .dshUpdateBadge[data-state=available] .dshUpdateBadge__pill { background: #73c99718; border-color: #73c99736; }\nbody[data-ds-dark-theme] .dshUpdateBadge[data-state=available]:hover .dshUpdateBadge__pill { background: #73c9972b; border-color: #73c99760; }\n@keyframes dsh-update-badge-spin { to { transform: rotate(360deg); } }\nhtml[data-dsh-desktop-animation=off] .dshUpdateBadge__pill { --dsh-update-badge-hover: none; --dsh-update-badge-press: none; transition: none; }\nhtml[data-dsh-desktop-animation=off] .dshUpdateBadge__spinner { animation: none; }\n@media (prefers-reduced-motion: reduce) {\n  html:not([data-dsh-desktop-animation=on]) .dshUpdateBadge__pill { --dsh-update-badge-hover: none; --dsh-update-badge-press: none; transition: none; }\n  html:not([data-dsh-desktop-animation=on]) .dshUpdateBadge__spinner { animation: none; }\n}\n.dshAccount {\n  --dsh-account-surface-tint: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 30%, transparent);\n  --dsh-surface-overlay: linear-gradient(var(--dsh-account-surface-tint), var(--dsh-account-surface-tint));\n  box-sizing: border-box; position: fixed; z-index: 1000; width: 318px; max-width: calc(100vw - 16px);\n  max-height: calc(100dvh - 16px); overflow: auto; overscroll-behavior: contain;\n  background-color: var(--dsw-alias-bg-base, #fff);\n  background-image: var(--dsh-surface-overlay), linear-gradient(var(--dsw-menu-surface-fill, transparent), var(--dsw-menu-surface-fill, transparent));\n  color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2);\n  border-radius: 12px; box-shadow: var(--dsw-elevation-panel, 0 12px 28px #0003);\n  font-family: inherit; font-size: 13px; line-height: 1.5; outline: none;\n}\nbody[data-ds-dark-theme] .dshAccount { --dsh-account-surface-tint: rgb(0 0 0 / .3); }\n.dshAccount *, .dshAccount *::before, .dshAccount *::after { box-sizing: border-box; }\n.dshAccount[data-state=closing] { pointer-events: none; }\n.dshAccount__profile { display: grid; grid-template-columns: 32px minmax(0, 1fr) 20px; column-gap: 10px; row-gap: 4px; align-items: center; padding: 14px 16px; }\n.dshAccount__avatar { grid-column: 1; grid-row: 1 / 3; width: 32px; height: 32px; border-radius: 50%; background: var(--dsw-alias-bg-skeleton); overflow: hidden; display: grid; place-items: center; color: var(--dsw-alias-label-tertiary); }\n.dshAccount__avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }\n.dshAccount__name { grid-column: 2; grid-row: 1; font-size: 13px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.dshAccount__contact { grid-column: 2 / 4; grid-row: 2; display: flex; align-items: center; min-width: 0; gap: 6px; }\n.dshAccount__phone { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }\n.dshAccount__icon { display: inline-grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }\n.dshAccount__icon:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }\n.dshAccount__logout { grid-column: 3; grid-row: 1; width: 20px; height: 20px; }\n.dshAccount__logout:hover { color: var(--dsw-alias-state-error-primary, #d74d64); }\n.dshAccount__feedback { width: 18px; height: 18px; }\n.dshAccount__finance { border-top: 1px solid var(--dsw-alias-border-l2); padding: 14px 16px; }\n.dshAccount__balance + .dshAccount__balance { margin-top: 12px; }\n.dshAccount__label { font-size: 11px; line-height: 16px; margin-bottom: 4px; color: var(--dsw-alias-label-secondary); }\n.dshAccount__valueRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; min-height: 28px; }\n.dshAccount__amounts { min-width: 0; }\n.dshAccount__amount { display: block; height: 28px; font-size: 24px; font-weight: 550; line-height: 28px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.dshAccount__bonus .dshAccount__amount { font-size: 20px; }\n.dshAccount__amount[data-long=true] { font-size: 18px; }\n.dshAccount__bonus .dshAccount__amount[data-long=true] { font-size: 16px; }\n.dshAccount__currency { font-size: .58em; font-weight: 400; color: var(--dsw-alias-label-secondary); margin-right: 2px; }\n.dshAccount__action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex: none; height: 28px; min-width: 48px; padding: 0 10px; border: 0; border-radius: 6px; font: inherit; font-size: 11px; line-height: 28px; white-space: nowrap; text-decoration: none; cursor: pointer; }\n.dshAccount__topup { background: var(--dsw-alias-button-primary-fill, #4176e6); color: var(--dsw-alias-label-primary-foreground, #fff); }\n.dshAccount__topup:hover { filter: brightness(.94); }\n.dshAccount__usage { background: transparent; color: var(--dsw-alias-link, #4176e6); padding-left: 7px; padding-right: 0; }\n.dshAccount__usage:hover { background: var(--dsw-alias-interactive-bg-hover); }\n.dshAccount :is(button, a):focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #5686fe); outline-offset: 2px; }\n.dshAccount :is(button:disabled, [aria-disabled=true]) { opacity: .5; cursor: default; }\n.dshAccount__unavailable { font-size: 11px; line-height: 28px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }\n.dshAccount__error { margin: 0; padding: 0 16px 12px; font-size: 11px; color: var(--dsw-alias-state-error-primary, #d74d64); }\n.dshAccount__confirmError { color: var(--dsw-alias-state-error-primary, #d74d64); }\n[data-dsh-account-settings-hidden] { display: none !important; }\n";
 
   // dsh-plugin/account-popover/client-entry.mjs
   window.__ModuleLoader__.load({ id: "@dsh-desktop/account-popover", factory(require2) {

@@ -4,6 +4,7 @@
  * so an already running production app cannot consume the test launch.
  * Run: node tools/dsh-update-smoke.mjs
  */
+throw Error('Legacy global update lifecycle is retired. Use npm run test:runtime-candidate; real-data switching remains gated by the migration contract.')
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'

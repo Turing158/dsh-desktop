@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-runtime-ready"
+description = "Acknowledge the current managed runtime after the desktop UI mounts."
+commands.allow = ["desktop_runtime_ready"]

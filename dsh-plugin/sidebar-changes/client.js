@@ -287,6 +287,14 @@
         }
         return sides.length ? { sides } : null;
       },
+      preflightRestore(saved) {
+        for (const side of saved.sides) {
+          if (!stores(ctx).some((value) => value.sessionId === side.sessionId)) throw Error("snapshot-session-missing");
+          for (const tab of side.tabs) {
+            if (!parseChangeAddress(tab.address) && !tab.address.startsWith(PREFIX) || !VIEWS.includes(tab.state.source)) throw Error("snapshot-panel-unsupported");
+          }
+        }
+      },
       async restore(saved) {
         for (const side of saved.sides) {
           const store = stores(ctx).find((value) => value.sessionId === side.sessionId)?.store;
@@ -1601,6 +1609,102 @@
     };
   }
 
+  // dsh-plugin/compatibility/selectors.mjs
+  function selectedSession(ctx) {
+    const list = ctx.sessions?.list?.getSnapshot?.();
+    if (!list?.byId) throw Error("session-selection-contract");
+    if ("current" in list) return list.current || null;
+    const selected = Object.entries(list.byId).filter(([, row]) => (row.retainedBy?.mainView ?? 0) > 0);
+    if (selected.length > 1) throw Error("session-selection-ambiguous");
+    return selected[0]?.[0] || null;
+  }
+  function changesContract(ctx) {
+    return [
+      "getCapabilities",
+      "listChanges",
+      "getFileDiff",
+      "getFileContext",
+      "listFileOperations",
+      "getOperationDiff",
+      "subscribeChanges",
+      "listCommits",
+      "getCommitDetails",
+      "runGitAction",
+      "getGitContext",
+      "listGitBranches",
+      "switchGitBranch",
+      "generateCommitMessage",
+      "getGitOperation"
+    ].every((key) => typeof ctx.remote?.desktopChanges?.[key] === "function") && ["getSnapshot", "subscribe"].every((key) => typeof ctx.sessions?.list?.[key] === "function");
+  }
+  function changesObservation(ctx, capability, reason = null) {
+    const base = { featureId: "session-changes-git", implementation: "desktop", pluginState: "enabled", evidence: ["changes-service-selector"] };
+    if (!changesContract(ctx)) return { ...base, availability: "unavailable", reasonCodes: ["changes-contract-unavailable"] };
+    if (reason) return { ...base, availability: "unknown", reasonCodes: [reason] };
+    if (!capability || typeof capability.workspaceRoot !== "string" || !capability.workspaceRoot || typeof capability.endpointId !== "string" || !["session", "working", "staged"].every((source) => capability.supportedSources?.includes(source)) || !capability.supportedViews?.includes("history") || capability.gitContextVersion !== 1 || typeof capability.recordingCoverage !== "string" || !["available", "none", "missing", "error"].includes(capability.gitAvailability?.status)) {
+      return { ...base, availability: "unknown", reasonCodes: ["changes-response-unrecognized"] };
+    }
+    const codes = ["changes-recording-coverage-limited"];
+    const git = capability.gitAvailability.status;
+    if (git !== "available") codes.push({ "none": "changes-workspace-not-git", "missing": "changes-git-missing", "error": "changes-git-unavailable" }[git]);
+    return { ...base, availability: "limited", reasonCodes: codes, evidence: [...base.evidence, "workspace-git-selector"] };
+  }
+  function watchChanges(ctx, reporter, events = null) {
+    let disposed = false, request, selected;
+    const select = async () => {
+      request?.abort();
+      if (!changesContract(ctx)) return changesObservation(ctx);
+      let id;
+      try {
+        id = selectedSession(ctx);
+      } catch {
+        return changesObservation(ctx, null, "changes-session-ambiguous");
+      }
+      if (!id) return changesObservation(ctx, null, "changes-no-current-session");
+      const own = new AbortController();
+      request = own;
+      const cancellation = new Promise((_, reject) => own.signal.addEventListener("abort", () => reject(Error("changes-query-interrupted")), { once: true }));
+      const timeout = setTimeout(() => own.abort(), 16e3);
+      try {
+        const result = await Promise.race([ctx.remote.desktopChanges.getCapabilities(id, own.signal), cancellation]);
+        if (disposed || own.signal.aborted || selectedSession(ctx) !== id) return changesObservation(ctx, null, "changes-query-interrupted");
+        return result?.ok ? changesObservation(ctx, result.value) : changesObservation(ctx, null, "changes-query-failed");
+      } catch {
+        return changesObservation(ctx, null, "changes-query-failed");
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+    const off = reporter?.watch("session-changes-git", select);
+    const changed = () => reporter?.recheck("session-changes-git");
+    const sessionChanged = () => {
+      let next;
+      try {
+        next = selectedSession(ctx);
+      } catch {
+        next = "ambiguous";
+      }
+      if (next !== selected) {
+        selected = next;
+        changed();
+      }
+    };
+    try {
+      selected = selectedSession(ctx);
+    } catch {
+      selected = "ambiguous";
+    }
+    const offSession = ctx.sessions?.list?.subscribe?.(sessionChanged);
+    events?.addEventListener("dsh-desktop:git-changed", changed);
+    return () => {
+      disposed = true;
+      request?.abort();
+      offSession?.();
+      off?.();
+      events?.removeEventListener("dsh-desktop:git-changed", changed);
+    };
+  }
+
   // dsh-plugin/sidebar-changes/client-entry.mjs
   var ID = "@dsh-desktop/sidebar-changes";
   var KIND = "desktop-changes";
@@ -1709,6 +1813,7 @@
       });
     }
     async function call(ctx, method, ...args) {
+      if (!changesContract(ctx)) throw Error("changes-contract-unavailable");
       const result = await ctx.remote.desktopChanges[method](...args);
       if (!result.ok) throw result.error;
       return result.value;
@@ -2128,6 +2233,8 @@
       );
     }
     function installUI(ctx) {
+      const offCapability = watchChanges(ctx, window.__DSH_CAPABILITIES__, window);
+      if (!changesContract(ctx)) return offCapability;
       const states = /* @__PURE__ */ new Map(), addresses = /* @__PURE__ */ new WeakMap();
       function Body(props) {
         useLocale(React);
@@ -2174,6 +2281,7 @@
       const provider = createStateProvider(ctx, states);
       const offState = window.__DSH_UI_STATE__?.registerProvider("desktop-changes", provider);
       return () => {
+        offCapability();
         observer.disconnect();
         document.removeEventListener("dsh-desktop:ui-mode", sync);
         offType?.();

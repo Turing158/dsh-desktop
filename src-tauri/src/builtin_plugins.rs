@@ -46,8 +46,8 @@ mod tests {
                 std::fs::write(&file, serde_json::to_vec(&serde_json::json!({"version":1,"enabled":enabled})).unwrap()).unwrap();
                 let patch = boot_patch(&file).unwrap();
                 let rows: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(patch.path()).unwrap()).unwrap();
-                assert_eq!(rows.len(), 10);
-                for id in ["desktop-ui", "desktop-appearance"] {
+                assert_eq!(rows.len(), 12);
+                for id in ["desktop-ui", "desktop-appearance", "desktop-account-popover"] {
                     assert_eq!(rows.iter().find(|row| row["id"] == id).unwrap()["disabled"], overlay == Some(false));
                 }
                 for id in ["desktop-title-bar", "desktop-ui-state", "desktop-remote-control", "desktop-i18n", "desktop-session-links"] {

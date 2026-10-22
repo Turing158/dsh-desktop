@@ -1,4 +1,12 @@
 (() => {
+  // dsh-plugin/compatibility/selectors.mjs
+  function sessionNavigationContract(ctx) {
+    return typeof ctx?.sessions?.list?.getSnapshot === "function" && typeof ctx?.uiWorkspace?.openSession === "function";
+  }
+  function sessionLinksContract(ctx) {
+    return sessionNavigationContract(ctx) && ["entries", "inject", "register", "subscribe"].every((key) => typeof ctx?.slots?.[key] === "function");
+  }
+
   // dsh-plugin/session-links/links.mjs
   function parseSessionLink(input) {
     if (typeof input !== "string") return null;
@@ -36,9 +44,10 @@
     return [...found.values()];
   }
   async function openSessionLink(ctx, link) {
+    if (!sessionNavigationContract(ctx)) throw Error("session-links-contract-unavailable");
     const id = parseSessionLink(link);
     if (!id) throw Error("invalid-session-link");
-    if (!ctx.sessions.list.getSnapshot().byId[id]) throw Error("deep-link-session-missing");
+    if (!ctx.sessions.list.getSnapshot()?.byId?.[id]) throw Error("deep-link-session-missing");
     await ctx.uiWorkspace.openSession(id);
   }
 
@@ -123,8 +132,9 @@
     const React = require2("react"), h = React.createElement;
     return { inject: ["slots", "sessions", "uiWorkspace"], apply(ctx) {
       const slot = "conversation.chat.node";
-      if (typeof ctx.slots.entries !== "function") return;
-      ctx.slots.inject(slot, () => {
+      const offCapability = window.__DSH_CAPABILITIES__?.sessionLinks(ctx);
+      if (!sessionLinksContract(ctx)) return offCapability;
+      const offSlot = ctx.slots.inject(slot, () => {
         const mounted = /* @__PURE__ */ new Map(), wrappers = /* @__PURE__ */ new Set();
         let syncing = false;
         function sync() {
@@ -194,6 +204,10 @@
           wrappers.clear();
         };
       });
+      return () => {
+        offSlot?.();
+        offCapability?.();
+      };
     } };
   } });
 })();

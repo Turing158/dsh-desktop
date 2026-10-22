@@ -251,6 +251,23 @@ var React = require('react')
       { id: 'dark', get label() { return t('深色') } },
     ]
 
+    var COLOR_SCHEME_ATTRIBUTE = 'data-dsh-color-scheme'
+    var COLOR_SCHEME_OPTIONS = [
+      { id: 'default', get label() { return t('默认') }, swatch: '#4176E6' },
+      { id: 'blue', get label() { return t('经典蓝') }, swatch: '#315FD5' },
+      { id: 'teal', get label() { return t('雾海青') }, swatch: '#087366' },
+      { id: 'moss', get label() { return t('苔原绿') }, swatch: '#496F42' },
+      { id: 'violet', get label() { return t('暮光紫') }, swatch: '#7354AC' },
+      { id: 'amber', get label() { return t('纸墨琥珀') }, swatch: '#855820' },
+      { id: 'rose', get label() { return t('玫瑰灰') }, swatch: '#9B435E' },
+    ]
+    function colorScheme(value) {
+      return COLOR_SCHEME_OPTIONS.some(function (option) { return option.id === value }) ? value : 'default'
+    }
+    function applyColorScheme(value) {
+      document.documentElement.setAttribute(COLOR_SCHEME_ATTRIBUTE, colorScheme(value))
+    }
+
     /** The animation preference this overlay owns. */
     var ANIMATION_OPTIONS = [
       { id: 'system', get label() { return t('跟随系统') } },
@@ -760,6 +777,7 @@ var React = require('react')
             // is that class; it is deliberately not an app class name, so the rule
             // in `theme.css` can never collide with a component's own styling.
             className: 'dshAppearance__option',
+            'data-color-scheme': props.colorSchemes ? option.id : undefined,
             'aria-pressed': isSelected ? 'true' : 'false',
             onClick: function () {
               props.onChange(option.id)
@@ -771,8 +789,8 @@ var React = require('react')
               fontSize: '14px',
               lineHeight: '22px',
               color: 'var(--dsw-alias-label-primary)',
-              background: isSelected ? 'var(--dsw-alias-bg-module-platform)' : 'transparent',
-              border: isSelected
+              background: isSelected ? 'var(--dsw-alias-interactive-bg-active)' : 'transparent',
+              border: isSelected && props.colorSchemes ? '1px solid var(--dsw-alias-link)' : isSelected
                 ? '1px solid var(--dsw-alias-border-l4)'
                 : '0.5px solid var(--dsw-alias-border-l4)',
               borderRadius: '12px',
@@ -783,6 +801,7 @@ var React = require('react')
               flex: '0 0 auto',
             },
           },
+          option.swatch ? h('span', { 'aria-hidden': 'true', style: { display: 'inline-block', width: '12px', height: '12px', borderRadius: '50%', background: option.swatch, marginRight: '8px', verticalAlign: 'middle' } }) : null,
           option.label,
         )
       })
@@ -1188,6 +1207,16 @@ var React = require('react')
             },
           }),
           h(OptionGroup, {
+            title: t('配色方案'),
+            note: t('默认保留原有配色；其他方案同时调整背景、侧栏和强调色，并随浅色或深色主题切换。'),
+            options: COLOR_SCHEME_OPTIONS,
+            value: state.colorScheme,
+            onChange: deps.setColorScheme,
+            compact: true,
+            colorSchemes: true,
+          }),
+          state.colorSchemeError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.colorSchemeError) : null,
+          h(OptionGroup, {
             title: t('输入框/面板效果'),
             note: t('应用于输入框和账号面板。') + COMPOSER_MATERIAL_NOTES[state.composerMaterial],
             options: COMPOSER_MATERIAL_OPTIONS,
@@ -1467,6 +1496,8 @@ var React = require('react')
         fontSize: readThemeFontSize(first),
         fontSizeOverride: readFontSizeOverride(),
         animation: readAnimation(),
+        colorScheme: colorScheme(loadedSection()?.colorScheme ?? document.documentElement.getAttribute(COLOR_SCHEME_ATTRIBUTE)),
+        colorSchemeError: '',
         reasoningControl: reasoningControl(loadedSection()),
         reasoningControlError: '',
         ...composerSettings(loadedSection()),
@@ -1500,6 +1531,58 @@ var React = require('react')
         }
       }
       ctx.on('theme/change', sync)
+
+      // Upstream canvas consumers read resolved CSS only when theme/change fires.
+      // Publish a fresh snapshot for a palette change without writing ui-theme.
+      ctx.effect(function () {
+        var root = document.documentElement
+        function signature() {
+          return root.getAttribute(MODE_ATTRIBUTE) === VANILLA ? 'vanilla' : root.getAttribute(COLOR_SCHEME_ATTRIBUTE)
+        }
+        var previous = signature()
+        var observer = new MutationObserver(function () {
+          var next = signature()
+          if (next === previous) return
+          previous = next
+          ctx.emit?.('theme/change', Object.assign({}, theme.getTheme()))
+        })
+        observer.observe(root, { attributes: true, attributeFilter: [MODE_ATTRIBUTE, COLOR_SCHEME_ATTRIBUTE] })
+        return function () { observer.disconnect() }
+      }, 'desktop-appearance: notify theme consumers')
+
+      // Serialize writes; older acknowledgements must not replace a newer choice.
+      var colorSchemeVersion = 0, colorSchemePending = false, colorSchemeDisposed = false
+      var colorSchemeQueue = Promise.resolve()
+      function syncColorScheme() {
+        var section = loadedSection()
+        if (colorSchemeDisposed || colorSchemePending || section === undefined) return
+        var next = colorScheme(section.colorScheme)
+        store.update({ colorScheme: next })
+        applyColorScheme(next)
+      }
+      function setColorScheme(next) {
+        if (colorSchemeDisposed || !COLOR_SCHEME_OPTIONS.some(function (option) { return option.id === next })) return
+        var version = ++colorSchemeVersion
+        colorSchemePending = true
+        store.update({ colorScheme: next, colorSchemeError: '' })
+        applyColorScheme(next)
+        colorSchemeQueue = colorSchemeQueue.then(function () {
+          if (!colorSchemeDisposed) return scope.set('colorScheme', next)
+        }).then(checkSaved).catch(function () {
+          if (!colorSchemeDisposed && version === colorSchemeVersion) store.update({ colorSchemeError: t('配色方案保存失败，请重试。') })
+        }).finally(function () {
+          if (colorSchemeDisposed || version !== colorSchemeVersion) return
+          colorSchemePending = false
+          syncColorScheme()
+        })
+        return colorSchemeQueue
+      }
+      applyColorScheme(store.getState().colorScheme)
+      ctx.effect(function () {
+        var off = scope.subscribe(syncColorScheme)
+        syncColorScheme()
+        return function () { colorSchemeDisposed = true; off() }
+      }, 'desktop-appearance: color scheme preference')
 
       var reasoningVersion = 0, reasoningPending = false, reasoningDisposed = false
       var reasoningQueue = Promise.resolve()
@@ -1846,6 +1929,7 @@ var React = require('react')
         setFontSize: setFontSize,
         setAnimation: setAnimation,
         setReasoningControl: setReasoningControl,
+        setColorScheme: setColorScheme,
         setComposerMaterial: setComposerMaterial,
         previewComposerSetting: previewComposerSetting,
         saveComposerSetting: saveComposerSetting,

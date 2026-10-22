@@ -21,7 +21,7 @@ function fixture({ legacy = false, start = true } = {}) {
   const assets = new Map(), scopes = new Map(), cleanups = [], releases = [], revoked = []
   const rows = { a: { id: 'a', retainedBy: {} }, b: { id: 'b', retainedBy: {} } }
   const list = store({ phase: 'ready', ids: Object.keys(rows), byId: rows })
-  let selected, plugin, nextId = 0
+  let selected, plugin, nextId = 0, draftChanges = 0
   const publish = () => list.set({ ...list.getSnapshot(), ids: Object.keys(rows), byId: { ...rows } })
   function releaseAsset(id) {
     const asset = assets.get(id)
@@ -62,7 +62,7 @@ function fixture({ legacy = false, start = true } = {}) {
     },
     effect(fn) { cleanups.push(fn()) },
   }
-  const window = { __ModuleLoader__: { load(value) { plugin = value.factory() } } }
+  const window = { __ModuleLoader__: { load(value) { plugin = value.factory() } }, __DSH_UI_STATE__: { draftsChanged() { draftChanges++ } } }
   window.top = window
   vm.runInNewContext(source, { window, queueMicrotask })
   const open = id => {
@@ -86,7 +86,7 @@ function fixture({ legacy = false, start = true } = {}) {
   }
   open('a')
   if (start) plugin.apply(ctx)
-  return { ctx, rows, list, scopes, assets, releases, revoked, open, add, remove, releaseAsset,
+  return { ctx, rows, list, scopes, assets, releases, revoked, open, add, remove, releaseAsset, get draftChanges() { return draftChanges },
     start: () => plugin.apply(ctx), dispose: () => cleanups.reverse().forEach(fn => fn()),
     delete(id) { delete rows[id]; publish() } }
 }
@@ -176,12 +176,17 @@ test('deleting a session and disposing the plugin release references and subscri
   assert.deepEqual(f.releases.filter(value => value.source === 'desktopDraftAttachments').map(value => value.id), ['a', 'b'])
 })
 
-test('legacy sessions without retain keep their original lifecycle', () => {
+test('legacy sessions watch text and session changes while retaining their original lifecycle', () => {
   const f = fixture({ legacy: true }), asset = f.add('a')
   const a = f.scopes.get('a')
+  const before=f.draftChanges
+  a.input.state.set({ ...a.input.state.getSnapshot(),draft:'legacy unsent text' })
+  assert.equal(f.draftChanges,before+1)
+  a.session.set({pendingSubmissions:[]});assert.equal(f.draftChanges,before+2)
   f.open('b')
   assert.equal(f.open('a'), a)
   assert.equal(f.assets.get(asset.id), asset)
-  assert.equal(f.list.listeners, 0)
+  assert.equal(f.rows.a.retainedBy.desktopDraftAttachments,undefined)
   f.dispose()
+  assert.equal(f.list.listeners,0);assert.equal(a.input.state.listeners,0);assert.equal(a.session.listeners,0)
 })

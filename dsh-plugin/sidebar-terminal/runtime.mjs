@@ -109,7 +109,7 @@ const tone = (state, condition) => condition ? 'bad' : TONES[state] || 'busy'
  *
  * What Codex does NOT bring stays where it was: the background and default
  * foreground still come from the surface, and the background is the app's own
- * two themes by design - the one thing this style deliberately does not copy.
+ * selected palette by design - the one thing this style deliberately does not copy.
  */
 const CODEX_ACCENT = { dark: '#63a8f8', light: '#1c64c8' }
 const CODEX_SELECTION = { dark: '#63a8f8', light: '#a4cdfb', ink: '#00002e' }
@@ -412,7 +412,7 @@ function createView(key, open, refresh, emit) {
     if (!element.isConnected || !surface) return
     // xterm needs resolved colours; reading its container also matches the
     // padding and unused space below the last full row in either UI mode.
-    // The surface keeps the background (the app's own two themes) and the
+    // The surface keeps the background (the app's selected palette) and the
     // default foreground; Codex's terminal style supplies the rest - see the
     // CODEX_* / CATPPUCCIN_* tables above.
     const style = getComputedStyle(surface)
@@ -612,7 +612,7 @@ function createView(key, open, refresh, emit) {
   }, 3000)
   const observer = new ResizeObserver(fitSize)
   const themes = new MutationObserver(theme)
-  themes.observe(document.documentElement, { attributes: true, attributeFilter: ['class','data-theme','style','data-dsh-ui'] })
+  themes.observe(document.documentElement, { attributes: true, attributeFilter: ['class','data-theme','style','data-dsh-ui','data-dsh-color-scheme'] })
   themes.observe(document.body, { attributes: true, attributeFilter: ['class','data-theme','data-ds-dark-theme','style'] })
   element.addEventListener('pointerdown', () => { focused = true; acquire() })
   element.addEventListener('focusin', () => { focused = true; window.__DSH_TERMINAL_EDIT__ = { copy, paste, hasSelection: () => term.hasSelection(), element }; acquire() })

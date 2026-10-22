@@ -66,6 +66,9 @@
     // A text-only TreeWalker loses those offsets (and offsets after <br>).
     const points = []
     let length = 0
+    // An empty Lexical root has no paragraph until the first input. Its only
+    // valid DOM position is the contenteditable root at offset zero.
+    if (!root.childNodes.length) points[0] = [root, 0]
     const walk = node => {
       if (node.nodeType === 3) {
         for (let i = 0; i <= node.textContent.length; i++) points[length + i] ??= [node, i]
@@ -181,7 +184,7 @@
     }
     function dispose() { for (const reference of retainedDrafts.values()) reference.release(); retainedDrafts.clear() }
     function workspaceFor(id) { return ctx.workspaces.list.getSnapshot().items.find(w => w.sessionIds.includes(id))?.workspaceId || null }
-    function validateFormCoverage(roots, providers, remoteApply = false) {
+    function validateFormCoverage(roots, providers, remoteApply = false, configurationRestore = false) {
       const owned = node => [...providers.values()].some(provider => provider.owns?.(node))
       // Exit animations leave inert DOM clones after React closes a surface.
       // They paint the old UI but no longer own any form state to preserve.
@@ -193,37 +196,41 @@
         // Plugin switches are committed before restart can be requested. Only
         // exempt the settings shell; the editable-field audit below still runs.
         if (remoteApply && hasLive(dialog, '.dshPlugins') && !hasLive(dialog, '[role=alertdialog]')) continue
+        if (remoteApply && configurationRestore && hasLive(dialog, '[data-dsh-configuration-restore]') && !hasLive(dialog, '[role=alertdialog]')) continue
         if (!owned(dialog)) fail('snapshot-form-unsupported')
       }
       for (const field of document.querySelectorAll('input:not([type=hidden]),textarea,select,[contenteditable=true]')) {
         if (!live(field)) continue
         if (remoteApply && field.closest('.dshRemote')) continue
+        // Only reviewed, ephemeral selection/confirmation checkboxes belong to
+        // this action. Passwords and unrelated settings still require coverage.
+        if (remoteApply && configurationRestore && field.type === 'checkbox' && field.closest('[data-dsh-configuration-restore]')) continue
         if (roots.some(root => root && (root === field || root.contains(field))) || owned(field.closest('[role=dialog]') || field)) continue
         const visible = field.checkVisibility ? field.checkVisibility({ opacityProperty: true, visibilityProperty: true }) : field.getClientRects?.().length > 0
         const visibleEditable = field.type !== 'file' && !field.readOnly && !field.disabled && visible
         if (visibleEditable || field.files?.length || field.value || field.textContent || field.checked || field.tagName === 'SELECT') fail('snapshot-form-unsupported')
       }
     }
-    async function capture({ signal, frontendVersion, providers, remoteApply = false }) {
+    async function capture({ signal, frontendVersion, providers, remoteApply = false, configurationRestore = false, draftsOnly = false }) {
       const terminals = remoteApply ? providers.get('desktop-terminal') : undefined
-      if (!terminals && window.__DSH_TERMINAL_IDENTITY__ && (await window.__TAURI__.core.invoke('terminal_list', { identity: window.__DSH_TERMINAL_IDENTITY__ })).length) fail('snapshot-terminal-active')
+      if (!draftsOnly && !terminals && window.__DSH_TERMINAL_IDENTITY__ && (await window.__TAURI__.core.invoke('terminal_list', { identity: window.__DSH_TERMINAL_IDENTITY__ })).length) fail('snapshot-terminal-active')
       validateCapabilities()
       frontendVersion = versionOf(frontendVersion)
       const list = ctx.sessions.list.getSnapshot()
       if (list.phase !== 'ready' || ctx.workspaces.list.getSnapshot().phase !== 'ready') fail('snapshot-page-not-ready')
       const currentId = currentSessionId(list)
-      if (list.currentAddress || (currentId && ctx.sessions.subagentAddress?.(currentId))) fail('snapshot-panel-unsupported')
+      if (!draftsOnly && (list.currentAddress || (currentId && ctx.sessions.subagentAddress?.(currentId)))) fail('snapshot-panel-unsupported')
       if (!currentId && !canClearPage()) fail('snapshot-navigation-unsupported')
       const state = layoutStore().getSnapshot()
       const changes = providers.get('desktop-changes')
       const files = providers.get('desktop-file-editor')
-      if ((state.layoutInfo.rightbarShown && !terminals?.ownsSidebar() && !changes?.ownsSidebar() && !files?.ownsSidebar()) || (state.panelInfo.activePanelId && state.panelInfo.activePanelId !== 'conversation')) fail('snapshot-panel-unsupported')
+      if (!draftsOnly && ((state.layoutInfo.rightbarShown && !terminals?.ownsSidebar() && !changes?.ownsSidebar() && !files?.ownsSidebar()) || (state.panelInfo.activePanelId && state.panelInfo.activePanelId !== 'conversation'))) fail('snapshot-panel-unsupported')
       const dialogs = []
-      for (const [id, provider] of providers) {
+      for (const [id, provider] of draftsOnly ? [] : providers) {
         const data = await provider.capture(); check(signal)
         if (data !== null) dialogs.push({ id, version: provider.version, data })
       }
-      const drafts = [], assets = [], scrolls = [], roots = []
+      const drafts = [], assets = [], scrolls = [], roots = [], revisions = []
       const ids = new Set([...Object.keys(list.byId), ...(currentId ? [currentId] : [])])
       // Only this documented namespace: no copying of arbitrary browser storage.
       for (let index = 0; index < localStorage.length; index++) {
@@ -245,7 +252,7 @@
         const semantic = content.references.length || content.command ? content : null
         if (current && current.draft !== text) fail('snapshot-editor-unsupported')
         const view = persisted.view || null
-        if (view && view !== 'chat') fail('snapshot-panel-unsupported')
+        if (!draftsOnly && view && view !== 'chat') fail('snapshot-panel-unsupported')
         if (input && !editable(input, semantic)) fail('snapshot-input-busy')
         if (current?.queue?.length) fail('snapshot-input-busy')
         if (current?.occurrences?.length && !supportsSemantic(input)) fail('snapshot-editor-unsupported')
@@ -256,6 +263,7 @@
         if (input && typeof input.caretSpan !== 'function') fail('snapshot-editor-unsupported')
         if (editor?.isComposing()) fail('snapshot-input-busy')
         if (editor) roots.push(editor.getRootElement())
+        revisions.push({id,input,value:canonical({content,attachmentIds:current?.attachmentIds || [],revision:current?.draftRev,updatedAt:list.byId[id]?.updatedAt})})
         const attachmentKeys = []
         if (current?.attachmentIds.length && typeof ctx.sessions.open !== 'function' && typeof ctx.sessions.retain !== 'function') fail('snapshot-adapter-unsupported')
         const attachments = ctx.conversation.resolveDraftAttachments(current?.attachmentIds || [])
@@ -270,12 +278,13 @@
           assets.push({ key: attachment.id, name: file.name, mediaType: file.type, lastModified: file.lastModified, size: file.size, data })
           attachmentKeys.push(attachment.id)
         }
-        if (input || text || id === currentId) {
+        if (draftsOnly ? text || semantic || attachmentKeys.length : input || text || id === currentId) {
           if (!list.byId[id]) fail('snapshot-session-missing')
-          const selection = input ? { ...input.caretSpan(), focused: Boolean(editor.getRootElement()?.contains(document.activeElement)) } : null
-          const serialized = editor ? editor.getEditorState().toJSON() : null
-          drafts.push({ sessionId: id, text, ...(semantic ? { semantic } : {}), editor: serialized?.root?.children?.length === 0 ? null : serialized, selection, attachmentKeys, revision: current?.draftRev || 0, view })
-          if (input) {
+          const selection = !draftsOnly && input ? { ...input.caretSpan(), focused: Boolean(editor.getRootElement()?.contains(document.activeElement)) } : null
+          const serialized = !draftsOnly && editor ? editor.getEditorState().toJSON() : null
+          drafts.push({ sessionId: id, text, ...(semantic ? { semantic } : {}), editor: serialized?.root?.children?.length === 0 ? null : serialized, selection, attachmentKeys, revision: current?.draftRev || 0, view:draftsOnly ? null : view,
+            ...(Number.isFinite(list.byId[id].updatedAt) ? { sessionUpdatedAt: list.byId[id].updatedAt } : {}) })
+          if (input && !draftsOnly) {
             const saved = id === currentId ? getScroll(id) : null
             const held = chatFace(id).chatScroll.read()
             if (saved) scrolls.push(saved)
@@ -283,10 +292,23 @@
           }
         }
       }
-      validateFormCoverage(roots, providers, remoteApply)
+      if (!draftsOnly) validateFormCoverage(roots, providers, remoteApply, configurationRestore)
+      if (draftsOnly) {
+        const latest=ctx.sessions.list.getSnapshot()
+        const latestIds=new Set(Object.keys(latest.byId))
+        for(let index=0;index<localStorage.length;index++) {
+          const key=localStorage.key(index);if(key?.startsWith('dsh.conversation.'))latestIds.add(key.slice('dsh.conversation.'.length))
+        }
+        if(canonical([...ids].sort())!==canonical([...latestIds].sort()))fail('snapshot-draft-changed')
+        for (const revision of revisions) {
+          const input=inputFor(revision.id), current=input?.state.getSnapshot(), persisted=readPersisted(revision.id)
+          const content=semanticDraft(supportsSemantic(input) ? input.draftSnapshot : current?.draft ?? persisted.draft)
+          if (input!==revision.input || revision.value!==canonical({content,attachmentIds:current?.attachmentIds || [],revision:current?.draftRev,updatedAt:latest.byId[revision.id]?.updatedAt})) fail('snapshot-draft-changed')
+        }
+      }
       check(signal)
-      return { schemaVersion: 1, frontendVersion, page: { kind: 'dsh', route: location.pathname + location.hash, sessionId: currentId, workspaceId: workspaceFor(currentId) },
-        drafts, assets, scrolls, dialogs, layout: { sidebar: state.layoutInfo.sidebar, narrowExpanded: state.layoutInfo.narrowExpanded, rightbar: state.layoutInfo.rightbar, panel: state.panelInfo.activePanelId },
+      return { schemaVersion: 1, frontendVersion, page: { kind: 'dsh', route: location.pathname + location.hash, sessionId: draftsOnly ? null : currentId, workspaceId: draftsOnly ? null : workspaceFor(currentId) },
+        drafts, assets, scrolls, dialogs, layout: draftsOnly ? {sidebar:0,narrowExpanded:false,rightbar:null,panel:null} : { sidebar: state.layoutInfo.sidebar, narrowExpanded: state.layoutInfo.narrowExpanded, rightbar: state.layoutInfo.rightbar, panel: state.panelInfo.activePanelId },
         capabilities: required, blocked: [], sessionStorage: {} }
     }
 
@@ -297,13 +319,72 @@
       if (frontendChanged && snapshot.restoreFrontendVersion !== versionOf(frontendVersion)) fail('snapshot-adapter-version')
       if (payload.schemaVersion !== 1) fail('snapshot-schema-unsupported')
       await wait(() => ctx.sessions.list.getSnapshot().phase === 'ready' && ctx.workspaces.list.getSnapshot().phase === 'ready', signal, 'snapshot-page-not-ready')
+      if (snapshot.profileSwitches?.length) {
+        const service = () => ctx.get?.('remote.desktopPlugins') || ctx.remote?.desktopPlugins
+        await wait(() => typeof service()?.status === 'function', signal, 'backup-profile-verify')
+        const deadline=Date.now()+10000
+        for (;;) {
+          check(signal)
+          const reply=await service().status();check(signal)
+          const rows=reply?.ok ? reply.value?.plugins : null
+          if (Array.isArray(rows) && snapshot.profileSwitches.every(intent => {
+            const matches=rows.filter(row=>row.patchId===intent.patchId && row.moduleName===intent.moduleName),row=matches[0]
+            return matches.length===1 && !row.readOnlyReason && row.running===intent.enabled
+              && row.phase===(intent.enabled?'active':'disabled') && row.application==='applied'
+          })) break
+          if (Date.now()>=deadline) fail('backup-profile-verify')
+          await new Promise(resolve=>setTimeout(resolve,100))
+        }
+      }
       const list = ctx.sessions.list.getSnapshot()
+      const originalPage = snapshot.draftsOnly ? currentSessionId(list) : null
+      const originalLayout = snapshot.draftsOnly ? clone(layoutStore().getSnapshot()) : null
       if (payload.page.sessionId && !list.byId[payload.page.sessionId]) fail('snapshot-session-missing')
       if (payload.page.workspaceId && !ctx.workspaces.list.getSnapshot().items.some(w => w.workspaceId === payload.page.workspaceId)) fail('snapshot-workspace-missing')
       for (const draft of payload.drafts) if (!list.byId[draft.sessionId]) fail('snapshot-session-missing')
       if (!payload.page.sessionId && !canClearPage()) fail('snapshot-navigation-unsupported')
       for (const draft of payload.drafts) if (draft.semantic != null && semanticDraft(draft.semantic).text !== draft.text) fail('snapshot-editor-unsupported')
       for (const dialog of payload.dialogs) await wait(() => providers.get(dialog.id)?.version === dialog.version, signal, 'snapshot-form-unsupported')
+      if (snapshot.coldRecovery) {
+        for (const dialog of payload.dialogs) {
+          const provider = providers.get(dialog.id)
+          if (provider.preflightRestore) await provider.preflightRestore(clone(dialog.data), { signal })
+          else fail('snapshot-provider-preflight')
+          check(signal)
+        }
+        // Inspect every destination before changing any draft. Local draft
+        // revisions reset on a new document; durable session timestamps guard
+        // sends/removals, while content and explicit empty storage guard edits.
+        for (const draft of payload.drafts) {
+          check(signal)
+          const persisted = readPersisted(draft.sessionId)
+          const before = inputFor(draft.sessionId)
+          const previous = semanticDraft(supportsSemantic(before) ? before.draftSnapshot : before?.state.getSnapshot().draft ?? persisted.draft)
+          const wanted = semanticDraft(draft.semantic ?? draft.text)
+          if (canonical(previous) !== canonical(wanted) && (previous.text || previous.references.length || previous.command
+            || Object.hasOwn(persisted, 'draft'))) fail('snapshot-draft-conflict')
+          if ((draft.text || draft.attachmentKeys.length) && (draft.sessionUpdatedAt == null
+            || !Number.isFinite(list.byId[draft.sessionId].updatedAt)
+            || list.byId[draft.sessionId].updatedAt !== draft.sessionUpdatedAt)) fail('snapshot-session-changed')
+          retainDraft(draft.sessionId)
+          openInput(draft.sessionId)
+          await wait(() => Boolean(inputFor(draft.sessionId)), signal, 'snapshot-editor-missing')
+          await frame(); check(signal)
+          const input = inputFor(draft.sessionId), current = input.state.getSnapshot()
+          const actual = semanticDraft(supportsSemantic(input) ? input.draftSnapshot : current.draft)
+          if (canonical(actual) !== canonical(wanted) && (actual.text || actual.references.length || actual.command)) fail('snapshot-draft-conflict')
+          if (current.queue?.length || !editable(input, actual) || input.editor.isComposing()
+            || ctx.sessions.binding(draft.sessionId)?.session.getSnapshot().pendingSubmissions?.length) fail('snapshot-input-busy')
+          for (const attachment of ctx.conversation.resolveDraftAttachments(current.attachmentIds)) {
+            let matched = false
+            for (const key of draft.attachmentKeys) {
+              const asset = payload.assets.find(a => a.key === key)
+              if (asset && await matchesAsset(attachment, asset, signal)) { matched = true; break }
+            }
+            if (!matched) fail('snapshot-attachment-conflict')
+          }
+        }
+      }
       // All target IDs are validated before any writes. No create/send/submit verbs.
       for (const draft of payload.drafts) {
         check(signal)
@@ -369,6 +450,15 @@
         }
       }
       check(signal)
+      if (snapshot.draftsOnly) {
+        if (originalPage) ctx.uiWorkspace.openSession(originalPage); else clearPage()
+        const store=layoutStore(),layout=originalLayout.layoutInfo
+        store.actions.setSidebar(layout.sidebar)
+        if(layout.rightbar!==null)store.actions.setRightbar(layout.rightbar)
+        if(store.getSnapshot().layoutInfo.narrowExpanded!==layout.narrowExpanded)store.actions.toggleSidebar()
+        ctx.layout.selectPanel(originalLayout.panelInfo.activePanelId)
+        return
+      }
       if (payload.page.sessionId) ctx.uiWorkspace.openSession(payload.page.sessionId)
       else clearPage()
       const store = layoutStore()
@@ -434,6 +524,19 @@
       // session and closes the right panel, with no snapshot machinery involved.
       ctx.uiWorkspace.openSession(sessionId)
     }
-    return { capture, restore, openDeepLink, dispose, capabilities: () => required.slice() }
+    function inspectCapabilities() {
+      const observation = {featureId:'ui-recovery',availability:'limited',implementation:'hybrid',pluginState:'enabled',
+        reasonCodes:[window.__DSH_CREATE_DRAFT_CHECKPOINTS__ ? 'recovery-background-checkpoint-limits' : 'recovery-background-checkpoints-pending','ui-recovery-state-preflight-required'],evidence:['ui-snapshot-service-selector']}
+      try {
+        validateCapabilities()
+        if (!canClearPage()) observation.reasonCodes.push('snapshot-navigation-unsupported')
+      } catch (error) {
+        observation.availability = 'unavailable'
+        observation.reasonCodes = ['snapshot-adapter-unsupported','snapshot-layout-unsupported'].includes(error.message)
+          ? [error.message] : ['snapshot-adapter-unsupported']
+      }
+      return observation
+    }
+    return { capture, restore, openDeepLink, dispose, inspectCapabilities, capabilities: () => required.slice() }
   }
 })()

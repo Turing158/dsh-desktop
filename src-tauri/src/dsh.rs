@@ -39,11 +39,13 @@ pub const MIN_NODE_MAJOR: u32 = 22;
 pub const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How the runtime was found, so the UI can explain the situation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DshSource {
     /// Explicit user configuration.
     Configured,
+    /// An immutable dependency tree selected and verified by the desktop host.
+    Managed,
     /// The app's own private install prefix.
     Private,
     /// A pre-existing global npm install.
@@ -51,13 +53,15 @@ pub enum DshSource {
 }
 
 /// A located runtime: what to execute and how it was chosen.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Runtime {
     pub node_exe: PathBuf,
     pub dsh_bin: PathBuf,
     pub source: DshSource,
     /// Version reported by `node bin.js --version`, when it could be read.
     pub version: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub managed: Option<crate::runtime_store::ManagedRuntime>,
 }
 
 /// One parsed line of child stdout.
@@ -69,6 +73,10 @@ pub enum ChildEvent {
     Notify(NotifyPayload),
     /// The app's appearance preference, reported by the UI overlay plugin.
     Theme(ThemeReport),
+    /// Complete live agent activity from the title-bar host, independent of the UI.
+    UpdateActivity(Option<bool>),
+    Capability(crate::compatibility::Observation),
+    Storage(crate::data_inventory::ProviderRoots),
     /// A line of ordinary output, kept for logs and error reporting.
     Log(String),
     /// The child exited with this code.
@@ -130,6 +138,23 @@ pub fn parse_line(line: &str) -> Option<ChildEvent> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("__DSH_CAPABILITY__ ") {
+        if rest.len() > 4096 { return None; }
+        let report: crate::compatibility::Observation = serde_json::from_str(rest).ok()?;
+        return report.valid().then_some(ChildEvent::Capability(report));
+    }
+    if let Some(rest) = trimmed.strip_prefix("__DSH_STORAGE__ ") {
+        if rest.len() > 12_288 { return None; }
+        let report: crate::data_inventory::ProviderRoots = serde_json::from_str(rest).ok()?;
+        return report.valid().then_some(ChildEvent::Storage(report));
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("__DSH_UPDATE_ACTIVITY__ ") {
+        #[derive(serde::Deserialize)]
+        struct Activity { running: Option<bool> }
+        let running = serde_json::from_str::<Activity>(rest).ok().and_then(|report| report.running);
+        return Some(ChildEvent::UpdateActivity(running));
     }
 
     // The notification marker is checked first: a notification body could in
@@ -626,7 +651,7 @@ fn prepare_profile_plugins(runtime: &Runtime, patch_file: &Path, boot_file: &Pat
 
 // Tauri resource paths can carry Windows verbatim prefixes. Node's main-script
 // resolver rejects those even though Rust can open them. Preserve OS strings.
-fn node_script_path(path: &Path) -> PathBuf {
+pub(crate) fn node_script_path(path: &Path) -> PathBuf {
     use std::path::{Component, Prefix};
     let mut components = path.components();
     let Some(Component::Prefix(prefix)) = components.next() else { return path.to_path_buf() };

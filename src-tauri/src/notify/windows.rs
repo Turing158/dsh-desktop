@@ -80,7 +80,11 @@ pub fn register(app_id: &str) -> Result<Registration, String> {
     let _apartment = Apartment::new().map_err(|e| e.to_string())?;
     unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(app_id)) }
         .map_err(|e| format!("设置通知进程身份失败：{e}"))?;
-    let shortcut = programs_dir()
+    #[cfg(debug_assertions)]
+    let isolated = std::env::var_os("DSH_DESKTOP_SMOKE_DIR").map(PathBuf::from);
+    #[cfg(not(debug_assertions))]
+    let isolated: Option<PathBuf> = None;
+    let shortcut = isolated.map(Ok).unwrap_or_else(programs_dir)
         .map_err(|e| e.to_string())?
         .join(SHORTCUT_NAME);
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -221,11 +225,18 @@ impl NotificationService {
         report: impl Fn(DeliveryEvent) + Send + Sync + 'static,
     ) -> Result<Self, String> {
         let (requests, receive) = mpsc::channel::<Request>();
+        let (ready, initialized) = mpsc::channel();
         let report = Arc::new(report);
         let worker = std::thread::Builder::new()
             .name("desktop-notifications".into())
             .spawn(move || {
                 let apartment = Apartment::new().map_err(|e| e.to_string());
+                let startup=apartment.as_ref().map_err(Clone::clone).and_then(|_| {
+                    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(&app_id)).map(|_|()).map_err(|e|e.to_string())
+                });
+                let failed=startup.is_err();
+                let _=ready.send(startup);
+                if failed { return; }
                 let mut pending = Vec::<PendingToast>::new();
                 loop {
                     match receive.recv_timeout(Duration::from_secs(1)) {
@@ -258,6 +269,10 @@ impl NotificationService {
                 }
             })
             .map_err(|e| e.to_string())?;
+        if let Err(error)=initialized.recv().map_err(|e|e.to_string()).and_then(|result|result) {
+            let _=worker.join();
+            return Err(error);
+        }
         Ok(Self {
             requests: Some(requests),
             worker: Some(worker),

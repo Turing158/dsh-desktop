@@ -1,7 +1,37 @@
-.dshAccountLauncher { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.dshAccountLauncher { position: relative; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
 .dshAccountLauncher__native { flex: 1; min-width: 0; }
 .dshAccountLauncher[data-collapsed=true] { flex-direction: column; }
 .dshAccountLauncher .dshAccount__settings { width: 36px; height: 36px; }
+.dshUpdateBadge__anchor { position: absolute; inset-inline-end: 4px; top: 50%; transform: translateY(-50%); z-index: 1; display: inline-flex; }
+.dshAccountLauncher[data-collapsed=true] .dshUpdateBadge__anchor { inset-inline-end: 50%; top: 0; transform: translate(50%, -100%); }
+.dshUpdateBadge { display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 32px; padding: 0 2px; border: 0; border-radius: 6px; background: transparent; color: #246541; font: inherit; cursor: pointer; }
+.dshUpdateBadge__pill { position: relative; display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 6px; border: 1px solid #31865735; border-radius: 6px; background: #31865714; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms cubic-bezier(.2, .8, .2, 1); }
+.dshUpdateBadge__content { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.dshUpdateBadge__ghost { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.dshUpdateBadge__ghost .dshUpdateBadge__spinner { animation: none; }
+.dshUpdateBadge:enabled:is(:hover, :focus-visible) .dshUpdateBadge__pill { transform: var(--dsh-update-badge-hover, translateY(-1px) scale(1.03)); }
+.dshUpdateBadge:enabled:active .dshUpdateBadge__pill { transform: var(--dsh-update-badge-press, scale(.97)); }
+.dshUpdateBadge:hover .dshUpdateBadge__pill { background: #31865728; border-color: #31865760; }
+.dshUpdateBadge:focus-visible { outline: 2px solid var(--dsw-alias-link, #4176e6); outline-offset: 1px; }
+.dshUpdateBadge:disabled { cursor: default; }
+.dshUpdateBadge[data-state=waiting], .dshUpdateBadge[data-state=installing] { color: var(--dsw-alias-label-secondary, #555); }
+.dshUpdateBadge[data-state=waiting] .dshUpdateBadge__pill, .dshUpdateBadge[data-state=installing] .dshUpdateBadge__pill { background: var(--dsw-alias-interactive-bg-hover, #8881); border-color: var(--dsw-alias-border-l2, #8883); }
+.dshUpdateBadge[data-state=error] { color: var(--dsw-alias-state-error-primary, #b33948); }
+.dshUpdateBadge[data-state=error] .dshUpdateBadge__pill { background: #cf435514; border-color: #cf435540; }
+.dshUpdateBadge[data-compact=true] { min-width: 32px; }
+.dshUpdateBadge[data-compact=true] .dshUpdateBadge__pill { width: 24px; height: 24px; justify-content: center; padding: 0; }
+.dshUpdateBadge__spinner { box-sizing: border-box; width: 11px; height: 11px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: dsh-update-badge-spin .85s linear infinite; }
+.dshUpdateBadge__status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+body[data-ds-dark-theme] .dshUpdateBadge[data-state=available] { color: #8bd6aa; }
+body[data-ds-dark-theme] .dshUpdateBadge[data-state=available] .dshUpdateBadge__pill { background: #73c99718; border-color: #73c99736; }
+body[data-ds-dark-theme] .dshUpdateBadge[data-state=available]:hover .dshUpdateBadge__pill { background: #73c9972b; border-color: #73c99760; }
+@keyframes dsh-update-badge-spin { to { transform: rotate(360deg); } }
+html[data-dsh-desktop-animation=off] .dshUpdateBadge__pill { --dsh-update-badge-hover: none; --dsh-update-badge-press: none; transition: none; }
+html[data-dsh-desktop-animation=off] .dshUpdateBadge__spinner { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-desktop-animation=on]) .dshUpdateBadge__pill { --dsh-update-badge-hover: none; --dsh-update-badge-press: none; transition: none; }
+  html:not([data-dsh-desktop-animation=on]) .dshUpdateBadge__spinner { animation: none; }
+}
 .dshAccount {
   --dsh-account-surface-tint: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 30%, transparent);
   --dsh-surface-overlay: linear-gradient(var(--dsh-account-surface-tint), var(--dsh-account-surface-tint));

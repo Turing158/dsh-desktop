@@ -56,6 +56,10 @@ pub enum Phase {
 
 /// The application state, shared across commands and threads.
 pub struct AppState {
+    pub storage: Option<crate::data_inventory::ObservedStorage>,
+    pub capabilities: std::collections::BTreeMap<String, crate::compatibility::Observed>,
+    pub plugin_capabilities: std::collections::BTreeMap<String, crate::compatibility::Observed>,
+    pub notification_transport: crate::notify::TransportState,
     pub remote: crate::remote_control::Runtime,
     pub phase: Phase,
     /// Located runtime, once known.
@@ -67,11 +71,15 @@ pub struct AppState {
     /// A handle rather than the `Installer` itself: the installer owns the child
     /// and stays on the boot thread, which is the only place that waits for it.
     pub installer: Option<InstallHandle>,
+    /// Exact managed-prefix command, also used for manual installation recovery.
+    pub install_command: String,
     /// The web app's appearance preference, as last reported by the UI plugin.
     /// Drives the native title bar's colors.
     pub appearance: crate::dsh::ThemePreference,
     /// Old DSH colors until an update has restored the new interface.
     pub update_presentation: Option<crate::boot_bar::UpdatePresentation>,
+    /// Activity is valid only for the backend instance that reported it.
+    pub update_activity: Option<(u64, bool)>,
     /// Visibility compatibility flag. The confirmed lifecycle lives in `ui.phase`.
     /// In-memory only; a restart starts with the full interface.
     pub minimal: bool,
@@ -90,13 +98,19 @@ pub struct AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
+            storage: None,
+            capabilities: std::collections::BTreeMap::new(),
+            plugin_capabilities: std::collections::BTreeMap::new(),
+            notification_transport: crate::notify::TransportState::default(),
             remote: crate::remote_control::Runtime::default(),
             phase: Phase::Probing,
             runtime: None,
             process: None,
             installer: None,
+            install_command: String::new(),
             appearance: crate::dsh::ThemePreference::default(),
             update_presentation: None,
+            update_activity: None,
             minimal: false,
             ui: crate::ui_snapshot::UiState::default(),
             pending_deep_link: None,
@@ -114,7 +128,15 @@ impl AppState {
         if self.log.len() >= LIMIT {
             self.log.remove(0);
         }
-        self.log.push(crate::remote_control::redact(&line.into()));
+        let mut line = crate::remote_control::redact(&line.into());
+        const MAX_LINE_BYTES: usize = 4096;
+        if line.len() > MAX_LINE_BYTES {
+            let mut end = MAX_LINE_BYTES;
+            while !line.is_char_boundary(end) { end -= 1; }
+            line.truncate(end);
+            line.push_str(" [truncated]");
+        }
+        self.log.push(line);
     }
 
     /// The most recent `count` log lines.
@@ -165,7 +187,7 @@ pub fn status(
             .as_ref()
             .map(|runtime| runtime.dsh_bin.clone()),
         dsh_source: state.runtime.as_ref().map(|runtime| runtime.source),
-        install_command: crate::npm::install_command(),
+        install_command: state.install_command.clone(),
     }
 }
 
@@ -262,6 +284,14 @@ mod tests {
         let mut state = AppState::default();
         state.push_log("only");
         assert_eq!(state.log_tail(50), vec!["only"]);
+    }
+
+    #[test]
+    fn a_single_long_unicode_child_line_cannot_bypass_the_log_budget() {
+        let mut state = AppState::default();
+        state.push_log("中".repeat(100000));
+        assert!(state.log[0].len() <= 4110);
+        assert!(state.log[0].ends_with("[truncated]"));
     }
 
     #[test]

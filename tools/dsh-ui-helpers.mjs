@@ -44,3 +44,12 @@ export async function openDshSettings(page) {
   }
   await page.locator('[data-shortcut-modal="settings"]').waitFor()
 }
+
+export async function openDshMaintenance(page, kind) {
+  const label = kind === 'diagnostics' ? /^(诊断|Diagnostics)$/ : /^(备份与恢复|Backup and restore)$/
+  const dialog = page.locator('.dshMaintenance__dialog')
+  if (await dialog.getByRole('heading', { name: label, exact: true }).count()) return
+  await page.locator('.dshTb__item').filter({ hasText: /^(更多|More)$/ }).click()
+  await page.getByRole('menuitem', { name: label }).click()
+  await dialog.getByRole('heading', { name: label, exact: true }).waitFor()
+}

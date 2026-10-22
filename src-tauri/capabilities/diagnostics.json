@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "diagnostics-local",
+  "description": "Independent local diagnostics window. No backend, install or runtime mutation commands.",
+  "windows": ["diagnostics"],
+  "permissions": ["core:default", "allow-diagnostics-read", "allow-diagnostics-export", "allow-recovery-read", "allow-backup-inspect"]
+}

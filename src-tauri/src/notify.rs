@@ -17,10 +17,30 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(windows)]
 struct NativeNotifications(Result<windows::NotificationService, String>);
 
+#[derive(Default)]
+pub struct TransportState {
+    pub initialized: bool,
+    pub registration_ready: bool,
+    pub service_ready: bool,
+    pub delivery_failed: bool,
+}
+pub fn capability(transport: &TransportState) -> crate::compatibility::Observation {
+    use crate::compatibility::{Availability, Implementation, Observation};
+    let (availability, reason) = if !transport.initialized {(Availability::Unknown,"notification-transport-unreported")}
+        else if !transport.service_ready {(Availability::Unavailable,"notification-service-unavailable")}
+        else if !transport.registration_ready {(Availability::Limited,"notification-registration-unavailable")}
+        else if transport.delivery_failed {(Availability::Limited,"notification-delivery-failed")}
+        else {(Availability::Limited,"notification-display-preflight-required")};
+    Observation {feature_id:"window-notifications".into(), availability, implementation:Some(Implementation::Desktop),
+        plugin_state:"enabled".into(),reason_codes:vec![reason.into()],evidence:vec!["native-notification-service-selector".into()]}
+}
+
 pub fn initialize(app: &AppHandle) {
     #[cfg(windows)]
     {
-        match windows::register(&app.config().identifier) {
+        let registration = windows::register(&app.config().identifier);
+        let registration_ready=registration.is_ok();
+        match registration {
             Ok(registration) => crate::debug_log(&format!(
                 "[notify/registration] {} {}",
                 if registration.changed {
@@ -39,13 +59,14 @@ pub fn initialize(app: &AppHandle) {
         }
         let state = app.state::<crate::state::Shared>().inner().clone();
         let activation_app = app.clone();
-        app.manage(NativeNotifications(windows::NotificationService::start(
+        let service=windows::NotificationService::start(
             app.config().identifier.clone(),
             move |event| match event {
                 windows::DeliveryEvent::Failed(error) => {
                     crate::debug_log(&format!("[notify/failed] {error}"));
                     if let Ok(mut state) = state.lock() {
                         state.push_log(format!("通知发送失败：{error}"));
+                        state.notification_transport.delivery_failed=true;
                     }
                 }
                 windows::DeliveryEvent::Dismissed => crate::debug_log("[notify/dismissed]"),
@@ -57,7 +78,11 @@ pub fn initialize(app: &AppHandle) {
                     crate::tray::show_main_window(&activation_app);
                 }
             },
-        )));
+        );
+        if let Ok(mut state)=app.state::<crate::state::Shared>().lock() {
+            state.notification_transport=TransportState {initialized:true,registration_ready,service_ready:service.is_ok(),delivery_failed:false};
+        }
+        app.manage(NativeNotifications(service));
     }
     #[cfg(not(windows))]
     let _ = app;
@@ -109,11 +134,13 @@ impl Notifier for ToastNotifier {
         #[cfg(windows)]
         {
             let notifications = self.app.state::<NativeNotifications>();
-            notifications.0.as_ref().map_err(Clone::clone)?.submit(
+            let result=notifications.0.as_ref().map_err(Clone::clone)?.submit(
                 &title,
                 &body,
                 self.session_id.as_deref(),
-            )
+            );
+            if let Ok(mut state)=self.app.state::<crate::state::Shared>().lock() {state.notification_transport.delivery_failed=result.is_err();}
+            result
         }
         #[cfg(not(windows))]
         {

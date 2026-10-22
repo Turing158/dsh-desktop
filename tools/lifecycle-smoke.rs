@@ -23,6 +23,35 @@ pub fn install(app: &tauri::AppHandle) {
                         match value["action"].as_str() {
                             Some("enter") => crate::minimal::set(&app, true),
                             Some("show") => crate::minimal::show(&app),
+                            Some("diagnostics") => crate::diagnostics::open(&app),
+                            Some("runtime-prepare") => {
+                                // Uses the production freeze path, but only from an
+                                // explicitly requested isolated debug scenario.
+                                let source=value["source"].as_str().map(std::path::PathBuf::from);
+                                if let (Some(source),Some(node))=(source,crate::dsh::resolve_node()) {
+                                    let result=crate::runtime_store::freeze(&app,&node,&source).and_then(|runtime| {
+                                        crate::runtime_store::remember_first_install(&app,&runtime)?;Ok(runtime)
+                                    });
+                                    let json=match result {Ok(runtime)=>serde_json::json!({"runtime":runtime}),Err(error)=>serde_json::json!({"error":error})};
+                                    let _=crate::maintenance::atomic_json(&dir.join("runtime-prepared.json"),&json);
+                                }
+                            }
+                            Some("runtime-profile-verify") => {
+                                let result=(|| {
+                                    let target:crate::dsh::Runtime=serde_json::from_value(value["target"].clone()).map_err(|_|"runtime-profile-target")?;
+                                    let overlays=value["overlays"].as_array().ok_or("runtime-profile-overlay-invalid")?.iter()
+                                        .map(|v|v.as_str().map(std::path::PathBuf::from).ok_or("runtime-profile-overlay-invalid"))
+                                        .collect::<Result<Vec<_>,_>>()?;
+                                    let (source,storage)={
+                                        let state=app.state::<crate::state::Shared>();
+                                        let state=state.lock().map_err(|_|"runtime-state")?;
+                                        (state.runtime.clone().ok_or("runtime-unavailable")?,state.storage.clone().ok_or("runtime-profile-storage-unavailable")?)
+                                    };
+                                    crate::runtime_store::verify_profile(&app,&source,&target,&storage.roots,&overlays)
+                                })();
+                                let json=match result {Ok(verification)=>serde_json::json!({"verification":verification}),Err(error)=>serde_json::json!({"error":error})};
+                                let _=crate::maintenance::atomic_json(&dir.join("runtime-profile-verified.json"),&json);
+                            }
                             Some("close") => {
                                 if let Some(window) = app.get_webview_window("main") {
                                     let _ = window.close();
@@ -62,7 +91,7 @@ pub fn install(app: &tauri::AppHandle) {
                     crate::state::Phase::Failed { .. } => "failed",
                     _ => "starting",
                 };
-                serde_json::json!({ "phase":state.ui.phase, "identity":state.ui.identity(), "hasSnapshot":state.ui.snapshot.is_some(), "error":state.ui.last_error, "windowCount":window_count, "loaded":state.ui.loaded, "visible":visible, "backend":backend, "command":last })
+                serde_json::json!({ "phase":state.ui.phase, "identity":state.ui.identity(), "hasSnapshot":state.ui.snapshot.is_some(), "error":state.ui.last_error, "windowCount":window_count, "loaded":state.ui.loaded, "visible":visible, "backend":backend, "command":last, "runtime":state.runtime })
             };
             if let Ok(json) = serde_json::to_vec(&status) {
                 let _ = std::fs::write(dir.join("state.json"), json);

@@ -10,7 +10,26 @@
   let adapter, packet, controller, restoreKey, composing = false, picker = false
   let restartAdapterFactory, restartAdapter
   const restartTarget = () => adapter || (restartAdapter ||= restartAdapterFactory?.())
+  let capabilityWatch
+  let runtimeReady, runtimeReadyKey
+  function confirmRuntime() {
+    const identity = window.__DSH_REMOTE_IDENTITY__
+    if (!packet || packet.phase !== 'active' || !identity || local()) return
+    const target = restartTarget()
+    if (!target) return
+    if (target.inspectCapabilities?.().availability === 'unavailable') return
+    const key = JSON.stringify(identity)
+    if (runtimeReady || runtimeReadyKey === key) return
+    runtimeReady = invoke('desktop_runtime_ready', { identity }).then(() => { runtimeReadyKey = key }, () => {}).finally(() => { runtimeReady = undefined })
+  }
+  window.addEventListener('dsh-remote-ready', confirmRuntime)
+  function refreshCapabilities() {
+    capabilityWatch ||= window.__DSH_CAPABILITIES__?.watch('ui-recovery', () => restartTarget()?.inspectCapabilities?.()
+      || {featureId:'ui-recovery',availability:'unknown',implementation:null,pluginState:'unknown',reasonCodes:['feature-provider-unreported'],evidence:[]})
+    window.__DSH_CAPABILITIES__?.refresh()
+  }
   let frozen = false, overlay
+  let checkpoints,checkpointStatus={savedAt:0,error:null}
   const invoke = (command, args) => window.__TAURI__.core.invoke(command, args)
   const same = (a, b) => a && b && ['operationId', 'windowGeneration', 'documentGeneration', 'backendInstance'].every(k => a[k] === b[k])
   // The app's own page, in either form: the packaged protocol, or the origin the
@@ -18,6 +37,7 @@
   const local = () => location.hostname === 'tauri.localhost' || location.protocol === 'tauri:' || location.origin === boot?.appOrigin
   const codes = {
     get 'snapshot-terminal-active'() { return t('当前操作无法保留桌面终端，请先关闭终端后重试。') },
+    get 'snapshot-terminal-cold-unavailable'() { return t('原终端进程无法跨应用退出恢复。请保留稍后处理，或在恢复记录中明确选择跳过终端状态。') },
     get 'snapshot-terminal-missing'() { return t('原终端会话已不可用，未自动新建或重新执行命令。') },
     get 'snapshot-terminal-unsupported'() { return t('当前终端接口或标签状态不兼容，原界面或快照仍保留。') },
     get 'snapshot-terminal-conflict'() { return t('终端标签的会话或 Shell 绑定已变化，恢复已暂停，原快照仍保留。') },
@@ -35,6 +55,10 @@
     get 'snapshot-input-busy'() { return t('输入或提交仍在进行，请稍后再试。') },
     get 'snapshot-editor-unsupported'() { return t('当前草稿含有尚未适配的引用或编辑状态，请先处理后再试。') },
     get 'snapshot-attachment-conflict'() { return t('界面中存在快照以外的附件，恢复已暂停，原快照仍保留。') },
+    get 'snapshot-draft-conflict'() { return t('当前草稿与恢复包不同，恢复已暂停，两个版本均保留。') },
+    get 'snapshot-session-changed'() { return t('会话在保存后发生变化或无法确认原状态，恢复已暂停，恢复包仍保留。') },
+    get 'snapshot-file-conflict'() { return t('磁盘文件或当前编辑缓冲已变化，恢复已暂停，恢复包仍保留。') },
+    get 'snapshot-provider-preflight'() { return t('该状态提供器尚未支持跨重启恢复预检，恢复包仍保留。') },
     get 'snapshot-attachment-verify'() { return t('附件恢复校验未通过，原快照仍保留，可以重试。') },
     get 'snapshot-file-picker'() { return t('文件选择尚未完成，请关闭文件选择窗口后再试。') },
     get 'snapshot-session-missing'() { return t('原会话已不可用，草稿仍保留在本次快照中。') },
@@ -67,7 +91,7 @@
     overlay = document.createElement('div')
     overlay.dataset.dshUiStatus = 'true'
     overlay.setAttribute('role', retry ? 'alert' : 'status')
-    overlay.style.cssText = `position:fixed;z-index:2147483000;${blocking ? 'inset:44px 0 0;display:grid;place-content:center;' : 'right:20px;bottom:calc(20px + var(--dsh-terminal-dock-height, 0px));max-width:440px;'}padding:24px;background:var(--dsw-alias-bg-base,var(--dsh-desktop-titlebar-bg,#f9f9fb));color:var(--dsw-alias-label-primary,var(--dsh-desktop-titlebar-fg,#202124));font:14px/1.7 system-ui;border:1px solid #8884;border-radius:12px;box-sizing:border-box;`
+    overlay.style.cssText = `position:fixed;z-index:2147483000;${blocking ? 'inset:44px 0 0;display:grid;place-content:center;' : 'right:20px;bottom:calc(20px + var(--dsh-terminal-dock-height, 0px));max-width:440px;'}padding:24px;background:var(--dsw-alias-bg-base,var(--dsh-desktop-page-bg,var(--dsh-desktop-titlebar-bg,#f9f9fb)));color:var(--dsw-alias-label-primary,var(--dsh-desktop-titlebar-fg,#202124));font:14px/1.7 system-ui;border:1px solid var(--dsw-alias-border-l2,var(--dsh-desktop-titlebar-border,#8884));border-radius:12px;box-sizing:border-box;`
     if (blocking && !retry) {
       const visual = window.__DSH_DESKTOP_BOOT__?.progressVisual()
       if (visual) overlay.append(visual)
@@ -78,6 +102,12 @@
       button.style.cssText = 'margin-top:12px;padding:8px 16px;cursor:pointer;'
       button.onclick = () => { button.disabled = true; invoke('request_ui_restore', { identity: packet.identity, retry: true }).catch(() => { button.disabled = false }) }
       overlay.append(button)
+      if (packet?.coldRecovery) {
+        const defer = document.createElement('button'); defer.textContent = t('保留稍后处理'); defer.dataset.dshUiRetry = 'true'
+        defer.style.cssText = 'margin:12px 0 0 8px;padding:8px 16px;cursor:pointer;'
+        defer.onclick = () => { defer.disabled = true; invoke('desktop_recovery_defer', { identity: window.__DSH_REMOTE_IDENTITY__ }).catch(() => { defer.disabled = false }) }
+        overlay.append(defer)
+      }
     } else if (!blocking) {
       const button = document.createElement('button'); button.textContent = t('关闭提示'); button.dataset.dshUiRetry = 'true'
       button.onclick = () => overlay?.remove(); overlay.append(button)
@@ -97,6 +127,18 @@
   document.addEventListener('change', event => { if (event.target?.matches?.('input[type=file]')) picker = false }, true)
   document.addEventListener('cancel', event => { if (event.target?.matches?.('input[type=file]')) picker = false }, true)
   window.addEventListener('pagehide', abort)
+  window.addEventListener('pagehide',()=>checkpoints?.dispose())
+
+  function startCheckpoints() {
+    if(checkpoints || !window.__DSH_CREATE_DRAFT_CHECKPOINTS__ || !window.__TAURI__?.core?.invoke || local())return
+    checkpoints=window.__DSH_CREATE_DRAFT_CHECKPOINTS__({
+      blocked:()=>composing || picker || frozen || packet?.phase!=='active' || !restartTarget(),
+      capture:signal=>restartTarget().capture({signal,frontendVersion:packet.frontendVersion,providers,draftsOnly:true}),
+      save:payload=>invoke('desktop_draft_checkpoint',{identity:window.__DSH_REMOTE_IDENTITY__,payload}),
+      onStatus:status=>{checkpointStatus={savedAt:status.savedAt || checkpointStatus.savedAt,error:status.error}},
+    })
+    checkpoints.changed()
+  }
 
   // ── Deep links ────────────────────────────────────────────────────────────
   //
@@ -212,53 +254,61 @@
       if (next.identity.windowGeneration !== boot.windowGeneration) return
       if (packet && next.identity.operationId < packet.identity.operationId) return
       const changed = !same(next.identity, packet?.identity)
-      if (changed) abort()
+      if (changed) {abort();checkpoints?.suspend()}
       packet = next
       if (next.phase === 'active') { restoreKey = undefined; setFrozen(false); display(next.error ? message(next.error) : '') }
       else if (next.phase === 'restore-failed') { setFrozen(!local()); display(message(next.error), true, !local()) }
       else if (next.phase === 'restoring') { window.__DSH_DESKTOP_BOOT__?.markRestoring(); maybeRestore() }
+      if(next.phase==='active') {startCheckpoints();checkpoints?.changed()}
+      confirmRuntime()
     },
     capture,
     // Settings restarts use the audited adapter even while optional WebView
     // disposal is disabled. The payload stays native; no browser storage copy.
-    async prepareRemoteApply(frontendVersion, notice = t('正在保存界面并应用远程控制配置…')) {
+    async prepareRemoteApply(frontendVersion, notice = t('正在保存界面并应用远程控制配置…'), { configurationRestore = false } = {}) {
       if (composing || picker || frozen) throw new Error(t('请完成当前输入或文件选择后重试'))
       const target = restartTarget()
       if (!target) throw new Error(t('页面保存服务尚未准备好，请稍后重试'))
+      checkpoints?.suspend()
       setFrozen(true)
       try {
         await frame()
-        const payload = await target.capture({ signal: new AbortController().signal, frontendVersion, providers, remoteApply: true })
+        const payload = await target.capture({ signal: new AbortController().signal, frontendVersion, providers, remoteApply: true, configurationRestore })
         display(notice, false, true)
         return payload
-      } catch (error) { setFrozen(false); throw new Error(message(error.message)) }
+      } catch (error) { setFrozen(false); throw new Error(message(error.message), { cause: error }) }
     },
     finishRemoteApply() { setFrozen(false); display('') },
-    // Explicit restarts still protect drafts when optional automatic UI-state
-    // capture is disabled. This lazy adapter never enables background capture.
+    // Explicit restarts can protect drafts without enabling WebView disposal.
+    // The draft scheduler starts only when its separately loaded factory exists.
     registerRestartAdapter(factory) {
-      restartAdapterFactory = factory; maybeRestore()
+      restartAdapterFactory = factory; refreshCapabilities(); maybeRestore(); confirmRuntime()
       return () => {
         if (restartAdapterFactory !== factory) return
         restartAdapter?.dispose(); restartAdapter = undefined; restartAdapterFactory = undefined
+        refreshCapabilities()
       }
     },
     registerAdapter(value) {
-      adapter = value; maybeRestore()
+      adapter = value; refreshCapabilities(); maybeRestore();startCheckpoints(); confirmRuntime()
       // Flush in registration order; failures stay queued on the Rust side by
       // contract, so a fire-and-forget pass here is the whole handoff.
       const queued = deepLinkQueue; deepLinkQueue = []
       for (const sessionId of queued) runDeepLink(sessionId)
       return () => {
         if (adapter === value) {
+          checkpoints?.suspend()
           abort(); adapter = undefined; restoreKey = undefined
           deepLinkQueue = []
+          refreshCapabilities()
         }
       }
     },
     registerProvider(id, provider) { providers.set(id, provider); return () => { if (providers.get(id) === provider) providers.delete(id) } },
     openDeepLink,
     pendingOperation() { return composing || picker },
+    draftsChanged() {startCheckpoints();checkpoints?.changed()},
+    checkpointStatus() {return checkpointStatus},
   }
   if (boot.restoring) {
     window.__DSH_DESKTOP_BOOT__?.markRestoring()

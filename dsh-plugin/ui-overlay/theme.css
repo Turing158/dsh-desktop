@@ -1803,6 +1803,10 @@ html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='ungrouped'] [class*='_
 }
 
 /* The account keeps the flexible left side; settings has its own fixed target. */
+html:not([data-dsh-ui='vanilla']) body [data-slot='sidebar.settings'] :has(> [data-slot='settings.launcher'] > .dshSidebarSettings) {
+  column-gap: 4px;
+}
+
 html:not([data-dsh-ui='vanilla']) body .dshSidebarSettings {
   display: flex;
   flex: 0 0 36px;
@@ -1968,14 +1972,9 @@ html:not([data-dsh-ui='vanilla']) body .dshAppearance__option {
   transition: background-color 120ms ease-out;
 }
 
-/* The hover fill must override the plugin's inline background. */
-html:not([data-dsh-ui='vanilla']) body .dshAppearance__option:hover {
+/* Hover only unselected options; the selected fill belongs to aria-pressed. */
+html:not([data-dsh-ui='vanilla']) body .dshAppearance__option:hover:not([aria-pressed='true']) {
   background-color: var(--dsw-alias-interactive-bg-hover) !important;
-}
-
-/* Keep the selected option's fill so hover does not obscure the selection. */
-html:not([data-dsh-ui='vanilla']) body .dshAppearance__option[aria-pressed='true']:hover {
-  background-color: var(--dsw-alias-bg-module-platform) !important;
 }
 
 /* The font-size control is the app's own selector pill (see the `style` object in

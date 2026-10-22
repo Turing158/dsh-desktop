@@ -69,14 +69,20 @@ pub struct Palette {
     pub background: String,
     pub foreground: String,
     pub border: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_background: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_foreground: Option<String>,
 }
 
 impl Palette {
     pub fn bounded(self) -> Option<Self> {
-        [&self.background, &self.foreground, &self.border]
-            .iter()
-            .all(|color| !color.is_empty() && color.len() <= 128)
-            .then_some(self)
+        let valid = [&self.background, &self.foreground, &self.border]
+            .into_iter()
+            .chain(self.content_background.iter())
+            .chain(self.secondary_foreground.iter())
+            .all(|color| !color.is_empty() && color.len() <= 128);
+        valid.then_some(self)
     }
 }
 
@@ -189,6 +195,25 @@ pub fn initialization_script(app: &tauri::AppHandle) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_palette_preserves_theme_surfaces_and_accepts_older_clients() {
+        let legacy = serde_json::json!({ "dark": true, "background": "rgb(27, 27, 28)",
+            "foreground": "rgb(249, 250, 251)", "border": "rgb(90, 90, 90)" });
+        let palette: Palette = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(palette.content_background.is_none());
+        assert!(palette.bounded().is_some());
+        let mut themed = legacy;
+        themed["contentBackground"] = serde_json::json!("rgb(18, 18, 18)");
+        themed["secondaryForeground"] = serde_json::json!("rgb(160, 160, 165)");
+        let palette: Palette = serde_json::from_value(themed.clone()).unwrap();
+        assert_eq!(serde_json::to_value(palette.bounded().unwrap()).unwrap(), themed);
+        for field in ["contentBackground", "secondaryForeground"] {
+            let mut invalid = themed.clone();
+            invalid[field] = serde_json::json!("x".repeat(129));
+            assert!(serde_json::from_value::<Palette>(invalid).unwrap().bounded().is_none());
+        }
+    }
 
     #[test]
     fn the_embedded_bar_is_a_classic_script() {

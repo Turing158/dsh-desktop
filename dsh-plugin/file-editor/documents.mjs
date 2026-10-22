@@ -64,6 +64,17 @@ export function createDocuments(remote) {
       const drafts = [...documents.values()].filter(doc => doc.dirty()).map(doc => ({ address: doc.address, state: doc.getSnapshot() }))
       return drafts.length ? { drafts } : null
     },
+    async preflightRestore(saved, signal) {
+      for (const draft of saved.drafts) {
+        signal.throwIfAborted()
+        const doc = get(draft.address), current = doc.getSnapshot()
+        if (current.loading || current.saving) throw Error('snapshot-input-busy')
+        if (doc.dirty() && (current.text !== draft.state.text || current.base !== draft.state.base)) throw Error('snapshot-file-conflict')
+        const result = await remote.read(doc.file.sessionId, doc.file.path, signal)
+        signal.throwIfAborted()
+        if (!result.ok || result.value.version !== draft.state.version || result.value.text !== draft.state.base) throw Error('snapshot-file-conflict')
+      }
+    },
     restore(saved) { for (const draft of saved.drafts) get(draft.address).restore(draft.state) },
   }
 }

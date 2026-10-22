@@ -5,6 +5,7 @@ import { PluginControl, normalizeSaved } from './model.mjs'
 import { contribution } from './protocol.mjs'
 import { createProfileControl } from './profile-host.mjs'
 import { createMarketplaceInstaller } from './marketplace.mjs'
+import { createPluginReporter } from '../compatibility/selectors.mjs'
 
 export const name = 'desktop-plugin-control'
 export const inject = ['loader', 'profileContext', 'typert']
@@ -12,17 +13,18 @@ export async function apply(ctx) {
   const catalog = JSON.parse(readFileSync(new URL('./catalog.json', import.meta.url), 'utf8'))
   const file = process.env.DSH_DESKTOP_PLUGINS_FILE || join(ctx.profileContext.home, 'desktop-plugins.json')
   let saved = {}
+  let localDocument = { version: 1, enabled: {} }
   try {
     const document = JSON.parse(readFileSync(file, 'utf8'))
     if (document.version !== 1 || !document.enabled || typeof document.enabled !== 'object' || Array.isArray(document.enabled)
       || Object.values(document.enabled).some(value => typeof value !== 'boolean')) throw Error('内置插件配置格式错误')
     saved = document.enabled
+    localDocument = document
   } catch (error) { if (error.code !== 'ENOENT') throw error }
   const { writeFileAtomic } = await runtimeImport('@deepseek-ai/dsh-atomic-write')
   const normalized = normalizeSaved(catalog, saved)
-  if (JSON.stringify(normalized) !== JSON.stringify(saved)) {
-    await writeFileAtomic(file, JSON.stringify({ version: 1, enabled: normalized }, null, 2) + '\n', { mode: 0o600 })
-  }
+  // Reconcile only the running catalog. Unknown local intent is inert and may
+  // belong to another installation; reading it must not replace the file.
   saved = normalized
   const { readProfilePatches, reconcileProfilePatches } = await runtimeImport('@deepseek-ai/dsh-app-boot')
   const { TypertRemoteService, RemoteError } = await runtimeImport('@deepseek-ai/dsh-typert-protocol')
@@ -39,7 +41,11 @@ export async function apply(ctx) {
       })
       return ['failed', 'loading', 'unloading', 'pending', 'disabled', 'active'].find(phase => phases.includes(phase))
     },
-    save: enabled => writeFileAtomic(file, JSON.stringify({ version: 1, enabled }, null, 2) + '\n', { mode: 0o600 }),
+    save: async enabled => {
+      const next = { ...localDocument, version: 1, enabled: { ...localDocument.enabled, ...enabled } }
+      await writeFileAtomic(file, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
+      localDocument = next
+    },
     apply: (id, enabled) => ctx.get('hmr').runExclusive(async () => {
       // Overlay layers are held in memory by app-boot. Retain the live values
       // there so an unrelated profile/config reload cannot undo a hot switch.
@@ -60,13 +66,20 @@ export async function apply(ctx) {
   })
   const profileControl = await createProfileControl(ctx)
   const marketplace = createMarketplaceInstaller(() => ctx.get('pluginManager'))
+  const emitPluginObservations = createPluginReporter()
   const status = async () => {
     const builtins = control.status(), profile = await profileControl.status()
     const market = await marketplace.status()
-    return { ...builtins, plugins: profile.rows, agentPresets: profile.agentPresets, notices: profile.notices,
+    const result = { ...builtins, plugins: profile.rows, agentPresets: profile.agentPresets, notices: profile.notices,
       managementAvailable: profile.managementAvailable, runtimeVersion: profile.runtimeVersion,
       marketplace: market, restartRequired: builtins.restartRequired || profile.restartRequired || market.restartRequired }
+    emitPluginObservations(result)
+    return result
   }
+  // Read-only status uses the same controller results as actual switch actions.
+  void status().catch(() => {})
+  const capabilityTimer = setInterval(() => { void status().catch(() => {}) }, 60_000)
+  ctx.effect(() => () => clearInterval(capabilityTimer))
   class DesktopPlugins extends TypertRemoteService {
     constructor(scope) { super(scope, 'desktopPlugins') }
     async status() { return status() }

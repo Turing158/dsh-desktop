@@ -1,5 +1,4 @@
 //! Explicit dsh channel checks and updates from the title bar.
-use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -10,7 +9,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::dsh::CommandExt;
 use crate::{
@@ -19,22 +18,150 @@ use crate::{
 };
 
 #[derive(Default)]
-pub struct UpdateManager(Arc<AtomicBool>);
+pub struct UpdateManager(Arc<AtomicBool>, crate::maintenance::MaintenanceCoordinator);
 
-pub(crate) struct Operation(Arc<AtomicBool>);
+#[derive(Default,Clone)]
+pub struct CandidateManager(Arc<std::sync::Mutex<Option<CandidateState>>>);
+struct CandidateState {
+    request_id: uuid::Uuid, identity:crate::remote_control::Identity,
+    cancelled:bool, installer:Option<npm::InstallHandle>,
+}
+struct CandidateGuard {manager:CandidateManager,request_id:uuid::Uuid}
+impl CandidateManager {
+    fn begin(&self,request_id:uuid::Uuid,identity:crate::remote_control::Identity)->Result<CandidateGuard,String> {
+        let mut state=self.0.lock().map_err(|_|"runtime-candidate-state")?;
+        if state.is_some() {return Err("runtime-candidate-busy".into());}
+        *state=Some(CandidateState {request_id,identity,cancelled:false,installer:None});
+        Ok(CandidateGuard {manager:self.clone(),request_id})
+    }
+    fn cancel(&self,request_id:uuid::Uuid,identity:crate::remote_control::Identity)->Result<(),String> {
+        let mut state=self.0.lock().map_err(|_|"runtime-candidate-state")?;
+        let Some(state)=state.as_mut() else {return Ok(())};
+        if state.request_id!=request_id || state.identity!=identity {return Err("runtime-candidate-stale".into());}
+        state.cancelled=true;if let Some(installer)=&state.installer {installer.cancel();}Ok(())
+    }
+}
+impl CandidateGuard {
+    fn check(&self)->Result<(),String> {
+        let state=self.manager.0.lock().map_err(|_|"runtime-candidate-state")?;
+        match state.as_ref().filter(|s|s.request_id==self.request_id) {
+            Some(s) if !s.cancelled=>Ok(()),_=>Err("runtime-candidate-cancelled".into())
+        }
+    }
+    fn installer(&self,installer:Option<npm::InstallHandle>)->Result<(),String> {
+        let mut state=self.manager.0.lock().map_err(|_|"runtime-candidate-state")?;
+        let state=state.as_mut().filter(|s|s.request_id==self.request_id).ok_or("runtime-candidate-stale")?;
+        if state.cancelled {if let Some(installer)=installer {installer.cancel();}return Err("runtime-candidate-cancelled".into());}
+        state.installer=installer;Ok(())
+    }
+}
+impl Drop for CandidateGuard {
+    fn drop(&mut self) {if let Ok(mut state)=self.manager.0.lock() {if state.as_ref().is_some_and(|s|s.request_id==self.request_id) {*state=None;}}}
+}
+
+#[derive(Debug,Serialize,Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct CandidateSummary {
+    id:String,version:String,fingerprint:String,switch_available:bool,
+}
+
+fn candidate_install(node:&Path,prefix:&Path,target_version:&str,guard:&CandidateGuard)->Result<(),String> {
+    let mut installer=npm::Installer::start_candidate(node,prefix,target_version)?;
+    guard.installer(Some(installer.handle()))?;
+    let events=installer.take_events().ok_or("runtime-candidate-install-failed")?;
+    // Never publish arbitrary npm output as a structured maintenance error.
+    let drain=std::thread::spawn(move || {for _ in events {}});
+    let result=installer.wait_timeout(Duration::from_secs(600));
+    drop(installer);let _=drain.join();guard.installer(None)?;guard.check()?;
+    if !result? {return Err("runtime-candidate-install-failed".into());}Ok(())
+}
+
+/// Candidate preparation never stops the backend, captures the UI, or changes
+/// selection. Real-data startup remains gated by the migration/checkpoint contract.
+#[tauri::command]
+pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_control::Identity,
+    request_id:uuid::Uuid,target_version:String)->Result<CandidateSummary,String> {
+    caller(&window)?;
+    crate::remote_control::caller(&window,identity).map_err(|e|e.message)?;
+    let shared=window.state::<Shared>().inner().clone();
+    let source=shared.lock().map_err(|_|"runtime-state")?.runtime.clone().ok_or("runtime-unavailable")?;
+    npm::candidate_argv(Path::new("candidate"),&target_version)?;
+    let operation=window.state::<UpdateManager>().begin()?;
+    let guard=window.state::<CandidateManager>().begin(request_id,identity)?;
+    let app=window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let operation=operation.durable(&app)?;let progress=operation.progress();
+        progress.target(&target_version)?;
+        let prefix=crate::runtime_store::candidate_directory(&app)?;
+        let record=prefix.join("preparation.json");
+        crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
+            "sourceVersion":source.version,"targetVersion":target_version,"stage":"installing"})).map_err(|_|"runtime-candidate-record-failed")?;
+        let result:Result<CandidateSummary,String>=(|| {
+            guard.check()?;
+            progress.update(crate::maintenance::Stage::Preparing,"candidate-install-started")?;
+            candidate_install(&source.node_exe,&prefix,&target_version,&guard)?;
+            guard.check()?;
+            progress.update(crate::maintenance::Stage::Preparing,"candidate-freezing")?;
+            let candidate=crate::runtime_store::freeze_candidate(&app,&source.node_exe,&prefix,&target_version)?;
+            guard.check()?;
+            crate::remote_control::caller(&window,identity).map_err(|_|"runtime-candidate-stale")?;
+            let current=shared.lock().map_err(|_|"runtime-state")?.runtime.clone().ok_or("runtime-candidate-stale")?;
+            if current.dsh_bin!=source.dsh_bin || current.node_exe!=source.node_exe {return Err("runtime-candidate-stale".into());}
+            let managed=candidate.managed.ok_or("runtime-candidate-binding")?;
+            let summary=CandidateSummary {id:managed.id,version:target_version.clone(),fingerprint:managed.fingerprint,switch_available:false};
+            crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
+                "sourceVersion":source.version,"targetVersion":target_version,"stage":"prepared","candidate":summary})).map_err(|_|"runtime-candidate-record-failed")?;
+            progress.prepared()?;
+            Ok(summary)
+        })();
+        if let Err(error)=&result {
+            let code=if error.starts_with("runtime-") && error.bytes().all(|b|b.is_ascii_lowercase() || b==b'-') {error.as_str()} else {"runtime-candidate-preparation-failed"};
+            let _=crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
+                "targetVersion":target_version,"stage":"failed","errorCode":code}));
+            let _=progress.failed(code);
+        }
+        result
+    }).await.map_err(|_|"runtime-candidate-worker")?
+}
+
+#[tauri::command]
+pub fn cancel_dsh_candidate(window:WebviewWindow,identity:crate::remote_control::Identity,request_id:uuid::Uuid)->Result<(),String> {
+    caller(&window)?;crate::remote_control::caller(&window,identity).map_err(|e|e.message)?;
+    window.state::<CandidateManager>().cancel(request_id,identity)
+}
+
+pub(crate) struct Operation(Option<Arc<AtomicBool>>, Option<crate::maintenance::Lease>);
 
 impl UpdateManager {
-    pub(crate) fn begin(&self) -> Result<Operation, String> {
-        self.0
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .map_err(|_| "dsh 更新操作仍在进行中".to_string())?;
-        Ok(Operation(self.0.clone()))
+    pub(crate) fn new(coordinator: crate::maintenance::MaintenanceCoordinator) -> Self {
+        Self(Arc::new(AtomicBool::new(false)), coordinator)
     }
+    pub(crate) fn begin(&self) -> Result<Operation, String> {
+        self.begin_kind(crate::maintenance::Kind::Update)
+    }
+    fn begin_read(&self) -> Result<Operation,String> {
+        self.0.compare_exchange(false,true,Ordering::SeqCst,Ordering::SeqCst)
+            .map_err(|_| "dsh 更新操作仍在进行中".to_string())?;
+        Ok(Operation(Some(self.0.clone()),None))
+    }
+    pub(crate) fn begin_kind(&self, kind: crate::maintenance::Kind) -> Result<Operation, String> {
+        let lease = self.1.begin(kind)?;
+        Ok(Operation(None, Some(lease)))
+    }
+}
+impl Operation {
+    pub(crate) fn durable(mut self, app: &AppHandle) -> Result<Self, String> {
+        self.1 = Some(self.1.take().ok_or("maintenance-stale")?.durable(app)?);
+        Ok(self)
+    }
+    pub(crate) fn progress(&self) -> crate::maintenance::Progress { self.1.as_ref().expect("operation lease").progress() }
+    pub(crate) fn into_lease(mut self) -> crate::maintenance::Lease { self.1.take().expect("operation lease") }
 }
 
 impl Drop for Operation {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        if let Some(read) = &self.0 { read.store(false, Ordering::SeqCst); }
+        self.1.take();
     }
 }
 
@@ -66,6 +193,16 @@ pub struct Versions {
     pub current: String,
     pub latest: String,
     pub preview: String,
+    #[serde(rename = "stableUpdateAvailable")]
+    pub stable_update_available: bool,
+    #[serde(rename = "candidateOnly")]
+    pub candidate_only: bool,
+}
+
+fn stable_update_available(current: &str, latest: &str) -> Result<bool, String> {
+    let current = semver::Version::parse(current).map_err(|_| "未能解析当前 dsh 版本号")?;
+    let latest = semver::Version::parse(latest).map_err(|_| "未能解析稳定版 dsh 版本号")?;
+    Ok(latest.cmp_precedence(&current).is_gt())
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,7 +257,7 @@ fn parse_preview(text: &str) -> Result<String, String> {
 
 /// Drain both pipes while waiting, so verbose npm errors cannot fill a pipe
 /// and wedge the check. Bound retained output and always reap timed-out probes.
-fn output(command: &mut Command, label: &str, timeout: Duration) -> Result<String, String> {
+pub(crate) fn output(command: &mut Command, label: &str, timeout: Duration) -> Result<String, String> {
     let job = crate::winjob::JobObject::new().map_err(|e| format!("无法创建进程作业对象：{e}"))?;
     let mut child = command
         .stdin(Stdio::null())
@@ -194,11 +331,9 @@ fn npm_command(node: &Path) -> Result<Command, String> {
     Ok(command)
 }
 
-fn current_version() -> Result<String, String> {
-    // Fixed shell text: Windows npm shims are .cmd files. No UI input is
-    // interpolated, and this follows the same PATH as `dsh --version`.
-    let mut command = Command::new("cmd.exe");
-    command.args(["/d", "/c", "dsh --version"]);
+fn current_version(runtime: &crate::dsh::Runtime) -> Result<String, String> {
+    let mut command = Command::new(&runtime.node_exe);
+    command.arg(crate::dsh::node_script_path(&runtime.dsh_bin)).arg("--version");
     version(&output(
         &mut command,
         "dsh --version",
@@ -206,8 +341,9 @@ fn current_version() -> Result<String, String> {
     )?)
 }
 
-fn check(node: &Path) -> Result<Versions, String> {
-    let current = current_version()?;
+fn check(runtime: &crate::dsh::Runtime) -> Result<Versions, String> {
+    let node = &runtime.node_exe;
+    let current = current_version(runtime)?;
     let text = output(
         npm_command(node)?.args(["view", "@deepseek-ai/dsh", "dist-tags", "--json"]),
         "npm view @deepseek-ai/dsh dist-tags",
@@ -220,6 +356,8 @@ fn check(node: &Path) -> Result<Versions, String> {
         Duration::from_secs(60),
     )?;
     Ok(Versions {
+        candidate_only:true,
+        stable_update_available: stable_update_available(&current, &tags.latest)?,
         current,
         latest: tags.latest,
         preview: parse_preview(&published)?,
@@ -258,22 +396,49 @@ pub fn authorize_backend(app: &AppHandle, instance: u64, url: &str) -> Result<()
     app.add_capability(serde_json::json!({
         "identifier": format!("dsh-update-backend-{instance}"), "windows": ["main"], "local": false,
         "remote": { "urls": [format!("{}/*", url.origin().ascii_serialization())] },
-        "permissions": ["allow-dsh-update"]
+        "permissions": ["allow-dsh-update", "allow-runtime-ready"]
     }).to_string()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn check_dsh_update(window: WebviewWindow) -> Result<Versions, String> {
-    let node = caller(&window)?;
-    let operation = window.state::<UpdateManager>().begin()?;
+    caller(&window)?;
+    let runtime = window.state::<Shared>().lock().map_err(|_| "后台状态不可用")?.runtime.clone().ok_or("后台未就绪")?;
+    // Registry/version queries never own the maintenance lease. A slow network
+    // check must not block a user from exporting or inspecting local backups.
+    let operation = window.state::<UpdateManager>().begin_read()?;
     tauri::async_runtime::spawn_blocking(move || {
         let _operation = operation;
-        check(&node)
+        check(&runtime)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+pub fn dsh_update_activity(window: WebviewWindow) -> Result<bool, String> {
+    caller(&window)?;
+    let shared = window.state::<Shared>();
+    let state = shared.lock().map_err(|_| "后台状态不可用")?;
+    activity_for_backend(state.update_activity, state.ui.backend_instance)
+}
+
+fn activity_for_backend(activity: Option<(u64, bool)>, instance: u64) -> Result<bool, String> {
+    match activity {
+        Some((reported, running)) if reported == instance => Ok(running),
+        _ => Err("无法确认会话状态，请稍后重试更新。".into()),
+    }
+}
+
+fn require_idle(state: &crate::state::AppState) -> Result<(), String> {
+    if activity_for_backend(state.update_activity, state.ui.backend_instance)? {
+        return Err("dsh-update-sessions-running".into());
+    }
+    Ok(())
+}
+
+// Retain the old command name so cached clients fail before any capture or
+// global npm mutation. Preparation uses the separate exact-version command.
 #[tauri::command]
 pub async fn install_dsh_update(
     window: WebviewWindow,
@@ -283,127 +448,69 @@ pub async fn install_dsh_update(
     channel: Channel,
     target_version: Option<String>,
 ) -> Result<(), String> {
-    let node = caller(&window)?;
-    crate::remote_control::caller(&window, identity).map_err(|e| e.message)?;
-    let args = channel.args(target_version.as_deref())?;
-    let operation = window.state::<UpdateManager>().begin()?;
-    let app = window.app_handle().clone();
-    let shared = app.state::<Shared>().inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let (guard, source, mut runtime, config) = {
-            let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
-            if s.remote.applying || s.boot_in_progress || s.installer.is_some()
-                || s.ui.phase != crate::ui_snapshot::UiPhase::Active || s.ui.snapshot.is_some()
-            {
-                return Err("启动、保存或恢复仍在进行，请完成后重试".into());
-            }
-            let runtime = s.runtime.clone().ok_or("后台未就绪")?;
-            let config = s.remote.active.clone().ok_or("后台未就绪")?;
-            s.remote.applying = true;
-            (crate::remote_control::ApplyingGuard(shared.clone()), s.ui.identity(), runtime, config)
-        };
-        // Resolve npm and stage drafts before touching the running service.
-        let root = output(npm_command(&node)?.args(["root", "-g"]), "npm root -g", Duration::from_secs(20))?;
-        let bin = Path::new(root.trim()).join("@deepseek-ai/dsh/lib/bin.js");
-        if payload.page.kind != "dsh" { return Err("无法安全保存当前页面".into()); }
-        let snapshot = crate::ui_snapshot::UiSnapshot::capture(payload, source)
-            .map_err(|_| "草稿或附件保存失败，原页面和服务已保留")?;
-        crate::remote_control::caller(&window, identity).map_err(|e| e.message)?;
-        let previous = {
-            let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
-            if s.ui.phase != crate::ui_snapshot::UiPhase::Active
-                || crate::remote_control::identity(&s) != identity
-            { return Err("页面已变化，请重试".into()); }
-            // Invalidate the old stream before stopping it. Its exit must not
-            // overwrite the install page or trigger a second backend restart.
-            s.ui.backend_instance += 1;
-            s.ui.loaded = false;
-            s.remote.active = None;
-            s.remote.operation_id += 1;
-            s.ui.snapshot = Some(Arc::new(snapshot));
-            s.update_presentation = Some(crate::boot_bar::UpdatePresentation {
-                palette: palette.and_then(crate::boot_bar::Palette::bounded),
-            });
-            s.phase = Phase::Installing { version: Some(target_version.clone().unwrap_or_else(|| "latest".into())) };
-            s.process.take()
-        };
-        // Acknowledge ownership; the old document is about to be replaced.
-        std::thread::spawn(move || {
-            let _operation = operation;
-            let _guard = guard;
-            crate::navigate_current(&app);
-            crate::publish(&app, &shared);
-            let result = (|| {
-                if let Some(mut previous) = previous {
-                    previous.stop_and_wait().map_err(|e| format!("无法停止旧版 dsh：{e}"))?;
-                }
-                crate::terminal::suspend(&app);
-                if crate::exiting(&shared) { return Err("更新已取消".into()); }
-                install_package(&app, &shared, &node, &args)?;
-                let installed = crate::dsh::probe_version(&node, &bin)
-                    .ok_or("安装命令已完成，但 dsh --version 校验失败，请重新检测")?;
-                let installed = version(&installed)?;
-                if matches!(channel, Channel::Preview) && target_version.as_deref() != Some(installed.as_str()) {
-                    return Err(format!("安装后的 dsh 版本为 {installed}，与选择的预览版不一致，请重新检测"));
-                }
-                let current = current_version()?;
-                if installed != current {
-                    return Err(format!("已安装 dsh {installed}，但 PATH 中的 dsh 仍为 {current}。请检查 npm 全局目录与 PATH 后重新检测。"));
-                }
-                let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
-                let snapshot = s.ui.snapshot.as_mut().and_then(Arc::get_mut)
-                    .ok_or("无法准备新版界面恢复，请重新检测")?;
-                snapshot.restore_frontend_version = Some(installed.clone());
-                runtime.dsh_bin = bin;
-                runtime.source = crate::dsh::DshSource::Global;
-                runtime.version = Some(installed);
-                Ok::<_, String>(())
-            })();
-            if crate::exiting(&shared) { return; }
-            match result {
-                Ok(()) => crate::restart_backend(&app, &shared, runtime, config),
-                Err(error) => {
-                    crate::fail(&app, &shared, format!("dsh 更新失败：{error}"),
-                        "界面草稿和附件仍保留在本次运行中。请点击「重新检测」恢复启动。");
-                    crate::navigate_current(&app);
-                }
-            }
-        });
-        Ok(())
-    }).await.map_err(|e| e.to_string())?
-}
-
-fn install_package(app: &AppHandle, shared: &Shared, node: &Path, args: &[String]) -> Result<(), String> {
-    let mut installer = npm::Installer::start_with_args(node, args)?;
+    caller(&window)?;
+    crate::remote_control::caller(&window, identity).map_err(|e|e.message)?;
     {
-        let mut s = shared.lock().map_err(|_| "后台状态不可用")?;
-        if s.ui.phase == crate::ui_snapshot::UiPhase::Exiting { return Err("更新已取消".into()); }
-        s.installer = Some(installer.handle());
+        let shared=window.state::<Shared>();let state=shared.lock().map_err(|_|"runtime-state")?;
+        require_idle(&state)?;
     }
-    let events = installer.take_events().ok_or("无法读取安装输出")?;
-    let app = app.clone();
-    let state = shared.clone();
-    let transcript = std::thread::spawn(move || {
-        let mut tail = VecDeque::new();
-        for progress in events {
-            if let Ok(mut s) = state.lock() { s.push_log(progress.line.clone()); }
-            let _ = app.emit(crate::EVENT_INSTALL_PROGRESS, &progress);
-            if tail.len() == 20 { tail.pop_front(); }
-            tail.push_back(progress.line);
-        }
-        tail.into_iter().collect::<Vec<_>>().join("\n")
-    });
-    let result = installer.wait();
-    drop(installer);
-    crate::clear_installer(shared);
-    let transcript = transcript.join().unwrap_or_default();
-    if !result? { return Err(format!("安装失败：\n{transcript}")); }
-    Ok(())
+    let _=(payload,palette.and_then(crate::boot_bar::Palette::bounded),channel.args(target_version.as_deref())?);
+    Err("安全数据检查点与迁移契约尚未完成，当前版本继续运行。请重新打开更新页面准备独立候选版本。".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_cancellation_binds_request_and_document_and_keeps_exclusive_owner() {
+        let manager=CandidateManager::default();let id=uuid::Uuid::new_v4();
+        let identity=crate::remote_control::Identity {backend_instance:1,window_generation:1,document_generation:2,document_nonce:[1;16]};
+        let guard=manager.begin(id,identity).unwrap();assert!(guard.check().is_ok());
+        assert!(manager.begin(uuid::Uuid::new_v4(),identity).is_err());
+        assert!(manager.cancel(uuid::Uuid::new_v4(),identity).is_err());
+        let mut stale=identity;stale.document_generation+=1;assert!(manager.cancel(id,stale).is_err());
+        manager.cancel(id,identity).unwrap();assert_eq!(guard.check().unwrap_err(),"runtime-candidate-cancelled");
+        assert!(manager.begin(uuid::Uuid::new_v4(),identity).is_err());drop(guard);
+        assert!(manager.begin(uuid::Uuid::new_v4(),identity).is_ok());
+    }
+
+    #[test]
+    fn stable_badge_only_offers_newer_latest_channel_versions() {
+        for (current, latest, available) in [
+            ("0.1.9", "0.1.10", true),
+            ("0.2.0-rc.1", "0.2.0-rc.2", true),
+            ("0.2.0-rc.2", "0.2.0-rc.2", false),
+            ("0.3.0-alpha.1", "0.2.0", false),
+            ("0.2.0-rc.2", "0.2.0", true),
+            ("0.2.0+local", "0.2.0+registry", false),
+        ] {
+            assert_eq!(stable_update_available(current, latest).unwrap(), available);
+        }
+        assert!(stable_update_available("unknown", "0.2.0").is_err());
+    }
+
+    #[test]
+    fn native_admission_requires_idle_activity_from_the_current_backend() {
+        let mut state = crate::state::AppState::default();
+        state.ui.backend_instance = 8;
+        assert!(require_idle(&state).is_err());
+        state.update_activity = Some((7, false));
+        assert!(require_idle(&state).is_err());
+        state.update_activity = Some((8, true));
+        assert_eq!(require_idle(&state).unwrap_err(), "dsh-update-sessions-running");
+        state.update_activity = Some((8, false));
+        assert!(require_idle(&state).is_ok());
+    }
+
+    #[test]
+    fn activity_reports_preserve_unknown_instead_of_treating_it_as_idle() {
+        use crate::dsh::{parse_line, ChildEvent};
+        for (wire, running) in [("false", Some(false)), ("true", Some(true)), ("null", None), ("\"idle\"", None)] {
+            let line = format!("__DSH_UPDATE_ACTIVITY__ {{\"running\":{wire}}}");
+            assert_eq!(parse_line(&line), Some(ChildEvent::UpdateActivity(running)));
+        }
+    }
 
     #[test]
     fn reads_latest_from_object_or_single_result_array_without_requiring_other_tags() {
@@ -493,6 +600,18 @@ mod tests {
         drop(operation);
         assert!(manager.begin().is_ok());
     }
+    #[test]
+    fn registry_reads_are_exclusive_with_other_reads_but_never_own_maintenance() {
+        let manager = UpdateManager::default();
+        let read = manager.begin_read().unwrap();
+        assert!(manager.begin_read().is_err());
+        let maintenance = manager.begin_kind(crate::maintenance::Kind::Restart).unwrap();
+        assert!(manager.begin().is_err());
+        drop(maintenance);
+        assert!(manager.begin_read().is_err());
+        drop(read);
+        assert!(manager.begin_read().is_ok());
+    }
 
     #[test]
     fn update_requires_current_backend_origin() {
@@ -558,7 +677,19 @@ mod tests {
     #[ignore = "read-only integration check against the configured npm registry"]
     fn reads_installed_version_and_live_registry_versions() {
         let node = crate::dsh::resolve_node().expect("Node.js required");
-        let versions = check(&node).expect("dsh and npm registry must be available");
+        let (dsh_bin, source) = crate::dsh::resolve_dsh(false).expect("dsh required");
+        let runtime = crate::dsh::Runtime { node_exe: node, dsh_bin, source, version: None, managed:None };
+        let versions = check(&runtime).expect("dsh and npm registry must be available");
         println!("{}", serde_json::to_string(&versions).unwrap());
+    }
+
+    #[test]
+    fn current_version_executes_the_selected_entry_instead_of_a_path_install() {
+        let Some(node) = crate::dsh::resolve_node() else { return };
+        let directory = tempfile::tempdir().unwrap();
+        let entry = directory.path().join("selected.cjs");
+        std::fs::write(&entry, "process.stdout.write('9.8.7-test.1')").unwrap();
+        let runtime = crate::dsh::Runtime { node_exe: node, dsh_bin: entry, source: crate::dsh::DshSource::Configured, version: Some("1.2.3".into()),managed:None };
+        assert_eq!(current_version(&runtime).unwrap(), "9.8.7-test.1");
     }
 }

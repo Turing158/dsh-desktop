@@ -1,13 +1,15 @@
 import { linksForNode, openSessionLink, parseSessionLink } from './links.mjs'
 import { mountInlineSessionLinks } from './inline.mjs'
 import { t, useLocale } from '../i18n/api.mjs'
+import { sessionLinksContract } from '../compatibility/selectors.mjs'
 
 window.__ModuleLoader__.load({ id: '@dsh-desktop/session-links', factory(require) {
   const React = require('react'), h = React.createElement
   return { inject: ['slots', 'sessions', 'uiWorkspace'], apply(ctx) {
     const slot = 'conversation.chat.node'
-    if (typeof ctx.slots.entries !== 'function') return
-    ctx.slots.inject(slot, () => {
+    const offCapability = window.__DSH_CAPABILITIES__?.sessionLinks(ctx)
+    if (!sessionLinksContract(ctx)) return offCapability
+    const offSlot = ctx.slots.inject(slot, () => {
       const mounted = new Map(), wrappers = new Set()
       let syncing = false
       function sync() {
@@ -61,5 +63,6 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/session-links', factory(require
       sync()
       return () => { off(); for (const remove of mounted.values()) remove(); mounted.clear(); wrappers.clear() }
     })
+    return () => { offSlot?.();offCapability?.() }
   } }
 } })

@@ -1,0 +1,182 @@
+[
+  {
+    "id": "blue",
+    "name": "经典蓝",
+    "light": {
+      "canvas": "#F8FAFF",
+      "sidebar": "#EEF2FA",
+      "panel": "#FFFFFF",
+      "soft": "#F0F3FA",
+      "border": "#D9E1EF",
+      "ink": "#202B42",
+      "muted": "#5E6980",
+      "accent": "#315FD5",
+      "button": "#315FD5",
+      "on-button": "#FFFFFF",
+      "selection": "#E2EAFE"
+    },
+    "dark": {
+      "canvas": "#141B2A",
+      "sidebar": "#101623",
+      "panel": "#1D273B",
+      "soft": "#202B41",
+      "border": "#35425C",
+      "ink": "#E5ECFA",
+      "muted": "#A2AEC5",
+      "accent": "#8BADFF",
+      "button": "#365FCA",
+      "on-button": "#FFFFFF",
+      "selection": "#283B64"
+    }
+  },
+  {
+    "id": "teal",
+    "name": "雾海青",
+    "light": {
+      "canvas": "#F5FAF9",
+      "sidebar": "#EAF3F1",
+      "panel": "#FFFFFF",
+      "soft": "#EEF5F3",
+      "border": "#D5E5E0",
+      "ink": "#203A36",
+      "muted": "#526C67",
+      "accent": "#087366",
+      "button": "#087366",
+      "on-button": "#FFFFFF",
+      "selection": "#D9EFEA"
+    },
+    "dark": {
+      "canvas": "#121F20",
+      "sidebar": "#0E191A",
+      "panel": "#1A2C2D",
+      "soft": "#203334",
+      "border": "#344C4C",
+      "ink": "#E1F0ED",
+      "muted": "#9FBAB4",
+      "accent": "#72D3C1",
+      "button": "#147C70",
+      "on-button": "#FFFFFF",
+      "selection": "#254640"
+    }
+  },
+  {
+    "id": "moss",
+    "name": "苔原绿",
+    "light": {
+      "canvas": "#F8FAF5",
+      "sidebar": "#EFF2E9",
+      "panel": "#FEFFFB",
+      "soft": "#F0F3EB",
+      "border": "#DCE3D3",
+      "ink": "#303B2A",
+      "muted": "#5E6B53",
+      "accent": "#496F42",
+      "button": "#496F42",
+      "on-button": "#FFFFFF",
+      "selection": "#E1EBD8"
+    },
+    "dark": {
+      "canvas": "#1A2118",
+      "sidebar": "#141B13",
+      "panel": "#253020",
+      "soft": "#2C3526",
+      "border": "#414D37",
+      "ink": "#E9EEDD",
+      "muted": "#B0BBA1",
+      "accent": "#AFCA89",
+      "button": "#526F39",
+      "on-button": "#FFFFFF",
+      "selection": "#354729"
+    }
+  },
+  {
+    "id": "violet",
+    "name": "暮光紫",
+    "light": {
+      "canvas": "#FAF8FD",
+      "sidebar": "#F1EDF7",
+      "panel": "#FFFFFF",
+      "soft": "#F3EFF8",
+      "border": "#E1D9ED",
+      "ink": "#352D46",
+      "muted": "#6D617D",
+      "accent": "#7354AC",
+      "button": "#7354AC",
+      "on-button": "#FFFFFF",
+      "selection": "#EAE1F6"
+    },
+    "dark": {
+      "canvas": "#1D1927",
+      "sidebar": "#17131F",
+      "panel": "#2A2337",
+      "soft": "#30283F",
+      "border": "#473A59",
+      "ink": "#EDE6F7",
+      "muted": "#B7A9CB",
+      "accent": "#BCA0F0",
+      "button": "#7654AA",
+      "on-button": "#FFFFFF",
+      "selection": "#413055"
+    }
+  },
+  {
+    "id": "amber",
+    "name": "纸墨琥珀",
+    "light": {
+      "canvas": "#FBF8F2",
+      "sidebar": "#F2ECE1",
+      "panel": "#FFFDFA",
+      "soft": "#F5EFE4",
+      "border": "#E5DCCB",
+      "ink": "#42372B",
+      "muted": "#70614E",
+      "accent": "#855820",
+      "button": "#855820",
+      "on-button": "#FFFFFF",
+      "selection": "#F0E2C9"
+    },
+    "dark": {
+      "canvas": "#242019",
+      "sidebar": "#1C1913",
+      "panel": "#302A20",
+      "soft": "#393023",
+      "border": "#524633",
+      "ink": "#F4EBDD",
+      "muted": "#C4B499",
+      "accent": "#DEBA78",
+      "button": "#93672D",
+      "on-button": "#FFFFFF",
+      "selection": "#4B3B23"
+    }
+  },
+  {
+    "id": "rose",
+    "name": "玫瑰灰",
+    "light": {
+      "canvas": "#FCF8F9",
+      "sidebar": "#F5ECEF",
+      "panel": "#FFFFFF",
+      "soft": "#F7F0F2",
+      "border": "#E9D9DF",
+      "ink": "#46303A",
+      "muted": "#785C67",
+      "accent": "#9B435E",
+      "button": "#9B435E",
+      "on-button": "#FFFFFF",
+      "selection": "#F3DEE6"
+    },
+    "dark": {
+      "canvas": "#261B21",
+      "sidebar": "#1E151A",
+      "panel": "#35242C",
+      "soft": "#3D2932",
+      "border": "#58404B",
+      "ink": "#F3E6EC",
+      "muted": "#C8ABB8",
+      "accent": "#DFA2B7",
+      "button": "#A64D68",
+      "on-button": "#FFFFFF",
+      "selection": "#512F3E"
+    }
+  }
+]

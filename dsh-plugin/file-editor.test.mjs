@@ -229,6 +229,19 @@ test('documents are isolated by resource identity and dirty drafts survive provi
   assert.equal(other.doc.getSnapshot().text, 'saved in snapshot')
   assert.equal(other.doc.getSnapshot().version, 'v1'); assert.equal(other.doc.dirty(), true)
 })
+test('cold recovery preflight refuses a changed disk or dirty buffer without replacing text', async () => {
+  const original = fixture(); await original.doc.load(); original.doc.edit('saved draft')
+  const snapshot = original.docs.capture(), signal = new AbortController().signal
+  const changedDisk = fixture({ read: async () => ok({ text: 'external file', version: 'v2' }) })
+  await assert.rejects(changedDisk.docs.preflightRestore(snapshot, signal), /snapshot-file-conflict/)
+  assert.equal(changedDisk.doc.getSnapshot().text, '')
+  const changedBuffer = fixture(); await changedBuffer.doc.load(); changedBuffer.doc.edit('new buffer')
+  await assert.rejects(changedBuffer.docs.preflightRestore(snapshot, signal), /snapshot-file-conflict/)
+  assert.equal(changedBuffer.doc.getSnapshot().text, 'new buffer')
+  const matching = fixture(); await matching.docs.preflightRestore(snapshot, signal)
+  matching.docs.restore(snapshot); assert.equal(matching.doc.getSnapshot().text, 'saved draft')
+})
+
 test('capture refuses in-flight IO; repeated initial loads share one request', async () => {
   const waiting = deferred(); let calls = 0
   const { docs, doc } = fixture({ read: async () => { calls++; return waiting.promise } })

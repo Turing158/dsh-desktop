@@ -1,25 +1,5 @@
-//! Querying published `dsh` versions and installing one.
-//!
-//! Two design points, both learned from probing the real npm on this machine:
-//!
-//! * **The install is global, and the command is fixed.**
-//!   `npm install -g @deepseek-ai/dsh@latest` is what the app runs
-//!   when no `dsh` is found, so a machine with none ends up with one on `PATH`
-//!   that the user can also run from a terminal. The package set is measured
-//!   rather than the whole registry: [`install_argv`] is pinned by a test, so the
-//!   command cannot drift from the one the failure screen tells the user to run.
-//!
-//!   This deliberately gives up what the previous private-prefix install bought.
-//!   npm reconciles the *entire* global prefix on a global install — a dry run on
-//!   the author's machine reported `removed 24 packages, and changed 494` — so
-//!   packages other than dsh are re-resolved as a side effect. That was the reason
-//!   the private prefix existed; it is now an accepted cost of the app installing
-//!   to the same place the user would.
-//!
-//! * **There is no stable release.** Every published version carries an
-//!   `-rc`/`-alpha` suffix, so "latest" is itself a pre-release. `latest` is the
-//!   dist-tag to install, and the failure screen names the command rather than
-//!   claiming a version.
+//! Install into a host-owned isolated prefix. The recovery command shares
+//! the same arguments and never reconciles the system npm prefix.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -32,31 +12,26 @@ use serde::Serialize;
 
 use crate::dsh::CommandExt;
 
-/// The package spec the app installs — global, and always the `latest` dist-tag.
 pub const INSTALL_SPEC: &str = "@deepseek-ai/dsh@latest";
 
-/// The npm arguments for the automatic global install, after the entry script.
-///
-/// Returned rather than inlined at the spawn site so a test can pin the exact
-/// command: it is user-visible text on the failure screen, so a silent change to
-/// it would make the instructions wrong.
-pub fn install_argv() -> Vec<String> {
-    [
-        "install",
-        "-g",
-        INSTALL_SPEC,
-        "--no-audit",
-        "--no-fund",
-        "--loglevel=info",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+pub fn install_argv(prefix: &Path) -> Vec<String> {
+    vec!["install".into(), "--global".into(), "--prefix".into(), prefix.to_string_lossy().into_owned(),
+        INSTALL_SPEC.into(), "--no-audit".into(), "--no-fund".into(), "--loglevel=info".into()]
 }
 
-/// The command as the user would type it, for the failure screen and the clipboard.
-pub fn install_command() -> String {
-    format!("npm install -g {INSTALL_SPEC}")
+/// Exact candidate versions never resolve a moving tag after the user's check.
+pub fn candidate_argv(prefix: &Path, version: &str) -> Result<Vec<String>,String> {
+    if version.len()>64 || version.starts_with('v') || semver::Version::parse(version).is_err() {return Err("runtime-candidate-version-invalid".into());}
+    let mut args=install_argv(prefix);
+    args[4]=format!("@deepseek-ai/dsh@{version}");
+    args.extend(["--cache".into(),prefix.join("npm-cache").to_string_lossy().into_owned()]);
+    args.push("--fetch-retries=0".into());
+    Ok(args)
+}
+
+/// PowerShell command: single quotes prevent interpolation of unusual paths.
+pub fn install_command(prefix: &Path) -> String {
+    format!("npm install --global --prefix '{}' {INSTALL_SPEC}", prefix.to_string_lossy().replace("'", "''"))
 }
 
 /// A line of install progress streamed to the UI.
@@ -121,17 +96,25 @@ pub struct Installer {
 }
 
 impl Installer {
-    /// Start the automatic global install of `dsh`.
+    /// Start the automatic install into an isolated managed prefix.
     ///
     /// The command is [`install_argv`], run through `node <npm-cli.js>` rather
     /// than the `npm.cmd` shim: no shell is involved, so arguments need no
     /// quoting and no console window appears.
-    pub fn start(node_exe: &Path) -> Result<Self, String> {
-        Self::start_with_args(node_exe, &install_argv())
+    pub fn start(node_exe: &Path, prefix: &Path) -> Result<Self, String> {
+        Self::start_with_args(node_exe, &install_argv(prefix))
     }
 
     /// Use the caller's fixed package arguments for an explicit channel update.
     pub(crate) fn start_with_args(node_exe: &Path, args: &[String]) -> Result<Self, String> {
+        Self::start_with_context(node_exe,args,None)
+    }
+
+    pub(crate) fn start_candidate(node_exe:&Path,prefix:&Path,version:&str)->Result<Self,String> {
+        Self::start_with_context(node_exe,&candidate_argv(prefix,version)?,Some(prefix))
+    }
+
+    fn start_with_context(node_exe:&Path,args:&[String],candidate:Option<&Path>)->Result<Self,String> {
         let npm_cli = npm_cli_for(node_exe).ok_or_else(|| "未找到 npm".to_string())?;
 
         // Created before the spawn so the child can be adopted the moment it
@@ -140,8 +123,13 @@ impl Installer {
         let job = crate::winjob::JobObject::new()
             .map_err(|error| format!("无法创建进程作业对象：{error}"))?;
 
-        let mut child = Command::new(node_exe)
-            .arg(&npm_cli)
+        let mut command=Command::new(node_exe);
+        if let Some(prefix)=candidate {
+            command.current_dir(prefix).env("DSH_HOME",prefix.join("probe-home"))
+                .env("NARB_NATIVE_CACHE_DIR",prefix.join("native-cache"))
+                .env_remove("DSH_DESKTOP_DSH_BIN");
+        }
+        let mut child = command.arg(&npm_cli)
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -208,6 +196,23 @@ impl Installer {
         }
         Ok(status.success())
     }
+
+    /// Keep cancellation and a stalled registry bounded during preparation.
+    pub fn wait_timeout(&mut self, timeout: std::time::Duration) -> Result<bool,String> {
+        let deadline=std::time::Instant::now()+timeout;
+        loop {
+            if self.cancelled.lock().map(|flag|*flag).unwrap_or(true) {
+                self._job.terminate();let _=self.child.kill();let _=self.child.wait();
+                return Err("runtime-candidate-cancelled".into());
+            }
+            if let Some(status)=self.child.try_wait().map_err(|_|"runtime-candidate-install-failed")? {return Ok(status.success());}
+            if std::time::Instant::now()>=deadline {
+                self._job.terminate();let _=self.child.kill();let _=self.child.wait();
+                return Err("runtime-candidate-install-timeout".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
 }
 
 impl Drop for Installer {
@@ -247,72 +252,34 @@ fn spawn_progress_reader(reader: impl std::io::Read + Send + 'static, sender: Se
     });
 }
 
-/// Verify a global install landed where expected and can actually be executed.
-///
-/// A directory check alone is not enough: npm can exit successfully while a
-/// native dependency failed to build, and the resulting `dsh` would fail at
-/// boot. Running `--version` is the cheapest end-to-end proof.
-///
-/// The location is resolved the same way the app resolves `dsh` at startup
-/// ([`crate::dsh::global_dsh_bin`]) rather than by re-deriving npm's prefix
-/// layout, so "the install worked" and "the app can find it" cannot disagree.
-pub fn verify_install(node_exe: &Path) -> Result<String, String> {
-    let bin = crate::dsh::global_dsh_bin()
-        .ok_or_else(|| "无法确定全局 npm 安装目录".to_string())?;
-
-    if !bin.is_file() {
-        return Err(format!("安装后未找到 {}", bin.display()));
-    }
-
-    crate::dsh::probe_version(node_exe, &bin).ok_or_else(|| {
-        format!(
-            "安装后的 dsh 无法在 {} 秒内报告版本号，可能原生依赖未构建成功",
-            crate::dsh::VERSION_PROBE_TIMEOUT.as_secs()
-        )
-    })
+/// Verify the exact install destination, without rediscovering a PATH copy.
+pub fn verify_install(node_exe: &Path, prefix: &Path) -> Result<String, String> {
+    let bin = prefix.join("node_modules/@deepseek-ai/dsh/lib/bin.js");
+    if !bin.is_file() { return Err(format!("安装后未找到 {}", bin.display())); }
+    crate::dsh::probe_version(node_exe, &bin).ok_or_else(|| "安装后的 dsh 无法报告版本号".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn installs_globally_with_peer_dependencies_enabled() {
-        // Pinned because this is the command the app runs AND the command the
-        // failure screen tells the user to run; the two must not drift.
-        assert_eq!(
-            install_argv(),
-            vec![
-                "install",
-                "-g",
-                "@deepseek-ai/dsh@latest",
-                "--no-audit",
-                "--no-fund",
-                "--loglevel=info",
-            ]
-        );
+    fn install_only_targets_the_owned_prefix_and_keeps_peers_enabled() {
+        let prefix=Path::new("C:/isolated runtime");
+        assert_eq!(install_argv(prefix), vec!["install","--global","--prefix","C:/isolated runtime",INSTALL_SPEC,"--no-audit","--no-fund","--loglevel=info"]);
     }
-
     #[test]
-    fn the_displayed_command_matches_the_one_that_runs() {
-        let displayed = install_command();
-        assert_eq!(displayed, "npm install -g @deepseek-ai/dsh@latest");
-
-        // Everything the user is told to type must also be in the argv, minus the
-        // two tokens that name npm itself.
-        for token in displayed.split_whitespace().skip(1) {
-            assert!(
-                install_argv().iter().any(|arg| arg == token),
-                "`{token}` is shown to the user but is not part of the argv that runs"
-            );
+    fn displayed_command_uses_the_same_prefix_without_shell_interpolation() {
+        let prefix=Path::new("C:/DSH user's $runtime");
+        assert_eq!(install_command(prefix), "npm install --global --prefix 'C:/DSH user''s $runtime' @deepseek-ai/dsh@latest");
+        assert_eq!(install_argv(prefix)[3],prefix.to_string_lossy());
+    }
+    #[test]
+    fn candidate_installs_pin_an_exact_version_in_the_owned_prefix() {
+        let prefix=Path::new("C:/isolated candidate");
+        let args=candidate_argv(prefix,"0.2.1-rc.2").unwrap();
+        assert_eq!(args[3],prefix.to_string_lossy());assert_eq!(args[4],"@deepseek-ai/dsh@0.2.1-rc.2");
+        for version in ["latest","next","^1.0.0","v1.0.0","1.0.0 --force","https://example.org/package.tgz",""] {
+            assert!(candidate_argv(prefix,version).is_err());
         }
     }
-
-    #[test]
-    fn the_install_is_never_scoped_to_a_private_prefix() {
-        // `--prefix` would install somewhere the app's own resolver never looks,
-        // which is exactly the state this changed to get out of.
-        assert!(!install_argv().iter().any(|arg| arg == "--prefix"));
-    }
-
 }

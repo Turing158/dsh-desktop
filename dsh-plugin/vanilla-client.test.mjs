@@ -55,6 +55,7 @@ function loadBundle(document, react, primitives = { Menu: function Menu() {} }) 
     console,
     document,
     Blob, URL, atob,
+    MutationObserver: document.MutationObserver,
     Image: class { decode() { return Promise.resolve() } },
     CustomEvent: class {
       constructor(type, init) {
@@ -163,6 +164,12 @@ function createDocument() {
   const attributes = new Map()
   const listeners = new Map()
   const bodyStyle = new Map()
+  const observers = new Set()
+  function changed(name) {
+    for (const observer of observers) if (observer.options.attributeFilter.includes(name)) {
+      queueMicrotask(() => { if (observers.has(observer)) observer.callback([{ attributeName: name }]) })
+    }
+  }
 
   /** Ask for a mode, as the title bar's menu item does. */
   function requestMode(mode) {
@@ -182,8 +189,8 @@ function createDocument() {
     body,
     documentElement: {
       getAttribute: (name) => (attributes.has(name) ? attributes.get(name) : null),
-      setAttribute: (name, value) => attributes.set(name, String(value)),
-      removeAttribute: (name) => attributes.delete(name),
+      setAttribute: (name, value) => { attributes.set(name, String(value)); changed(name) },
+      removeAttribute: (name) => { attributes.delete(name); changed(name) },
       style: { setProperty: () => {} },
     },
     addEventListener: (name, fn) => {
@@ -201,6 +208,11 @@ function createDocument() {
     listenerCount: (name) => (listeners.get(name) ?? []).length,
     /** The body variable the app's presenter and the plugin both write. */
     bodyStyle,
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback }
+      observe(_target, options) { this.options = options; observers.add(this) }
+      disconnect() { observers.delete(this) }
+    },
   }
 
   return stub
@@ -668,6 +680,79 @@ test('原版 withdraws the override, and desktop re-asserts it', async () => {
   assert.equal(document.bodyStyle.get('--dsh-content-font-size'), '10px', 'and the override comes back with the overlay')
 })
 
+
+test('color schemes start with Default, retain a preloaded value and converge external changes', () => {
+  const document = createDocument()
+  document.documentElement.setAttribute('data-dsh-color-scheme', 'moss')
+  const loading = createContext({ status: 'loading' })
+  loadBundle(document, recordingReact).apply(loading.ctx)
+  const loadingRow = renderSection(loading.state.sectionComponent, n => n.props?.title === '配色方案')
+  assert.equal(loadingRow.props.value, 'moss')
+  assert.deepEqual(Array.from(loadingRow.props.options, option => [option.id, option.label]), [
+    ['default', '默认'], ['blue', '经典蓝'], ['teal', '雾海青'], ['moss', '苔原绿'], ['violet', '暮光紫'], ['amber', '纸墨琥珀'], ['rose', '玫瑰灰'],
+  ])
+  const readyDocument = createDocument(), { ctx, state } = createContext({ section: { colorScheme: 'violet' } })
+  loadBundle(readyDocument, recordingReact).apply(ctx)
+  assert.equal(readyDocument.documentElement.getAttribute('data-dsh-color-scheme'), 'violet')
+  state.setSection({ colorScheme: 'amber' })
+  assert.equal(readyDocument.documentElement.getAttribute('data-dsh-color-scheme'), 'amber')
+  state.setSection({})
+  assert.equal(readyDocument.documentElement.getAttribute('data-dsh-color-scheme'), 'default')
+})
+
+test('a refused color scheme restores saved colors and exposes an error', async () => {
+  const document = createDocument(), { ctx, state } = createContext({ writeResult: false, section: { colorScheme: 'moss' } })
+  loadBundle(document, recordingReact).apply(ctx)
+  const row = () => renderSection(state.sectionComponent, n => n.props?.title === '配色方案')
+  const pending = row().props.onChange('rose')
+  assert.equal(document.documentElement.getAttribute('data-dsh-color-scheme'), 'rose')
+  await pending
+  assert.deepEqual(state.writes, [['colorScheme', 'rose']])
+  assert.equal(row().props.value, 'moss')
+  assert.equal(document.documentElement.getAttribute('data-dsh-color-scheme'), 'moss')
+  assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert'))
+})
+
+test('palette changes notify canvas theme consumers with a fresh snapshot without writing theme settings', async () => {
+  const document = createDocument(), { ctx, state } = createContext({ section: { colorScheme: 'moss' } })
+  const snapshot = { preference: 'dark', revision: 7, fontSizes: { text: 14 } }
+  ctx.theme.getTheme = () => snapshot
+  const events = []
+  ctx.emit = (name, value) => events.push({ name, value })
+  loadBundle(document, recordingReact).apply(ctx)
+  await flushMicrotasks()
+  events.length = 0
+  state.setSection({ colorScheme: 'rose' })
+  await flushMicrotasks()
+  assert.equal(events.length, 1)
+  assert.equal(events[0].name, 'theme/change')
+  assert.notEqual(events[0].value, snapshot)
+  assert.equal(events[0].value.revision, 7)
+  assert.equal(events[0].value.fontSizes, snapshot.fontSizes)
+  assert.deepEqual(state.writes, [])
+  document.documentElement.setAttribute('data-dsh-color-scheme', 'rose')
+  await flushMicrotasks()
+  assert.equal(events.length, 1, 'unchanged palettes do not notify again')
+})
+
+test('rapid color choices keep the newest palette until both saves settle', async () => {
+  const document = createDocument(), commits = []
+  const { ctx, state } = createContext({ write: (field, value) => new Promise(resolve => {
+    commits.push(() => { state.setSection({ [field]: value }); resolve(true) })
+  }) })
+  loadBundle(document, recordingReact).apply(ctx)
+  const row = () => renderSection(state.sectionComponent, n => n.props?.title === '配色方案')
+  const first = row().props.onChange('blue'), last = row().props.onChange('rose')
+  await flushMicrotasks()
+  assert.equal(commits.length, 1)
+  commits.shift()(); await first
+  assert.equal(row().props.value, 'rose')
+  assert.equal(document.documentElement.getAttribute('data-dsh-color-scheme'), 'rose')
+  await flushMicrotasks()
+  commits.shift()(); await last
+  assert.equal(row().props.value, 'rose')
+  assert.deepEqual(state.writes, [['colorScheme', 'blue'], ['colorScheme', 'rose']])
+})
 
 test('a refused reasoning control preference restores the saved style and reports failure', async () => {
   const document = createDocument()

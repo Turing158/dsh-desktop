@@ -14,3 +14,7 @@ pnpm-lock.yaml
 *.log
 plan/
 backups/
+
+# Local design previews and one-off helpers
+/previews/
+/tools/add-reliability-translations.mjs

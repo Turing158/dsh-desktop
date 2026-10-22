@@ -25,21 +25,60 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
+test('the title-bar host loads using only its packaged resources', async () => {
+  const config = JSON.parse(readFileSync(join(here, '../src-tauri/tauri.conf.json'), 'utf8'))
+  const packaged = await mkdtemp(join(tmpdir(), 'dsh-title-bar-package-'))
+  try {
+    for (const [source, destination] of Object.entries(config.bundle.resources)) {
+      if (!destination.startsWith('dsh-plugin/title-bar/')) continue
+      const target = join(packaged, destination)
+      await mkdir(dirname(target), { recursive: true })
+      await copyFile(join(here, '../src-tauri', source), target)
+    }
+    // Import outside the checkout: source files cannot mask missing resources.
+    const host = await import(pathToFileURL(join(packaged, 'dsh-plugin/title-bar/index.js')).href)
+    assert.equal(host.name, 'desktop-title-bar')
+    assert.equal(typeof host.apply, 'function')
+  } finally {
+    await rm(packaged, { recursive: true, force: true })
+  }
+})
+
 test('bundled overlay paths match the runtime resource lookup and contain the state bridge', () => {
   const config = JSON.parse(readFileSync(join(here, '../src-tauri/tauri.conf.json'), 'utf8'))
   const resources = config.bundle.resources
   assert.equal(Array.isArray(resources), false, 'explicit targets prevent ../ resources from being relocated under _up_')
-  for (const file of ['desktop-notify.patch.yml', 'llm-compat.mjs', 'ui-state/package.json', 'ui-state/index.js', 'ui-state/client.js', 'ui-state/bridge.js', 'ui-state/adapter.js',
+  for (const file of ['desktop-notify.patch.yml', 'llm-compat.mjs', 'ui-overlay/color-schemes.mjs', 'ui-overlay/color-schemes.json', 'ui-state/package.json', 'ui-state/index.js', 'ui-state/client.js', 'ui-state/bridge.js', 'ui-state/adapter.js', 'ui-state/checkpoints.js',
     'plugin-control/prepare-boot.mjs', 'plugin-control/profile-model.mjs', 'plugin-control/profile-host.mjs', 'plugin-control/marketplace.mjs', 'plugin-control/hot-policy.json', 'plugin-control/protected-modules.json']) {
     assert.equal(resources['../dsh-plugin/' + file], 'dsh-plugin/' + file)
     assert.ok(readFileSync(join(here, file)).length > 0)
+  }
+})
+
+test('appearance palettes load from their packaged module and data files', async () => {
+  const config = JSON.parse(readFileSync(join(here, '../src-tauri/tauri.conf.json'), 'utf8'))
+  const packaged = await mkdtemp(join(tmpdir(), 'dsh-palettes-package-'))
+  try {
+    for (const [source, destination] of Object.entries(config.bundle.resources)) {
+      if (!destination.startsWith('dsh-plugin/ui-overlay/color-schemes.')) continue
+      const target = join(packaged, destination)
+      await mkdir(dirname(target), { recursive: true })
+      await copyFile(join(here, '../src-tauri', source), target)
+    }
+    const palettes = await import(pathToFileURL(join(packaged, 'dsh-plugin/ui-overlay/color-schemes.mjs')).href)
+    assert.deepEqual(palettes.colorSchemeIds, ['default', 'blue', 'teal', 'moss', 'violet', 'amber', 'rose'])
+    assert.ok(palettes.colorSchemeStyles().includes('--dsw-specific-input-major'))
+  } finally {
+    await rm(packaged, { recursive: true, force: true })
   }
 })
 
@@ -56,7 +95,7 @@ test('every client plugin the patch mounts is packaged complete', () => {
   const resources = config.bundle.resources
   const patch = readFileSync(join(here, 'desktop-notify.patch.yml'), 'utf8')
 
-  for (const plugin of ['i18n', 'title-bar', 'ui-client', 'account-popover', 'sidebar-terminal', 'file-editor', 'directory-picker', 'sidebar-archive']) {
+  for (const plugin of ['i18n', 'title-bar', 'ui-client', 'account-popover', 'sidebar-terminal', 'file-editor', 'directory-picker', 'sidebar-archive', 'desktop-maintenance']) {
     assert.ok(
       patch.includes(`./${plugin}/index.js`),
       `${plugin} is not mounted by the patch, so nothing serves its browser half`,
@@ -93,7 +132,7 @@ function registeredCommands() {
     // A command may be registered through its module path (`window_controls::…`,
     // `folder_focus::…`); the ACL grants the bare function name, so the module
     // prefix is stripped whatever module the command lives in.
-    .map((entry) => entry.trim().replace(/^[a-z_]+::/, ''))
+    .map((entry) => entry.trim().split('::').at(-1))
     .filter((entry) => entry.length > 0)
 }
 
@@ -182,4 +221,41 @@ test('capabilities split the local onboarding from the remote page', () => {
     )
   }
   assert.equal(remote.remote, undefined, 'remote host permissions are granted only for the actual backend origin at runtime')
+})
+
+test('diagnostic reads and export have separate grants and no wildcard remote access', () => {
+  const local = JSON.parse(readFileSync(join(capabilitiesDir,'default.json'),'utf8'))
+  assert.ok(local.permissions.includes('allow-diagnostics-read'))
+  assert.ok(local.permissions.includes('allow-diagnostics-export'))
+  const grant = readFileSync(join(root,'src-tauri/src/remote_control.rs'),'utf8')
+  assert.ok(grant.includes('"allow-diagnostics-read", "allow-diagnostics-export"'))
+  const commands = readFileSync(join(root,'src-tauri/src/diagnostics.rs'),'utf8')
+  assert.ok(commands.includes('crate::remote_control::caller(window'))
+  assert.ok(commands.includes('if window.url().map_err'))
+  assert.ok(!commands.includes('destination: String'))
+})
+test('backup export and inspection are separate, native selections carry no frontend path', () => {
+  for (const file of ['default.json','diagnostics.json']) {
+    const local = JSON.parse(readFileSync(join(capabilitiesDir,file),'utf8'))
+    assert.ok(local.permissions.includes('allow-backup-inspect'))
+    assert.ok(!local.permissions.includes('allow-backup-export'))
+    assert.ok(!local.permissions.includes('allow-recovery-restore'))
+    assert.ok(!local.permissions.includes('allow-draft-checkpoint'))
+    assert.ok(!local.permissions.includes('allow-backup-restore'))
+  }
+  const backend = readFileSync(join(root,'src-tauri/src/backup/mod.rs'),'utf8')
+  assert.ok(backend.includes('crate::remote_control::caller(&window,identity)'))
+  assert.ok(backend.includes('pick_directory(owner'))
+  assert.ok(backend.includes('pick_file(owner'))
+  assert.ok(!backend.includes('destination: String'))
+  assert.ok(!backend.includes('source: String'))
+})
+
+test('candidate installation and cancellation are restricted to the current backend', () => {
+  const permission=readFileSync(join(root,'src-tauri/permissions/dsh-update.toml'),'utf8')
+  assert.ok(permission.includes('prepare_dsh_candidate'));assert.ok(permission.includes('cancel_dsh_candidate'))
+  for (const file of ['default.json','diagnostics.json']) {
+    const local=JSON.parse(readFileSync(join(capabilitiesDir,file),'utf8'))
+    assert.ok(!local.permissions.includes('allow-dsh-update'))
+  }
 })

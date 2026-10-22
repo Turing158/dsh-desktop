@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "allow-dsh-update"
-description = "Check dsh stable and published versions; install only @deepseek-ai/dsh@latest or an exact validated preview version. Granted dynamically to the running backend origin; commands validate the current main window."
-commands.allow = ["check_dsh_update", "install_dsh_update"]
+description = "Check dsh versions; prepare or cancel an isolated exact-version candidate from the current desktop document. Preparation never changes selection or starts real-data migration."
+commands.allow = ["check_dsh_update", "dsh_update_activity", "install_dsh_update", "prepare_dsh_candidate", "cancel_dsh_candidate"]

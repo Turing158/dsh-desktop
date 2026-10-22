@@ -49,6 +49,14 @@ pub(crate) fn pick_directory(
     title: &str,
     label: &str,
 ) -> windows::core::Result<Option<PathBuf>> {
+    pick_path(owner,title,label,true)
+}
+pub(crate) fn pick_file(owner: usize, title: &str, label: &str) -> windows::core::Result<Option<PathBuf>> {
+    pick_path(owner,title,label,false)
+}
+fn pick_path(owner: usize, title: &str, label: &str, folder: bool) -> windows::core::Result<Option<PathBuf>> {
+    #[cfg(debug_assertions)]
+    if let Some(selection) = smoke_selection(folder) { return Ok(selection); }
     use std::os::windows::ffi::OsStringExt;
     use windows::core::{HRESULT, HSTRING};
     use windows::Win32::Foundation::{ERROR_CANCELLED, HWND};
@@ -58,7 +66,7 @@ pub(crate) fn pick_directory(
     };
     use windows::Win32::UI::Shell::{
         FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, FOS_NOCHANGEDIR, FOS_PATHMUSTEXIST,
-        FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+        FOS_PICKFOLDERS, FOS_FILEMUSTEXIST, SIGDN_FILESYSPATH,
     };
     struct Apartment;
     impl Drop for Apartment {
@@ -73,7 +81,7 @@ pub(crate) fn pick_directory(
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
         dialog.SetOptions(
             dialog.GetOptions()?
-                | FOS_PICKFOLDERS
+                | if folder { FOS_PICKFOLDERS } else { FOS_FILEMUSTEXIST }
                 | FOS_FORCEFILESYSTEM
                 | FOS_PATHMUSTEXIST
                 | FOS_NOCHANGEDIR,
@@ -91,4 +99,19 @@ pub(crate) fn pick_directory(
         CoTaskMemFree(Some(name.0.cast()));
         Ok(Some(path))
     }
+}
+// Explicit isolated-test selector. Release builds always use the native picker;
+// no IPC accepts a filename or activates this branch.
+#[cfg(debug_assertions)]
+fn smoke_selection(folder: bool) -> Option<Option<PathBuf>> {
+    let root = PathBuf::from(std::env::var_os("DSH_DESKTOP_SMOKE_DIR")?).canonicalize().ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("dialog-selection.json")).ok()?).ok()?;
+    let selected = &value[if folder {"folder"} else {"file"}];
+    if selected.is_null() {return Some(None)}
+    let path = PathBuf::from(selected.as_str()?);
+    let info = std::fs::symlink_metadata(&path).ok()?;
+    if info.file_type().is_symlink() {return Some(None)}
+    let path = path.canonicalize().ok()?;
+    if !path.starts_with(&root) || folder && !info.is_dir() || !folder && !info.is_file() {return Some(None)}
+    Some(Some(path))
 }

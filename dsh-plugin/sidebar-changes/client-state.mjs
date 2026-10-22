@@ -56,6 +56,14 @@ export function createStateProvider(ctx, states) {
       }
       return sides.length ? { sides } : null
     },
+    preflightRestore(saved) {
+      for (const side of saved.sides) {
+        if (!stores(ctx).some(value => value.sessionId === side.sessionId)) throw Error('snapshot-session-missing')
+        for (const tab of side.tabs) {
+          if ((!parseChangeAddress(tab.address) && !tab.address.startsWith(PREFIX)) || !VIEWS.includes(tab.state.source)) throw Error('snapshot-panel-unsupported')
+        }
+      }
+    },
     async restore(saved) {
       for (const side of saved.sides) {
         const store = stores(ctx).find(value => value.sessionId === side.sessionId)?.store

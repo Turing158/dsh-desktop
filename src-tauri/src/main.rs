@@ -20,8 +20,16 @@ mod deep_link;
 mod directory_picker;
 mod drag_guard;
 mod dsh;
+mod runtime_store;
 mod builtin_plugins;
 mod dsh_update;
+mod diagnostics;
+mod data_inventory;
+mod compatibility;
+mod maintenance;
+mod recovery_store;
+mod backup;
+mod redaction;
 mod desktop_update;
 #[cfg(feature = "single")]
 mod embedded_plugins;
@@ -66,6 +74,7 @@ const EVENT_INSTALL_PROGRESS: &str = "install-progress";
 const EVENT_STATUS_CHANGED: &str = "status-changed";
 
 fn main() {
+    let maintenance_coordinator = maintenance::MaintenanceCoordinator::default();
     #[cfg(feature = "single")]
     if !embedded_plugins::check_webview() {
         std::process::exit(1);
@@ -91,7 +100,12 @@ fn main() {
         .manage(locale::NativeLocale::default())
         .manage(state::shared())
         .manage(terminal::TerminalManager::default())
-        .manage(dsh_update::UpdateManager::default())
+        .manage(dsh_update::UpdateManager::new(maintenance_coordinator.clone()))
+        .manage(dsh_update::CandidateManager::default())
+        .manage(diagnostics::Diagnostics::default())
+        .manage(backup::RestoreManager::default())
+        .manage(recovery_store::BackgroundCheckpoints::default())
+        .manage(maintenance_coordinator)
         .manage(session_export::ExportDestinations::default())
         .invoke_handler(|invoke| {
             if !remote_control::current_invocation(&invoke) {
@@ -101,13 +115,21 @@ fn main() {
             let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
                 locale::desktop_locale_changed,
                 probe_state,
+                runtime_store::desktop_runtime_ready,
                 boot_bar::desktop_boot_context,
                 retry_boot,
                 cancel_install,
                 install_node,
                 open_external,
                 dsh_update::check_dsh_update,
+                diagnostics::desktop_diagnostics,
+                diagnostics::desktop_diagnostics_check,
+                diagnostics::desktop_diagnostics_export,
+                compatibility::desktop_capabilities_report,
+                dsh_update::dsh_update_activity,
                 dsh_update::install_dsh_update,
+                dsh_update::prepare_dsh_candidate,
+                dsh_update::cancel_dsh_candidate,
                 desktop_update::check_desktop_update,
                 desktop_update::open_desktop_release,
                 window_controls::window_start_drag,
@@ -127,6 +149,13 @@ fn main() {
                 ui_snapshot::submit_ui_snapshot,
                 ui_snapshot::request_ui_restore,
                 ui_snapshot::finish_ui_restore,
+                recovery_store::desktop_recovery_list,
+                recovery_store::desktop_draft_checkpoint,
+                recovery_store::desktop_recovery_restore,
+                recovery_store::desktop_recovery_defer,
+                backup::desktop_backup_export,
+                backup::desktop_backup_inspect,
+                backup::restore::desktop_backup_restore,
                 deep_link::report_deep_link,
                 remote_control::remote_status,
                 remote_control::remote_lan_addresses,
@@ -150,6 +179,7 @@ fn main() {
             handler(invoke)
         })
         .setup(|app| {
+            diagnostics::record(app.handle(), "desktop", "starting");
             notify::initialize(app.handle());
             create_main_window(app.handle(), false)?;
             // The tray icon exists from launch, not from the first close: it is
@@ -238,6 +268,7 @@ fn create_main_window(app: &AppHandle, restoring: bool) -> tauri::Result<()> {
         // decorationless window has no controls until DSH's client plugin mounts —
         // and none at all if the boot fails. See `boot_bar`.
         .initialization_script(boot_bar::initialization_script(app))
+        .initialization_script(compatibility::initialization_script())
         .initialization_script(ui_snapshot::initialization_script(app, generation, restoring))
         .on_new_window(move |url, features| browser_window::open(&popup_app, url, features))
         .on_page_load(move |window, payload| {
@@ -485,6 +516,18 @@ fn patch_file(app: &AppHandle) -> Result<PathBuf, String> {
 
 #[cfg(not(feature = "single"))]
 fn patch_file(app: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
+    {
+        if let Some(root)=std::env::var_os("DSH_DESKTOP_SMOKE_DIR") {
+            let packaged=PathBuf::from(root).join(PATCH_RESOURCE);
+            if packaged.is_file() {return Ok(packaged)}
+        }
+        // Tauri may leave copied resources beside a debug executable. Prefer
+        // the workspace so cargo-built smoke runs and dev reloads use current
+        // plugin sources instead of an older copied bundle.
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dsh-plugin/desktop-notify.patch.yml");
+        if source.is_file() { return Ok(source); }
+    }
     if let Ok(dir) = app.path().resource_dir() {
         let candidate = dir.join("dsh-plugin").join("desktop-notify.patch.yml");
         if candidate.is_file() {
@@ -518,6 +561,7 @@ fn publish(app: &AppHandle, state: &Shared) {
 
 /// Set the phase and notify the UI.
 fn set_phase(app: &AppHandle, state: &Shared, phase: Phase) {
+    let code = match &phase { Phase::Probing => "probing", Phase::NeedsNode {..} => "node-required", Phase::Installing {..} => "installing", Phase::Starting {..} => "backend-starting", Phase::Running {..} => "backend-running", Phase::Failed {..} => "backend-failed" };
     if let Ok(mut guard) = state.lock() {
         if guard.ui.phase == ui_snapshot::UiPhase::Exiting {
             return;
@@ -525,6 +569,7 @@ fn set_phase(app: &AppHandle, state: &Shared, phase: Phase) {
         guard.phase = phase;
     }
     publish(app, state);
+    diagnostics::record(app, "boot", code);
 }
 
 /// Record a failure and show it.
@@ -544,6 +589,7 @@ fn fail(app: &AppHandle, state: &Shared, message: impl Into<String>, hint: impl 
 
 /// The startup sequence: probe, offer to install if needed, then start.
 fn boot(app: AppHandle) {
+    let Ok(_maintenance_lease) = app.state::<maintenance::MaintenanceCoordinator>().begin(maintenance::Kind::Install) else { return };
     let state = app.state::<Shared>().inner().clone();
     {
         let Ok(mut guard) = state.lock() else {
@@ -567,6 +613,11 @@ fn boot(app: AppHandle) {
         }
     }
     let _boot_guard = BootGuard(state.clone());
+    // Audit once per launch/retry on the boot worker. Interrupted legacy
+    // updates have no data checkpoint, so never infer an automatic rollback.
+    if let Ok(directory) = maintenance::directory(&app) {
+        if maintenance::audit_interrupted(&directory).is_err() { diagnostics::record(&app, "maintenance", "journal-audit-failed"); }
+    }
     set_phase(&app, &state, Phase::Probing);
 
     let Some(node_exe) = dsh::resolve_node() else {
@@ -602,31 +653,20 @@ fn boot(app: AppHandle) {
     // The version is still reported to the UI through `probe_state`, which
     // re-reads it; boot itself only needs the executable.
 
-    // Prefer an existing global install: reusing the runtime the user already
-    // has avoids a second copy fighting over the shared profile directory.
-    match dsh::resolve_dsh(false) {
-        Some((dsh_bin, source)) => {
-            let runtime = Runtime {
-                node_exe,
-                dsh_bin,
-                source,
-                version: None,
-            };
-            launch(&app, &state, runtime);
-        }
-        // No dsh anywhere. This is the first-launch path, not an error: install
-        // one globally and start it, with no page in between to click through.
-        None => auto_install(&app, &state, node_exe),
+    match runtime_store::resolve(&app,&node_exe) {
+        Ok(Some(runtime)) => launch(&app,&state,runtime),
+        Ok(None) => auto_install(&app,&state,node_exe),
+        Err(error) => fail(&app,&state,format!("运行时选择失败：{error}"),"已保留运行时目录，请打开故障诊断后重新检测。"),
     }
 }
 
-/// Install `dsh` globally, then start it.
+/// Install into an independent staging prefix, freeze it, then start it.
 ///
 /// Runs on the boot thread, which is why the install's own wait is inline: the
 /// startup sequence has exactly one owner, and the UI only ever observes it
 /// through phase changes and progress events.
 ///
-/// Failure is the one case that asks the user for anything. A global install can
+/// Failure is the one case that asks the user for anything. An isolated install can
 /// fail for reasons this app cannot fix (a proxy, a registry that is down, npm's
 /// script policy), so the failure screen hands over the command to run by hand
 /// rather than retrying silently.
@@ -636,7 +676,17 @@ fn auto_install(app: &AppHandle, state: &Shared, node_exe: PathBuf) {
     }
     set_phase(app, state, Phase::Installing { version: None });
 
-    let mut installer = match npm::Installer::start(&node_exe) {
+    let prefix=match runtime_store::install_directory(app) {
+        Ok(prefix)=>prefix,
+        Err(error)=>{manual_install_failure(app,state,error);return;}
+    };
+    if let Ok(mut s)=state.lock() {s.install_command=npm::install_command(&prefix);}
+    // A successful manual install into the displayed prefix is reused on retry.
+    if npm::verify_install(&node_exe,&prefix).is_ok() {
+        prepare_first_install(app,state,&node_exe,&prefix);
+        return;
+    }
+    let mut installer = match npm::Installer::start(&node_exe,&prefix) {
         Ok(installer) => installer,
         Err(error) => {
             manual_install_failure(app, state, format!("无法启动安装：{error}"));
@@ -656,7 +706,6 @@ fn auto_install(app: &AppHandle, state: &Shared, node_exe: PathBuf) {
     // Stream npm's output to the page while it runs, and keep it in the state
     // log as well: the failure screen shows the tail, and npm's own message is
     // more useful than any summary this app could write.
-    let mut transcript: Vec<String> = Vec::new();
     if let Some(receiver) = installer.take_events() {
         let app_for_progress = app.clone();
         let state_for_progress = state.clone();
@@ -676,7 +725,7 @@ fn auto_install(app: &AppHandle, state: &Shared, node_exe: PathBuf) {
         // so npm's output is drained while it runs instead of filling a pipe.
         let outcome = installer.wait();
         // The channel closes once npm exits, so this join terminates.
-        transcript = progress_thread.join().unwrap_or_default();
+        let transcript = progress_thread.join().unwrap_or_default();
 
         // `Ok(false)` is npm exiting non-zero — a normal failure, not an error
         // in the wrapper — so it must be handled here rather than falling through
@@ -717,7 +766,7 @@ fn auto_install(app: &AppHandle, state: &Shared, node_exe: PathBuf) {
 
     // Verify rather than trust the exit code: npm can succeed while a native
     // dependency failed to build, leaving a dsh that cannot boot.
-    let reported = match npm::verify_install(&node_exe) {
+    let reported = match npm::verify_install(&node_exe,&prefix) {
         Ok(reported) => reported,
         Err(error) => {
             manual_install_failure(app, state, format!("安装后校验失败：{error}"));
@@ -734,30 +783,19 @@ fn auto_install(app: &AppHandle, state: &Shared, node_exe: PathBuf) {
         },
     );
 
-    // Resolve again rather than assuming the path: this is the same lookup the
-    // next launch will do, so a successful start also proves the next one works.
-    match dsh::resolve_dsh(false) {
-        Some((dsh_bin, source)) => {
-            let runtime = Runtime {
-                node_exe,
-                dsh_bin,
-                source,
-                version: Some(reported),
-            };
-            launch(app, state, runtime);
-        }
-        None => manual_install_failure(
-            app,
-            state,
-            format!(
-                "安装报告成功（dsh {reported}），但应用仍找不到 dsh 的入口文件{}",
-                transcript
-                    .last()
-                    .map(|line| format!("（npm 最后一行：{line}）"))
-                    .unwrap_or_default()
-            ),
-        ),
+    prepare_first_install(app,state,&node_exe,&prefix);
+}
+
+fn prepare_first_install(app: &AppHandle, state: &Shared, node_exe: &std::path::Path, prefix: &std::path::Path) {
+    let source=prefix.join("node_modules/@deepseek-ai/dsh");
+    let runtime=match runtime_store::freeze(app,node_exe,&source) {
+        Ok(runtime)=>runtime,
+        Err(error)=>{manual_install_failure(app,state,format!("无法准备独立运行时：{error}"));return;}
+    };
+    if let Err(error)=runtime_store::remember_first_install(app,&runtime) {
+        manual_install_failure(app,state,error);return;
     }
+    launch(app,state,runtime);
 }
 
 /// Drop the install's stop handle once it has finished.
@@ -837,6 +875,11 @@ fn exiting(state: &Shared) -> bool {
 
 fn launch(app: &AppHandle, state: &Shared, mut runtime: Runtime) {
     runtime.version = dsh::dsh_version(&runtime.node_exe, &runtime.dsh_bin);
+    if let Err(code)=backup::recover_interrupted(app,&runtime) {
+        diagnostics::record(app,"backup","cold-rollback-blocked");
+        fail(app,state,format!("配置检查点恢复未完成：{code}"),"当前文件和恢复材料均已保留。请检查配置冲突后重新检测。");
+        return;
+    }
     let config = remote_control::cold_config(app, state);
     restart_backend(app, state, runtime, config);
 }
@@ -854,6 +897,7 @@ fn restart_backend(
         if exiting(state) {
             return;
         }
+        if backup::rollback_pending(app) {return;}
         if let Ok(mut s) = state.lock() {
             s.remote.active = None;
             s.remote.error = Some(remote_control::Error::new("start-failed", "", &error));
@@ -870,6 +914,9 @@ fn restart_backend(
                 s.process.take()
             };
             drop(previous);
+            let lease = state.lock().ok().and_then(|mut s| s.ui.recovery_lease.take());
+            if let Some(lease) = &lease { let _ = lease.progress().failed("backend-restart-failed"); }
+            drop(lease);
             fail(
                 app,
                 state,
@@ -883,6 +930,12 @@ fn restart_backend(
     if exiting(state) {
         return;
     }
+    let progress = state.lock().ok().and_then(|s| s.ui.recovery_lease.as_ref().map(|lease| lease.progress()));
+    if let Some(progress) = progress {
+        if progress.backend_ready().is_err() {
+            diagnostics::record(app, "maintenance", "journal-save-failed");
+        }
+    }
     {
         let mut s = state.lock().unwrap();
         if s.ui.snapshot.is_some() {
@@ -892,6 +945,8 @@ fn restart_backend(
         s.remote.applying = false;
     }
     navigate_current(app);
+    let restore_operation = state.lock().ok().filter(|s| s.ui.snapshot.is_some()).map(|s| s.ui.operation_id);
+    if let Some(operation) = restore_operation { minimal::watch_recovery(app, operation); }
     // Publish Running only once the navigation is in flight. The boot page is
     // the sole `status-changed` listener and refreshes on every event, so an
     // event landing on the very edge of the navigation makes it probe from a
@@ -1197,6 +1252,15 @@ fn record(app: &AppHandle, state: &Shared, event: ChildEvent, instance: u64) {
             return;
         }
         match event {
+            ChildEvent::Storage(roots) => {
+                guard.storage = Some(data_inventory::ObservedStorage { roots, backend_instance: instance, observed_at: maintenance::now_ms() });
+            }
+            ChildEvent::Capability(report) => {
+                let _ = compatibility::record(&mut guard, report, instance, "host");
+            }
+            ChildEvent::UpdateActivity(running) => {
+                guard.update_activity = running.map(|running| (instance, running));
+            }
             ChildEvent::Log(line) => {
                 let line = remote_control::redact(&line);
                 debug_log(&format!("[log] {line}"));
@@ -1290,7 +1354,7 @@ fn navigate(app: &AppHandle, url: &str) {
 /// Destroying a WebView window does not end the backend's lifetime.
 pub(crate) fn shutdown_runtime(app: &AppHandle) {
     terminal::shutdown(app);
-    let (process, installer, snapshot) = {
+    let (process, installer, snapshot, lease) = {
         let state = app.state::<Shared>();
         let Ok(mut guard) = state.lock() else {
             return;
@@ -1302,6 +1366,7 @@ pub(crate) fn shutdown_runtime(app: &AppHandle) {
             guard.process.take(),
             guard.installer.take(),
             guard.ui.snapshot.take(),
+            guard.ui.recovery_lease.take(),
         )
     };
     // Killing/waiting and temporary-file cleanup must happen outside the shared lock.
@@ -1310,6 +1375,8 @@ pub(crate) fn shutdown_runtime(app: &AppHandle) {
     }
     drop(process);
     drop(snapshot);
+    if let Some(lease) = &lease { let _ = lease.progress().failed("application-exited"); }
+    drop(lease);
 }
 
 /// Why the window is built with [`disable_drag_drop_handler`].
@@ -1434,6 +1501,10 @@ fn retry_boot(
     state: State<'_, Shared>,
 ) -> Result<(), String> {
     require_trusted_origin(&window)?;
+
+    if app.state::<maintenance::MaintenanceCoordinator>().status().is_some() {
+        return Err("maintenance-busy".into());
+    }
 
     let shared = state.inner().clone();
     // A retry while a boot is already running would install twice, so it is

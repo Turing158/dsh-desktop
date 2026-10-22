@@ -975,9 +975,33 @@ var React = require('react')
       ]
     }
 
-    /** The 更多 menu contains appearance, settings, updates and about. */
+    // Refresh the complete catalog, including sessions outside the selected project.
+    // Missing/disconnected state must never be interpreted as an idle backend.
+    async function runningSessions(sessions) {
+      if (!sessions?.refresh || !sessions.list?.getSnapshot) throw new Error(t('无法确认会话状态，请稍后重试更新。'))
+      await sessions.refresh()
+      var list = sessions.list.getSnapshot()
+      if (!list || list.phase !== 'ready' || !list.byId || !Array.isArray(list.ids)
+        || list.ids.some(function (id) { return typeof list.byId[id]?.running !== 'boolean' })) {
+        throw new Error(t('无法确认会话状态，请稍后重试更新。'))
+      }
+      return Object.values(list.byId).some(function (session) { return session.running })
+    }
+
+    function updatePause(signal) {
+      return new Promise(function (resolve) {
+        if (signal.aborted) { resolve(); return }
+        var timer = setTimeout(done, 2000)
+        function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve() }
+        signal.addEventListener('abort', done, { once: true })
+      })
+    }
+
+    /** The 更多 menu contains appearance, settings, maintenance, updates and about. */
     function updateLabel(update) {
       if (update.busy === 'check') return t('正在检测 dsh 更新…')
+      if (update.busy === 'preparing') return t('正在准备候选版本…')
+      if (update.busy === 'waiting') return t('等待会话结束后更新…')
       if (update.busy) return t('正在更新 dsh…')
       if (update.error) return update.versions ? t('dsh 更新失败') : t('dsh 检测失败')
       var versions = update.versions
@@ -996,6 +1020,10 @@ var React = require('react')
           icon: h(vanilla ? IconStyles : IconRestore),
         },
         { id: 'settings', label: t('设置'), icon: h(IconSettings) },
+        { type: 'separator', id: 'maintenance-separator' },
+        { id: 'diagnostics', label: t('诊断'), icon: h(IconQuestion), disabled: !hasHost() },
+        { id: 'backup', label: t('备份与恢复'), icon: h(IconRestore), disabled: !hasHost() },
+        { type: 'separator', id: 'update-separator' },
         { id: 'dsh-update', label: t('检测更新...'), icon: h(IconRestore) },
         { id: 'about', label: t('关于'), icon: h(IconQuestion) },
       ]
@@ -1329,6 +1357,8 @@ var React = require('react')
       var sameVersion = versions && versions.latest === versions.preview
       var blocked = Boolean(update.busy) || !versions
       return h(React.Fragment, null,
+          update.busy === 'waiting' ? h(Button, { variant: 'outline', onClick: props.onCancel }, t('取消等待')) : null,
+          update.busy === 'preparing' ? h(Button, { variant: 'outline', onClick: props.onCancel }, t('取消准备')) : null,
           h(Button, {
             variant: 'primary',
             disabled: blocked || versions.current === versions.latest,
@@ -1361,11 +1391,16 @@ var React = require('react')
             h('dd', null, h('code', { className: 'dshTb__versionTag' }, versions.preview)),
           ),
         ) : null,
-        update.busy && update.busy !== 'check'
+        versions?.candidateOnly ? h('p', { className: 'dshTb__aboutText' }, t('当前操作只准备独立候选版本。准备完成后继续使用当前版本，自动切换与回退尚未开放。')) : null,
+        update.busy === 'waiting'
+          ? h('p', { className: 'dshTb__aboutText' }, t('所有运行中的会话结束后，将自动保存界面并更新。等待期间可以继续使用。'))
+          : update.busy === 'preparing'
+          ? h('p', { className: 'dshTb__aboutText' }, t('正在安装并校验独立候选版本，请稍候…'))
+          : update.busy && update.busy !== 'check'
           ? h('p', { className: 'dshTb__aboutText' }, t('正在安装') + (update.busy === 'latest' ? t('最新稳定版') : t('最新预览版')) + t('，请稍候…'))
           : null,
-        update.message ? h('p', { className: 'dshTb__aboutText', role: 'status' }, update.message) : null,
-        update.error ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, update.error) : null,
+        update.message ? h('p', { className: 'dshTb__aboutText', role: 'status' }, t(update.message, update.messageValues)) : null,
+        update.error ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, t(update.error)) : null,
       )
     }
 
@@ -1439,7 +1474,7 @@ var React = require('react')
           h(Button, { variant: 'outline', disabled: Boolean(props.desktopUpdate.busy), onClick: props.onCheckDesktop }, t('重新检测')),
           release ? h(Button, { variant: release.updateAvailable ? 'primary' : 'outline', disabled: Boolean(props.desktopUpdate.busy), onClick: props.onOpenRelease },
             props.desktopUpdate.busy === 'open' ? t('正在打开…') : release.updateAvailable ? t('前往下载') : t('查看发布页')) : null,
-        ) : h(DshUpdateFooter, { update: props.update, onInstall: props.onInstall }),
+        ) : h(DshUpdateFooter, { update: props.update, onInstall: props.onInstall, onCancel: props.onCancel }),
       },
         h('div', { className: 'dshTb__updateTabs', role: 'tablist', 'aria-label': t('更新组件') }, tabs.map(function (tab) {
           return h('button', {
@@ -1639,6 +1674,9 @@ var React = require('react')
       // Block repeated clicks before React has committed the disabled state.
       var updatePending = React.useRef(false)
       var updateCapture = React.useRef(false)
+      var updateAbort = React.useRef(null)
+      var updateLive = React.useRef(null)
+      var updateLastCheck = React.useRef(0)
       var desktopUpdateState = React.useState({ busy: null, result: null, error: null })
       var desktopUpdate = desktopUpdateState[0]
       var setDesktopUpdate = desktopUpdateState[1]
@@ -1647,6 +1685,41 @@ var React = require('react')
       var updateTab = updateTabState[0]
       var setUpdateTab = updateTabState[1]
       var updateVisible = React.useRef(false)
+
+      // One owner for the menu and the account badge. Sidebar collapse, account
+      // changes and settings-launcher remounts cannot cancel or duplicate a request.
+      updateLive.current = { state: dshUpdate, install: installDshUpdate, check: checkDshUpdate }
+      React.useEffect(function () {
+        if (!hasHost()) return
+        var service = {
+          getSnapshot: function () { return updateLive.current.state },
+          installStable: function () {
+            if (updateLive.current.state.versions?.stableUpdateAvailable) return updateLive.current.install('latest')
+          },
+          show: function () { updateVisible.current = true; setUpdateTab('dsh'); setUpdateOpen(true) },
+        }
+        window.__DSH_DSH_UPDATE__ = service
+        document.dispatchEvent(new Event('dsh-desktop:dsh-update'))
+        // Background checks are silent. Share the same request lock as manual checks.
+        function checkWhenDue() {
+          if (Date.now() - updateLastCheck.current >= 30 * 60 * 1000) void updateLive.current.check()
+        }
+        var initial = setTimeout(checkWhenDue, 3000)
+        var interval = setInterval(checkWhenDue, 4 * 60 * 60 * 1000)
+        window.addEventListener('focus', checkWhenDue)
+        return function () {
+          clearTimeout(initial); clearInterval(interval)
+          window.removeEventListener('focus', checkWhenDue)
+          updateAbort.current?.abort()
+          if (window.__DSH_DSH_UPDATE__ === service) {
+            delete window.__DSH_DSH_UPDATE__
+            document.dispatchEvent(new Event('dsh-desktop:dsh-update'))
+          }
+        }
+      }, [])
+      React.useEffect(function () {
+        if (hasHost()) document.dispatchEvent(new Event('dsh-desktop:dsh-update'))
+      }, [dshUpdate])
 
       // ---- the theme switch (remote page) ----------------------------------
 
@@ -1744,19 +1817,20 @@ var React = require('react')
       async function checkDshUpdate() {
         if (updatePending.current) return
         updatePending.current = true
+        updateLastCheck.current = Date.now()
         setDshUpdate(function (previous) {
-          return { attempted: true, busy: 'check', versions: previous.versions, error: null, message: previous.message }
+          return { attempted: true, busy: 'check', versions: previous.versions, error: null, message: previous.message, messageValues: previous.messageValues }
         })
         try {
           if (!hasHost()) throw new Error(t('请在桌面应用中检测 dsh 更新。'))
           var versions = await invokeHost('check_dsh_update')
           if (!versions || !versions.current || !versions.latest || !versions.preview) throw new Error(t('未能读取 dsh 版本，请重新检测。'))
           setDshUpdate(function (previous) {
-            return { attempted: true, busy: null, versions: versions, error: null, message: previous.message }
+            return { attempted: true, busy: null, versions: versions, error: null, message: previous.message, messageValues: previous.messageValues }
           })
         } catch (error) {
           setDshUpdate(function (previous) {
-            return { attempted: true, busy: null, versions: null, error: String((error && error.message) || error), message: previous.message }
+            return { attempted: true, busy: null, versions: null, error: String((error && error.message) || error), message: previous.message, messageValues: previous.messageValues }
           })
         } finally {
           updatePending.current = false
@@ -1768,29 +1842,107 @@ var React = require('react')
         if (channel === 'preview' && dshUpdate.versions.latest === dshUpdate.versions.preview) return
         if (dshUpdate.versions.current === dshUpdate.versions[channel]) return
         updatePending.current = true
+        var controller = new AbortController()
+        updateAbort.current = controller
         var previousVersions = dshUpdate.versions
-        setDshUpdate({ attempted: true, busy: channel, versions: previousVersions, error: null, message: null })
+        setDshUpdate({ attempted: true, busy: 'waiting', versions: previousVersions, error: null, message: null })
         var bridge = window.__DSH_UI_STATE__
+        var captured = false
+        if (previousVersions.candidateOnly) {
+          var requestId = window.crypto.randomUUID()
+          var candidateIdentity = window.__DSH_REMOTE_IDENTITY__
+          var cancelPreparation = function () {
+            void invokeHost('cancel_dsh_candidate', { identity: candidateIdentity, requestId: requestId }).catch(function () {})
+          }
+          controller.signal.addEventListener('abort', cancelPreparation, { once: true })
+          setDshUpdate({ attempted: true, busy: 'preparing', versions: previousVersions, error: null, message: null })
+          try {
+            var candidate = await invokeHost('prepare_dsh_candidate', { identity: candidateIdentity, requestId: requestId,
+              targetVersion: previousVersions[channel] })
+            if (!candidate || candidate.version !== previousVersions[channel] || candidate.switchAvailable !== false) throw new Error('runtime-candidate-response-invalid')
+            if (!controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: null,
+              message: '候选版本 {version} 已准备并校验；当前版本继续运行。', messageValues: { version: candidate.version } })
+          } catch (error) {
+            if (!controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions,
+              error: candidateError(error), message: null })
+          } finally {
+            controller.signal.removeEventListener('abort', cancelPreparation)
+            if (updateAbort.current === controller) {
+              updatePending.current = false
+              if (controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: null, message: '候选准备已取消，当前版本继续运行。' })
+            }
+          }
+          return
+        }
+        async function isRunning() {
+          if (await runningSessions(ctx.sessions)) return true
+          var running = await invokeHost('dsh_update_activity')
+          if (typeof running !== 'boolean') throw new Error(t('无法确认会话状态，请稍后重试更新。'))
+          return running
+        }
         try {
           if (!hasHost()) throw new Error(t('请在桌面应用中安装 dsh 更新。'))
           if (!bridge?.prepareRemoteApply) throw new Error(t('页面保存服务尚未准备好，请稍后重试'))
           var identity = window.__DSH_REMOTE_IDENTITY__
-          var status = await invokeHost('remote_status', { identity: identity })
-          updateCapture.current = true
-          var payload = await bridge.prepareRemoteApply(status.frontendVersion, t('正在保存界面并更新 dsh…'))
-          var request = { channel: channel, identity: identity, payload: payload,
-            palette: window.__DSH_DESKTOP_BOOT__?.capturePalette() }
-          if (channel === 'preview') request.targetVersion = previousVersions.preview
-          await invokeHost('install_dsh_update', request)
-          // The host now owns the snapshot and navigates to its install page.
-          // Keep input frozen until the new backend restores this document.
+          var payload
+          while (!controller.signal.aborted) {
+            if (await isRunning()) {
+              await updatePause(controller.signal)
+              continue
+            }
+            if (controller.signal.aborted) return
+            var status = await invokeHost('remote_status', { identity: identity })
+            if (controller.signal.aborted) return
+            updateCapture.current = true
+            setDshUpdate({ attempted: true, busy: channel, versions: previousVersions, error: null, message: null })
+            captured = true
+            payload = await bridge.prepareRemoteApply(status.frontendVersion, t('正在保存界面并更新 dsh…'))
+            // A queued turn or another window may start work while capture awaits.
+            // Release the input guard and keep waiting if that happened.
+            if (!(await isRunning())) {
+              if (controller.signal.aborted) { bridge.finishRemoteApply(); captured = false; return }
+              var request = { channel: channel, identity: identity, payload: payload,
+                palette: window.__DSH_DESKTOP_BOOT__?.capturePalette() }
+              request.targetVersion = previousVersions[channel]
+              try {
+                await invokeHost('install_dsh_update', request)
+                // The host owns the snapshot; stay frozen until the new document restores it.
+                return
+              } catch (error) {
+                // Rechecked by Rust after npm resolution and snapshot staging.
+                // A newly started task returns us to the same pending request.
+                if (String(error?.message || error) !== 'dsh-update-sessions-running') throw error
+              }
+            }
+            bridge.finishRemoteApply(); captured = false; updateCapture.current = false
+            setDshUpdate({ attempted: true, busy: 'waiting', versions: previousVersions, error: null, message: null })
+            await updatePause(controller.signal)
+          }
+          if (controller.signal.aborted) { if (captured) bridge.finishRemoteApply(); return }
         } catch (error) {
-          bridge?.finishRemoteApply()
-          updatePending.current = false
-          setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: String((error && error.message) || error), message: null })
+          if (captured) bridge?.finishRemoteApply()
+          if (updateAbort.current === controller) updatePending.current = false
+          if (!controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: String((error && error.message) || error), message: null })
         } finally {
-          updateCapture.current = false
+          if (updateAbort.current === controller) updateCapture.current = false
         }
+      }
+
+      function cancelDshUpdateWait() {
+        if (dshUpdate.busy === 'preparing') { updateAbort.current?.abort(); return }
+        if (dshUpdate.busy !== 'waiting') return
+        updateAbort.current?.abort()
+        updatePending.current = false
+        setDshUpdate({ attempted: true, busy: null, versions: dshUpdate.versions, error: null, message: null })
+      }
+
+      function candidateError(error) {
+        var code = String(error?.message || error)
+        if (code === 'runtime-candidate-install-failed') return '候选安装失败，当前版本继续运行。请检查网络、磁盘空间和安装权限。'
+        if (code === 'runtime-candidate-install-timeout') return '候选安装超时，当前版本继续运行。'
+        if (code === 'runtime-candidate-cancelled') return '候选准备已取消，当前版本继续运行。'
+        if (code === 'runtime-candidate-stale') return '页面或运行版本已变化，请重新检测。已准备的材料保留。'
+        return '候选准备失败，当前版本继续运行。请查看诊断。'
       }
 
       // Export only owned business state. Restoring calls React setters and
@@ -1804,13 +1956,21 @@ var React = require('react')
             return Boolean(node && (node.matches?.('.dshTb__dialogField, .dshTb__about') || node.querySelector?.('.dshTb__dialogField, .dshTb__about')))
           },
           capture: function () {
-            if (renamePending || (!updateCapture.current && (updatePending.current || desktopUpdatePending.current))) throw new Error('snapshot-input-busy')
+            // Read-only version queries can be abandoned on navigation. Only
+            // an installation, pending wait or external launch owns the page.
+            if (renamePending || (!updateCapture.current && ((updatePending.current && dshUpdate.busy !== 'check') || (desktopUpdatePending.current && desktopUpdate.busy !== 'check')))) throw new Error('snapshot-input-busy')
             setOpenMenu(null)
-            if (!rename && !confirm && !aboutOpen && (!dshUpdate.attempted || updateCapture.current)) return null
+            if (!rename && !confirm && !aboutOpen && (!updateOpen || updateCapture.current)) return null
             return { rename: rename, value: renameValue, confirm: confirm, about: aboutOpen,
               update: updateCapture.current ? null : dshUpdate, updateOpen: !updateCapture.current && updateOpen,
               desktopUpdate: updateCapture.current ? null : desktopUpdate, updateTab: updateTab,
               sessionId: currentSessionId(ctx.sessions.list.getSnapshot()) || null }
+          },
+          preflightRestore: function (saved) {
+            // Closed version-check caches carry no editable business state.
+            // Cold restoration of an open confirmation/rename remains blocked.
+            if (saved.rename || saved.confirm || saved.about || saved.updateOpen || rename || confirm || aboutOpen || updateOpen) throw new Error('snapshot-provider-preflight')
+            if (saved.sessionId && !ctx.sessions.list.getSnapshot().byId[saved.sessionId]) throw new Error('snapshot-session-missing')
           },
           restore: function (saved) {
             if (saved.sessionId !== (currentSessionId(ctx.sessions.list.getSnapshot()) || null)) throw new Error('snapshot-session-missing')
@@ -2333,6 +2493,24 @@ var React = require('react')
        */
       function onSelect(id) {
         var which = openMenu
+        if (which === 'more') {
+          var maintenance = id === 'diagnostics' || id === 'backup'
+          if (maintenance && hasHost()) {
+            var settingsEntry = ctx.slots.entriesOfSlot?.('sidebar.settings')[0]
+            var settingsShell = settingsEntry?.store?.create?.()
+            if (typeof settingsShell?.actions?.close === 'function') settingsShell.actions.close()
+            else if (document.querySelector('[data-shortcut-modal="settings"]')) {
+              document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+            }
+          }
+          document.dispatchEvent?.(new CustomEvent('dsh-desktop:maintenance-dialog', { detail: { kind: maintenance && hasHost() ? id : null } }))
+          if (maintenance) {
+            setOpenMenu(null)
+            setRename(null); setConfirm(null); setAboutOpen(false)
+            updateVisible.current = false; setUpdateOpen(false)
+            return
+          }
+        }
         if (which === 'more' && id === 'dsh-update') {
           setOpenMenu(null)
           if (updateVisible.current) return
@@ -2550,6 +2728,7 @@ var React = require('react')
           onCheckDesktop: checkDesktopUpdate,
           onOpenRelease: openDesktopRelease,
           onInstall: installDshUpdate,
+          onCancel: cancelDshUpdateWait,
         })
       }
 
@@ -2925,7 +3104,12 @@ var React = require('react')
       // Optional on older DSH. Both the header action and /export use this service.
       ctx.inject(['sessionLogDownload'], function (scope) {
         var controller = scope.sessionLogDownload
-        if (typeof controller?.run !== 'function' || typeof controller?.publish !== 'function') return
+        var offCapability = window.__DSH_CAPABILITIES__?.sessionExport(scope, controller)
+        var contract = window.__DSH_CAPABILITIES__?.sessionExportContract || function (ctx, value) {
+          return typeof ctx.effect === 'function' && ['run', 'publish', 'fetcher', 'save'].every(key => typeof value?.[key] === 'function')
+            && typeof value?.store?.getSnapshot === 'function'
+        }
+        if (!contract(scope, controller)) return offCapability
         scope.effect(function () {
           var original = controller.run
           var pending = new Set()
@@ -2985,6 +3169,7 @@ var React = require('react')
           }
           controller.run = run
           return function () {
+            offCapability?.()
             disposed = true
             if (controller.run === run) controller.run = original
             for (var abort of pending) abort()

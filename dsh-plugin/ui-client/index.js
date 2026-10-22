@@ -46,6 +46,8 @@ const COMPOSER_MATERIALS = ['glass', 'frosted', 'transparent', 'opaque']
 const COMPOSER_TUNING_FIELDS = ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity']
 const REASONING_CONTROL_FIELD = 'reasoningControl'
 const REASONING_CONTROLS = ['select', 'slider']
+const COLOR_SCHEME_FIELD = 'colorScheme'
+const COLOR_SCHEMES = ['default', 'blue', 'teal', 'moss', 'violet', 'amber', 'rose']
 
 /**
  * Accepted animation preferences.
@@ -187,6 +189,11 @@ function normalize(value) {
   }
 
   const section = { [ANIMATION_FIELD]: animation, [UI_MODE_FIELD]: ui, [TITLEBAR_MODE_FIELD]: titlebar, [TITLEBAR_HOVER_FIELD]: titlebarHover }
+  // Omitted in old documents: keep their original palette and settings shape.
+  if (value[COLOR_SCHEME_FIELD] !== undefined) {
+    if (!COLOR_SCHEMES.includes(value[COLOR_SCHEME_FIELD])) return undefined
+    section[COLOR_SCHEME_FIELD] = value[COLOR_SCHEME_FIELD]
+  }
   // Optional for older documents; the client defaults to the selector.
   if (value[REASONING_CONTROL_FIELD] !== undefined) {
     if (!REASONING_CONTROLS.includes(value[REASONING_CONTROL_FIELD])) return undefined
@@ -292,11 +299,19 @@ const SCHEMA_ENVELOPE = {
     68: { type: 'const', meta: { required: true }, value: 'select' },
     69: { type: 'const', meta: { required: true }, value: 'slider' },
     70: { type: 'union', list: [68, 69] },
-    // The object schema itself, with all five fields.
+    71: { type: 'const', meta: { required: true }, value: 'default' },
+    72: { type: 'const', meta: { required: true }, value: 'blue' },
+    73: { type: 'const', meta: { required: true }, value: 'moss' },
+    74: { type: 'const', meta: { required: true }, value: 'violet' },
+    75: { type: 'const', meta: { required: true }, value: 'amber' },
+    76: { type: 'const', meta: { required: true }, value: 'rose' },
+    77: { type: 'union', list: [71, 72, 78, 73, 74, 75, 76] },
+    78: { type: 'const', meta: { required: true }, value: 'teal' },
+    // The object schema itself, including optional appearance preferences.
     14: {
       type: 'object',
       meta: { default: {} },
-      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, reasoningControl: 70 },
+      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, reasoningControl: 70, colorScheme: 77 },
     },
   },
 }
@@ -396,6 +411,7 @@ SettingsSchema['~standard'] = {
       const badBackground = Object.keys(BACKGROUND_FIELDS).find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
       if (badBackground) return { issues: [{ message: badBackground + ' contains an invalid background setting', path: [badBackground] }] }
       const fieldValues = [
+        [COLOR_SCHEME_FIELD, COLOR_SCHEMES],
         [UI_MODE_FIELD, UI_MODES],
         [FONT_SIZE_OVERRIDE_FIELD, FONT_SIZE_OVERRIDES],
         [TITLEBAR_MODE_FIELD, TITLEBAR_MODES],
@@ -437,6 +453,8 @@ function apply(ctx) {
 }
 
 export {
+  COLOR_SCHEME_FIELD,
+  COLOR_SCHEMES,
   ANIMATION_FIELD,
   ANIMATION_PREFERENCES,
   DEFAULT_ANIMATION,

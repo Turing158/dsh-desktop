@@ -134,6 +134,17 @@
         const drafts = [...documents.values()].filter((doc2) => doc2.dirty()).map((doc2) => ({ address: doc2.address, state: doc2.getSnapshot() }));
         return drafts.length ? { drafts } : null;
       },
+      async preflightRestore(saved, signal) {
+        for (const draft of saved.drafts) {
+          signal.throwIfAborted();
+          const doc2 = get(draft.address), current = doc2.getSnapshot();
+          if (current.loading || current.saving) throw Error("snapshot-input-busy");
+          if (doc2.dirty() && (current.text !== draft.state.text || current.base !== draft.state.base)) throw Error("snapshot-file-conflict");
+          const result = await remote.read(doc2.file.sessionId, doc2.file.path, signal);
+          signal.throwIfAborted();
+          if (!result.ok || result.value.version !== draft.state.version || result.value.text !== draft.state.base) throw Error("snapshot-file-conflict");
+        }
+      },
       restore(saved) {
         for (const draft of saved.drafts) get(draft.address).restore(draft.state);
       }
@@ -34365,6 +34376,13 @@
         });
         return drafts.length || sides.length ? { drafts, sides } : null;
       },
+      async preflightRestore(saved, { signal }) {
+        for (const side of saved.sides || []) {
+          if (!stores().some((value) => value.sessionId === side.sessionId)) throw Error("snapshot-session-missing");
+          if (side.addresses.some((address) => !parseFile(address))) throw Error("snapshot-file-address-invalid");
+        }
+        await docs.preflightRestore(saved, signal);
+      },
       restore(saved) {
         docs.restore(saved);
         for (const side of saved.sides || []) {
@@ -34560,6 +34578,32 @@
     };
   }
 
+  // dsh-plugin/compatibility/selectors.mjs
+  function fileEditorObservation(ctx) {
+    const methods = [
+      [ctx.remote?.desktopFileEditor, "read"],
+      [ctx.remote?.desktopFileEditor, "save"],
+      ...["inject", "register", "subscribe", "entriesOfSlot", "resolveStore"].map((key) => [ctx.slots, key]),
+      ...["removeAfterCleanup", "tabsIn"].map((key) => [ctx.sidebarRight, key]),
+      [ctx.sidebarRight?.tabDomain, "occurrence"],
+      [ctx.sidebarRight?.mounted, "getSnapshot"],
+      [ctx.sidebarRight?.openTabs, "getSnapshot"],
+      [ctx.sidebarRight?.openTabs, "subscribe"],
+      [ctx.sidebarRight?.mounted, "subscribe"],
+      [ctx.sessions, "scope"],
+      [ctx.sessions?.list, "getSnapshot"]
+    ];
+    const available = methods.every(([owner, key]) => typeof owner?.[key] === "function");
+    return {
+      featureId: "file-editor",
+      availability: available ? "limited" : "unavailable",
+      implementation: "hybrid",
+      pluginState: "enabled",
+      reasonCodes: available ? ["file-editor-text-resource-limits"] : ["file-editor-contract-unavailable"],
+      evidence: ["file-editor-service-selector"]
+    };
+  }
+
   // dsh-plugin/file-editor/style.css
   var style_default = "[data-textpreview-body]:has(.dshFileEditor) { display:flex; flex-direction:column; overflow:hidden; }\n.dshFileEditor { --editor-keyword:#8b36ad; --editor-string:#267541; --editor-number:#946000; --editor-comment:#667381; --editor-function:#175bbb; display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; white-space:normal; color:var(--dsw-alias-label-primary); font-family:var(--dsw-font-family,system-ui); }\nbody[data-ds-dark-theme] .dshFileEditor { --editor-keyword:#d6a5f2; --editor-string:#a4d59a; --editor-number:#e5bc80; --editor-comment:#9aa6b3; --editor-function:#9cc6fa; }\n.dshFileEditor__button { cursor:pointer; border:1px solid var(--dsw-alias-border-l2); border-radius:5px; padding:4px 9px; min-height:28px; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-2); font:inherit; }\n.dshFileEditor__button:hover:not(:disabled) { background:var(--dsw-alias-interactive-bg-hover); }\n.dshFileEditor__button:disabled { cursor:default; opacity:.5; }\n.dshFileEditor__button:focus-visible { outline:2px solid var(--dsw-alias-label-primary); outline-offset:2px; }\n.dshFileEditor__toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--dsw-alias-border-l3); font-size:12px; flex:none; }\n.dshFileEditor__preview { flex:1; min-width:0; min-height:0; overflow:auto; }\n.dshFileEditor__preview > iframe { display:block; width:100%; height:100%; min-height:0; border:0; background:white; }\n.dshFileEditor__error { margin:0; padding:8px 10px; font-size:12px; white-space:normal; overflow-wrap:anywhere; border-bottom:1px solid var(--dsw-alias-border-l2); flex:none; }\n.dshFileEditor__error .dshFileEditor__button { margin-left:8px; }\n.dshFileEditor__empty { padding:24px; white-space:normal; font-size:13px; }\n.dshFileEditor__host { flex:1; min-height:0; min-width:0; overflow:hidden; }\n.dshFileEditor .cm-editor { height:100%; font-size:13px; background:transparent; color:var(--dsw-alias-label-primary); }\n.dshFileEditor .cm-editor.cm-focused { outline:1px solid var(--dsw-alias-border-l2); outline-offset:-1px; }\n.dshFileEditor .cm-scroller { overflow:auto; font-family:var(--dsw-font-mono,Consolas,monospace); line-height:1.6; }\n.dshFileEditor .cm-gutters { color:var(--dsw-alias-label-tertiary); background:var(--dsw-alias-bg-layer-2); border-right:1px solid var(--dsw-alias-border-l3); }\n.dshFileEditor .cm-activeLine, .dshFileEditor .cm-activeLineGutter { background:var(--dsw-alias-interactive-bg-hover); }\n.dshFileEditor .cm-cursor { border-left-color:var(--dsw-alias-label-primary); }\n.dshFileEditor .cm-selectionBackground, .dshFileEditor .cm-editor.cm-focused .cm-selectionBackground { background:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent); }\n.dshFileEditor .cm-panels, .dshFileEditor .cm-tooltip { color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-layer-2); border-color:var(--dsw-alias-border-l2); }\n.dshFileEditor .cm-search { white-space:normal; }\n.dshFileEditor .cm-search input { max-width:140px; color:inherit; background:var(--dsw-alias-bg-layer-1); }\n.dshFileEditor__footer { display:flex; flex-wrap:wrap; gap:10px; padding:4px 10px; border-top:1px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-secondary); font-size:11px; flex:none; }\n.dshFileEditor__dirty { margin-left:6px; font-size:11px; }\n.dshFileEditor__closeDialog { max-height:100%; }\n.dshFileEditor__closeContent { min-height:0; overflow-y:auto; }\n.dshFileEditor__closeBody { display:flex; flex-direction:column; gap:8px; font-size:14px; line-height:22px; color:var(--dsw-alias-label-primary); overflow-wrap:anywhere; }\n.dshFileEditor__closeBody p { margin:0; }\n.dshFileEditor__closeName { font-weight:500; }\n.dshFileEditor__closeHint { color:var(--dsw-alias-label-secondary); }\n.dshFileEditor__closeError { color:var(--dsw-alias-label-primary); }\n.dshFileEditor__closeActions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; width:100%; }\n";
 
@@ -34568,6 +34612,11 @@
     const React = require2("react"), h = React.createElement;
     const { FileTypeIcon, Modal, Button } = require2("@deepseek-ai/dsh-client-ui-primitives");
     function install(ctx) {
+      const capability = fileEditorObservation(ctx);
+      window.__DSH_CAPABILITIES__?.report(capability);
+      if (capability.availability === "unavailable") return () => {
+      };
+      const offCapability = window.__DSH_CAPABILITIES__?.watch("file-editor", () => fileEditorObservation(ctx));
       const docs = createDocuments(ctx.remote.desktopFileEditor);
       const closeGuard = createCloseGuard(ctx.sidebarRight, docs);
       const style = document.createElement("style");
@@ -34818,6 +34867,7 @@
       };
       off.push(window.__DSH_UI_STATE__?.registerProvider("desktop-file-editor", provider));
       return () => {
+        offCapability?.();
         off.reverse().forEach((fn) => fn?.());
         style.remove();
         window.removeEventListener("beforeunload", beforeUnload);

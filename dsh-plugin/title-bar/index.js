@@ -4,6 +4,7 @@
  * Keep one CSS source, but load the marked chrome section independently.
  */
 import { readFileSync } from 'node:fs'
+import { observeUpdateActivity } from './activity.mjs'
 
 const name = 'desktop-title-bar'
 const inject = []
@@ -29,6 +30,7 @@ export function readTitleBarStyles() {
 }
 
 function apply(ctx) {
+  ctx.inject?.(['agents'], child => observeUpdateActivity(child))
   ctx.on('webserver/index-inject', table => {
     table.push({ kind: 'style', placement: 'head', text: readTitleBarStyles() })
     const theme = readFileSync(new URL('../ui-overlay/remote-theme.js', import.meta.url), 'utf8')

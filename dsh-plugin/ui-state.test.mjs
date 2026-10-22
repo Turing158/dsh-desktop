@@ -31,7 +31,7 @@ function environment() {
 
 function fixture({ text = '草稿一', second = 'draft two' } = {}) {
   const env = environment()
-  const state = { ids: ['s1', 's2'], byId: { s1: { id: 's1' }, s2: { id: 's2' } }, current: 's1', phase: 'ready' }
+  const state = { ids: ['s1', 's2'], byId: { s1: { id: 's1', updatedAt: 100 }, s2: { id: 's2', updatedAt: 200 } }, current: 's1', phase: 'ready' }
   const layout = { layoutInfo: { sidebar: 333, narrowExpanded: false, rightbar: null, rightbarShown: false }, panelInfo: { activePanelId: null } }
   const attachments = new Map(), uploads = {}, inputs = new Map(), chatScroll = new Map(), sessions = new Map()
   let creations = 0
@@ -59,6 +59,141 @@ function fixture({ text = '草稿一', second = 'draft two' } = {}) {
   const adapter = env.window.__DSH_CREATE_UI_ADAPTER__(ctx)
   return { ...env, adapter, ctx, state, layout, inputs, attachments, uploads, sessions, get creations() { return creations } }
 }
+
+test('runtime readiness waits for the current active UI and adapter and deduplicates its acknowledgement', async () => {
+  const env=environment(),calls=[]
+  env.globals.location.origin='http://127.0.0.1:10001'
+  env.window.__TAURI__={core:{invoke:async(command,args)=>{calls.push({command,args})}}}
+  env.window.__DSH_REMOTE_IDENTITY__={backendInstance:3,windowGeneration:1,documentGeneration:2,documentNonce:Array(16).fill(1)}
+  vm.runInContext(bridgeSource,env.context)
+  const bridge=env.window.__DSH_UI_STATE__,packet={identity:identity(1),phase:'active'}
+  bridge.configure(packet);assert.equal(calls.length,0)
+  bridge.registerRestartAdapter(()=>({inspectCapabilities:()=>({availability:'limited'})}))
+  await new Promise(setImmediate)
+  assert.equal(calls.length,1);assert.equal(calls[0].command,'desktop_runtime_ready')
+  assert.equal(calls[0].args.identity,env.window.__DSH_REMOTE_IDENTITY__)
+  bridge.configure(packet);await new Promise(setImmediate);assert.equal(calls.length,1)
+  bridge.configure({...packet,phase:'minimal'});assert.equal(calls.length,1)
+})
+
+test('recovery capability inspection uses the capture contract without changing drafts or attachments', async () => {
+  const f=fixture(), before=JSON.stringify([...f.inputs].map(([id,input])=>[id,input.state.getSnapshot()]))
+  assert.equal(f.adapter.inspectCapabilities().availability,'limited')
+  assert.equal(f.creations,0)
+  assert.equal(JSON.stringify([...f.inputs].map(([id,input])=>[id,input.state.getSnapshot()])),before)
+  const open=f.ctx.uiWorkspace.openSession
+  delete f.ctx.uiWorkspace.openSession
+  assert.equal(f.adapter.inspectCapabilities().availability,'unavailable')
+  await assert.rejects(f.adapter.capture(options()),/snapshot-adapter-unsupported/)
+  f.ctx.uiWorkspace.openSession=open
+  delete f.ctx.sessions.clear
+  assert.ok(f.adapter.inspectCapabilities().reasonCodes.includes('snapshot-navigation-unsupported'))
+})
+test('Profile restore verifies current runtime switches before changing any drafts', async () => {
+  const source=fixture(),payload=await source.adapter.capture(options()),target=fixture({text:'unchanged',second:''})
+  const intent={patchId:'ordinary',moduleName:'ordinary',enabled:false}
+  let statuses=0
+  target.ctx.get=()=>({status:async()=>{statuses++;return {ok:true,value:{plugins:[{...intent,running:false,phase:'disabled',application:'applied',readOnlyReason:null}]}}}})
+  await target.adapter.restore({snapshotId:7,payload,profileSwitches:[intent]},options())
+  assert.equal(statuses,1);assert.equal(target.inputs.get('s1').state.getSnapshot().draft,'草稿一')
+  const failure=fixture({text:'keep',second:''})
+  failure.ctx.get=()=>({status:async()=>{throw Error('runtime verification failed')}})
+  await assert.rejects(failure.adapter.restore({snapshotId:7,payload,profileSwitches:[intent]},options()),/runtime verification failed/)
+  assert.equal(failure.inputs.get('s1').state.getSnapshot().draft,'keep')
+})
+
+test('background capture reads drafts and attachment bytes while excluding forms, providers, terminals and layout',async()=>{
+  const f=fixture({second:''}),input=f.inputs.get('s1')
+  input.addAttachments(f.ctx.conversation.createDrafts('s1',[new File(['stable bytes'],'draft.txt',{type:'text/plain'})]).map(a=>a.id))
+  f.layout.panelInfo.activePanelId='plugins';f.layout.layoutInfo.rightbarShown=true;f.fields.push({})
+  let providerCalls=0,nativeCalls=0
+  f.window.__DSH_TERMINAL_IDENTITY__={};f.window.__TAURI__={core:{invoke:()=>{nativeCalls++}}}
+  const payload=await f.adapter.capture({...options(),draftsOnly:true,providers:new Map([['desktop-terminal',{capture:()=>{providerCalls++}}]])})
+  assert.equal(payload.drafts.length,1);assert.equal(payload.drafts[0].text,'草稿一');assert.equal(payload.drafts[0].editor,null)
+  assert.equal(payload.drafts[0].selection,null);assert.equal(payload.assets.length,1);assert.equal(atob(payload.assets[0].data),'stable bytes')
+  assert.equal(payload.dialogs.length,0);assert.equal(payload.scrolls.length,0);assert.equal(payload.page.sessionId,null)
+  assert.equal(payload.layout.sidebar,0);assert.equal(providerCalls,0);assert.equal(nativeCalls,0)
+  assert.equal(f.state.current,'s1');assert.equal(f.layout.panelInfo.activePanelId,'plugins')
+})
+test('background capture rejects changes during asynchronous attachment reading without changing the editor',async()=>{
+  const f=fixture(),input=f.inputs.get('s1'),file=new File(['bytes'],'file.txt')
+  file.arrayBuffer=async()=>{input.setDraft('changed while capturing');return new Uint8Array([1]).buffer}
+  input.addAttachments(f.ctx.conversation.createDrafts('s1',[file]).map(a=>a.id))
+  await assert.rejects(f.adapter.capture({...options(),draftsOnly:true}),/snapshot-draft-changed/)
+  assert.equal(input.state.getSnapshot().draft,'changed while capturing')
+})
+test('cold draft-only restore keeps current navigation and layout and retains conflict checks',async()=>{
+  const source=fixture({second:''}),payload=await source.adapter.capture({...options(),draftsOnly:true})
+  const target=fixture({text:'',second:''});target.state.current='s2';target.layout.panelInfo.activePanelId='plugins';target.layout.layoutInfo.sidebar=222
+  await target.adapter.restore({snapshotId:3,payload,coldRecovery:true,draftsOnly:true},options())
+  assert.equal(target.inputs.get('s1').state.getSnapshot().draft,'草稿一');assert.equal(target.state.current,'s2')
+  assert.equal(target.layout.layoutInfo.sidebar,222);assert.equal(target.layout.panelInfo.activePanelId,'plugins')
+  const conflict=fixture({text:'new',second:''})
+  await assert.rejects(conflict.adapter.restore({snapshotId:3,payload,coldRecovery:true,draftsOnly:true},options()),/snapshot-draft-conflict/)
+  assert.equal(conflict.inputs.get('s1').state.getSnapshot().draft,'new')
+})
+
+test('cold recovery checks all drafts before writes and refuses new or cleared content', async () => {
+  const payload = await fixture().adapter.capture(options())
+  for (const cleared of [false, true]) {
+    const target = fixture({ text: '', second: cleared ? '' : 'new draft' })
+    if (cleared) target.storage.set('dsh.conversation.s2', JSON.stringify({ draft: '' }))
+    await assert.rejects(target.adapter.restore({ snapshotId: 7, payload, coldRecovery: true }, options()), /snapshot-draft-conflict/)
+    assert.equal(target.inputs.get('s1').state.getSnapshot().draft, '')
+    assert.equal(target.inputs.get('s2').state.getSnapshot().draft, cleared ? '' : 'new draft')
+  }
+})
+
+test('cold terminal preflight refuses all draft writes and never invokes terminal restoration',async()=>{
+  const payload=await fixture().adapter.capture(options());payload.dialogs.push({id:'desktop-terminal',version:1,data:{sessions:[]}})
+  const target=fixture({text:'',second:''});let restores=0
+  const providers=new Map([['desktop-terminal',{version:1,preflightRestore(){throw Error('snapshot-terminal-cold-unavailable')},restore(){restores++}}]])
+  await assert.rejects(target.adapter.restore({snapshotId:7,payload,coldRecovery:true},{...options(),providers}),/snapshot-terminal-cold-unavailable/)
+  assert.equal(target.inputs.get('s1').state.getSnapshot().draft,'');assert.equal(target.inputs.get('s2').state.getSnapshot().draft,'')
+  assert.equal(restores,0)
+})
+
+test('cold recovery rejects changed or unknown durable session state and conflicting attachments', async () => {
+  const payload = await fixture().adapter.capture(options())
+  for (const timestamp of [101, undefined]) {
+    const target = fixture({ text: '', second: '' })
+    target.state.byId.s2.updatedAt = timestamp
+    await assert.rejects(target.adapter.restore({ snapshotId: 7, payload, coldRecovery: true }, options()), /snapshot-session-changed/)
+    assert.equal(target.inputs.get('s1').state.getSnapshot().draft, '')
+  }
+  const target = fixture({ text: '', second: '' })
+  target.inputs.get('s2').addAttachments(target.ctx.conversation.createDrafts('s2', [new File(['new attachment'], 'new.txt')]).map(a => a.id))
+  await assert.rejects(target.adapter.restore({ snapshotId: 7, payload, coldRecovery: true }, options()), /snapshot-attachment-conflict/)
+  assert.equal(target.inputs.get('s1').state.getSnapshot().draft, '')
+  assert.equal(target.creations, 1)
+})
+
+test('cold recovery is repeatable without duplicate attachments or submitting messages', async () => {
+  const original = fixture()
+  original.inputs.get('s1').addAttachments(original.ctx.conversation.createDrafts('s1', [new File(['saved file'], 'saved.txt')]).map(a => a.id))
+  const payload = await original.adapter.capture(options())
+  const target = fixture({ text: '', second: '' })
+  const snapshot = { snapshotId: 7, payload, coldRecovery: true }
+  await target.adapter.restore(snapshot, options())
+  await target.adapter.restore(snapshot, options())
+  assert.equal(target.inputs.get('s1').state.getSnapshot().draft, '草稿一')
+  assert.equal(target.inputs.get('s2').state.getSnapshot().draft, 'draft two')
+  assert.equal(target.creations, 1)
+  assert.deepEqual(target.sessions.get('s1').getSnapshot().pendingSubmissions, [])
+})
+
+test('focused empty Lexical roots restore their collapsed caret and verify it', async () => {
+  const f = fixture({ text: '', second: '' }), root = { childNodes: [], focus() {}, contains: () => true }
+  const input = f.inputs.get('s1'), points = []
+  input.editor.getRootElement = () => root
+  f.document.createRange = () => ({ setStart: (...point) => points.push(point), setEnd: (...point) => points.push(point) })
+  f.document.getSelection = () => ({ removeAllRanges() {}, addRange() {} })
+  const payload = await f.adapter.capture(options())
+  await f.adapter.restore({ snapshotId: 8, payload }, options())
+  assert.deepEqual(points, [[root, 0], [root, 0]])
+  input.caretSpan = () => ({ start: 1, end: 1 })
+  await assert.rejects(f.adapter.restore({ snapshotId: 8, payload }, options()), /snapshot-selection-verify/)
+})
 
 test('only remote apply with a terminal provider accepts live terminals and a terminal sidebar', async () => {
   const f = fixture(), calls = []
@@ -437,6 +572,24 @@ test('plugin restart accepts saved controls but still refuses unowned editable f
   const opt = { ...options(), remoteApply: true }
   assert.equal((await f.adapter.capture(opt)).drafts[0].text, '草稿一')
   f.fields.push({ closest: () => null, type: 'text', value: 'unsaved setting', checkVisibility: () => true })
+  await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
+})
+
+test('configuration restore accepts only its reviewed checkboxes and refuses other editable state', async () => {
+  const f = fixture(), opt = { ...options(), remoteApply: true, configurationRestore: true }
+  const marker = {}, confirmations = []
+  f.dialogs.push({ closest: () => null, querySelectorAll: selector => selector === '[data-dsh-configuration-restore]' ? [{ closest: () => null }] : confirmations })
+  f.fields.push({ type: 'checkbox', checked: true, closest: selector => selector === '[data-dsh-configuration-restore]' ? marker : null })
+  assert.equal((await f.adapter.capture(opt)).drafts[0].text, '草稿一')
+  await assert.rejects(f.adapter.capture({ ...opt, configurationRestore: false }), /snapshot-form-unsupported/)
+  await assert.rejects(f.adapter.capture({ ...opt, remoteApply: false }), /snapshot-form-unsupported/)
+  confirmations.push({ closest: () => null })
+  await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
+  confirmations.pop()
+  const field = { type: 'password', value: 'unfinished password', closest: selector => selector === '[data-dsh-configuration-restore]' ? marker : null, checkVisibility: () => true }
+  f.fields.push(field)
+  await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
+  field.type = 'checkbox'; field.closest = () => null
   await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
 })
 

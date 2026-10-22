@@ -324,7 +324,27 @@ pub fn restored(
     fields: &[String],
     error: Option<&str>,
 ) -> Result<(), String> {
-    let discarded = {
+    let checkpoint = {
+        let shared = app.state::<Shared>();
+        let s = shared.lock().map_err(|_| "snapshot-state")?;
+        if !s.ui.matches(identity) || s.ui.phase != UiPhase::Restoring || s.ui.snapshot.as_ref().map(|v|v.snapshot_id) != Some(snapshot_id) {
+            return Err("snapshot-stale".into());
+        }
+        if error.is_none() && REQUIRED.iter().all(|field|fields.iter().any(|f|f==field)) {s.ui.recovery.as_ref().map(|h|h.id)} else {None}
+    };
+    // Configuration completion is durable before the only UI recovery copy
+    // can be removed. IO happens outside AppState, then identity is rechecked.
+    if checkpoint.is_some() && crate::backup::smoke_ui_failure(app) {
+        restore_failed(app,identity.operation_id,"backup-smoke-ui");
+        return Ok(());
+    }
+    if let Some(checkpoint) = checkpoint {
+        if let Err(code)=crate::backup::acknowledge(app,checkpoint) {
+            restore_failed(app,identity.operation_id,"backup-commit-ack-failed");
+            return Err(code);
+        }
+    }
+    let (discarded, recovery, lease) = {
         let shared = app.state::<Shared>();
         let mut s = shared.lock().map_err(|_| "snapshot-state")?;
         if !s.ui.matches(identity)
@@ -354,9 +374,31 @@ pub fn restored(
         s.minimal = false;
         s.remote.restore_instance = None;
         s.update_presentation = None;
-        s.ui.snapshot.take()
+        (s.ui.snapshot.take(), s.ui.recovery.take(), s.ui.recovery_lease.take())
     };
+    let partial=discarded.as_ref().is_some_and(|snapshot|snapshot.retained_terminal_state);
+    let completed = lease.as_ref().map(|lease| {
+        if partial {lease.progress().update(crate::maintenance::Stage::Restoring,"terminal-state-retained")?;}
+        lease.progress().complete()
+    }).transpose();
+    if let Err(code) = &completed {crate::debug_log(&format!("[maintenance] completion failed: {code}"));}
+    if let Some(handle) = recovery {
+        if partial {
+            // Only the non-terminal state was acknowledged. The original is
+            // still the sole copy of the skipped terminal metadata.
+            crate::diagnostics::record(app, "recovery", "terminal-state-retained");
+        } else {
+            // Journal first, package deletion last. An interrupted cleanup must
+            // leave either the sole package or a durable acknowledgement.
+            if completed.and_then(|_| crate::maintenance::directory(app))
+                .and_then(|directory| crate::maintenance::resolve_checkpoint(&directory, handle.id).map_err(|_| "maintenance-journal-save-failed".into()))
+                .and_then(|_| crate::recovery_store::store(app)?.acknowledge(handle.id, &handle.binding).map_err(|_| "recovery-cleanup-failed".into())).is_err() {
+                crate::diagnostics::record(app, "recovery", "cleanup-failed");
+            }
+        }
+    }
     drop(discarded);
+    drop(lease);
     crate::tray::sync_checkmark(app);
     if let Some(window) = app.get_webview_window("main") {
         ui_snapshot::refresh_bridge(&window);
@@ -366,7 +408,7 @@ pub fn restored(
 }
 
 pub(crate) fn restore_failed(app: &AppHandle, operation: u64, error: &str) {
-    {
+    let progress = {
         let shared = app.state::<Shared>();
         let Ok(mut s) = shared.lock() else {
             return;
@@ -376,7 +418,12 @@ pub(crate) fn restore_failed(app: &AppHandle, operation: u64, error: &str) {
         }
         s.ui.last_error = Some(error.into());
         s.ui.transition(UiPhase::RestoreFailed);
+        s.ui.recovery_lease.as_ref().map(|lease| lease.progress())
+    };
+    if let Some(progress) = progress {
+        if progress.failed("ui-restore-failed").is_err() { crate::diagnostics::record(app, "maintenance", "journal-save-failed"); }
     }
+    if crate::backup::rollback_pending(app) {return;}
     if let Some(window) = app.get_webview_window("main") {
         ui_snapshot::refresh_bridge(&window);
     }
@@ -403,6 +450,9 @@ fn watch_timeout(app: &AppHandle, operation: u64, phase: UiPhase, duration: Dura
             restore_failed(&app, operation, "snapshot-restore-timeout");
         }
     });
+}
+pub(crate) fn watch_recovery(app: &AppHandle, operation: u64) {
+    watch_timeout(app, operation, UiPhase::Restoring, RESTORE_TIMEOUT);
 }
 fn show_existing(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {

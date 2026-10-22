@@ -54,6 +54,8 @@
 
     - id: desktop-settings
       name: ./settings-compat.mjs
+    - id: desktop-maintenance
+      name: ./desktop-maintenance/index.js
 
     - id: desktop-llm
       name: ./llm-compat.mjs

@@ -149,6 +149,7 @@ export function createUpstreamRemoteState(ctx, registry, dock) {
       // or opens a fresh shell after restart. No commands or output are replayed.
       dock.restore(saved.dock)
     },
+    preflightRestore() { throw Error('snapshot-terminal-cold-unavailable') },
   }
 }
 

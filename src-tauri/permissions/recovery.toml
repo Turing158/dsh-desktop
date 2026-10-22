@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-recovery-read"
+description = "List bounded local recovery metadata without disclosing draft content."
+commands.allow = ["desktop_recovery_list"]
+
+[[permission]]
+identifier = "allow-recovery-restore"
+description = "Restore or defer a verified recovery package from the current desktop backend document."
+commands.allow = ["desktop_recovery_restore", "desktop_recovery_defer"]
+
+[[permission]]
+identifier = "allow-draft-checkpoint"
+description = "Save bounded semantic drafts from the current desktop document without changing business data."
+commands.allow = ["desktop_draft_checkpoint"]

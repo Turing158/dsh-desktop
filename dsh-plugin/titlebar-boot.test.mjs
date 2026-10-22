@@ -1489,7 +1489,7 @@ test('title-bar shape and hover belong to the app, not appearance settings', () 
   for (const attribute of ['data-dsh-titlebar-mode', 'data-dsh-titlebar-hover']) {
     assert.ok(client.includes(attribute) && host.includes(attribute), 'app-owned chrome still uses ' + attribute)
   }
-  assert.ok(host.includes("chromeAttributesScript(readUiMode(ctx), TITLEBAR_FULL, 'on')"), 'old saved simple/off choices cannot hide running app controls')
+  assert.match(host, /chromeAttributesScript\(readUiMode\(ctx\), TITLEBAR_FULL, 'on'(?:,|\))/, 'old saved simple/off choices cannot hide running app controls')
 })
 
 test('the stylesheet gates the bar’s hover rules and nothing else about the bar', () => {

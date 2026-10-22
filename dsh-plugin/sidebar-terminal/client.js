@@ -506,6 +506,7 @@ var React = require('react')
               // Use the registered capability, not a version threshold. Observe
               // it because the upstream plugin may load after this one or reload.
               var available = ctx.sidebarRightTabs.get('terminal') || false
+              window.__DSH_CAPABILITIES__?.terminal(available)
               if (available === upstream) return
               upstream = available
               stop?.()

@@ -1,3 +1,4 @@
+import { sessionNavigationContract } from '../compatibility/selectors.mjs'
 /** The same local session identity used by src-tauri/src/deep_link.rs. */
 export function parseSessionLink(input) {
   if (typeof input !== 'string') return null
@@ -37,8 +38,9 @@ export function linksForNode(node) {
 }
 
 export async function openSessionLink(ctx, link) {
+  if (!sessionNavigationContract(ctx)) throw Error('session-links-contract-unavailable')
   const id = parseSessionLink(link)
   if (!id) throw Error('invalid-session-link')
-  if (!ctx.sessions.list.getSnapshot().byId[id]) throw Error('deep-link-session-missing')
+  if (!ctx.sessions.list.getSnapshot()?.byId?.[id]) throw Error('deep-link-session-missing')
   await ctx.uiWorkspace.openSession(id)
 }

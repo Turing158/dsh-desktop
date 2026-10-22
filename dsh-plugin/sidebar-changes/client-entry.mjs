@@ -7,6 +7,7 @@ import { createGitActions } from './git-actions.mjs'
 import { createFileMenu } from './file-menu.mjs'
 import { createFileView } from './file-view.mjs'
 import { FILE_KIND, FILE_PREFIX, parseChangeAddress, changeTitle } from './file-resource.mjs'
+import { changesContract, watchChanges } from '../compatibility/selectors.mjs'
 
 const ID = '@dsh-desktop/sidebar-changes', KIND = 'desktop-changes', PREFIX = 'dsh-resource://desktop-changes/'
 const STATUS = { get added() { return t('新增') }, get deleted() { return t('删除') }, get renamed() { return t('重命名') }, get modified() { return t('修改') }, get restored() { return t('已恢复原状') }, get conflict() { return t('合并冲突') }, get submodule() { return t('子模块') }, get symlink() { return t('符号链接') } }
@@ -51,6 +52,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         LABELS[source], h(ChevronDown, { size: 12 })) })
   }
   async function call(ctx, method, ...args) {
+    if (!changesContract(ctx)) throw Error('changes-contract-unavailable')
     const result = await ctx.remote.desktopChanges[method](...args)
     if (!result.ok) throw result.error
     return result.value
@@ -279,6 +281,8 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         })))
   }
   function installUI(ctx) {
+    const offCapability = watchChanges(ctx,window.__DSH_CAPABILITIES__,window)
+    if (!changesContract(ctx)) return offCapability
     const states = new Map(), addresses = new WeakMap()
     function Body(props) {
       useLocale(React)
@@ -308,7 +312,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     const observer = new MutationObserver(sync); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-ui'] })
     const provider = createStateProvider(ctx, states)
     const offState = window.__DSH_UI_STATE__?.registerProvider('desktop-changes', provider)
-    return () => { observer.disconnect(); document.removeEventListener('dsh-desktop:ui-mode', sync); offType?.(); offFileType(); offFileBody(); offBody(); offState?.(); states.clear() }
+    return () => { offCapability(); observer.disconnect(); document.removeEventListener('dsh-desktop:ui-mode', sync); offType?.(); offFileType(); offFileBody(); offBody(); offState?.(); states.clear() }
   }
   return { inject: ['slots', 'sidebarRightTabs', 'sessions', 'remote', 'remote.session'], async apply(ctx) {
     const offRemote = await ctx.remote.$mount(contribution)

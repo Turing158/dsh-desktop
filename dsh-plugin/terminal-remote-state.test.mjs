@@ -1,9 +1,19 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRemoteState, hideDesktopTerminals } from './sidebar-terminal/remote-state.mjs'
+import { createUpstreamRemoteState } from './sidebar-terminal/upstream-dock.mjs'
 import { createDockStore, dockWorkspaceKey } from './sidebar-terminal/dock.mjs'
 
 const prefix = 'dsh-resource://desktop-terminal/'
+test('cold preflight rejects both terminal implementations before allocating views or changing bindings',async()=>{
+  let touched=0
+  const unexpected=new Proxy({}, {get(){touched++;throw Error('terminal operation must not run')}})
+  const native=createRemoteState({},unexpected,unexpected),upstream=createUpstreamRemoteState({},unexpected,unexpected)
+  for(const provider of [native,upstream]) {
+    assert.throws(()=>provider.preflightRestore({}),/snapshot-terminal-cold-unavailable/)
+  }
+  assert.equal(touched,0)
+})
 function fixture(t, { cwd = 'C:\\a', native, saved = {}, side = {} } = {}) {
   const sessions = native || ['dock-a', 'dock-b', 'side-a'].map((key, i) => ({ resourceKey: prefix + key, terminalId: 'term-' + i, runId: 1 }))
   const listeners = new Set(), held = new Set(), closed = [], bySession = {}, actions = []

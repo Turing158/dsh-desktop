@@ -5,12 +5,17 @@ import { mountEditor } from './editor.mjs'
 import { createStateProvider } from './state-provider.mjs'
 import { createCloseGuard } from './close-guard.mjs'
 import { bindReloadGuard } from './reload-guard.mjs'
+import { fileEditorObservation } from '../compatibility/selectors.mjs'
 import css from './style.css'
 
 window.__ModuleLoader__.load({ id: ID, factory(require) {
   const React = require('react'), h = React.createElement
   const { FileTypeIcon, Modal, Button } = require('@deepseek-ai/dsh-client-ui-primitives')
   function install(ctx) {
+    const capability = fileEditorObservation(ctx)
+    window.__DSH_CAPABILITIES__?.report(capability)
+    if (capability.availability === 'unavailable') return () => {}
+    const offCapability = window.__DSH_CAPABILITIES__?.watch('file-editor', () => fileEditorObservation(ctx))
     const docs = createDocuments(ctx.remote.desktopFileEditor)
     const closeGuard = createCloseGuard(ctx.sidebarRight, docs)
     const style = document.createElement('style'); style.textContent = css; document.head.append(style)
@@ -182,7 +187,7 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       return capture()
     }
     off.push(window.__DSH_UI_STATE__?.registerProvider('desktop-file-editor', provider))
-    return () => { off.reverse().forEach(fn => fn?.()); style.remove();
+    return () => { offCapability?.(); off.reverse().forEach(fn => fn?.()); style.remove();
       window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('keydown', keydown, true) }
   }
   return { inject: ['slots', 'sidebarRight', 'sessions', 'remote'], async apply(ctx) {

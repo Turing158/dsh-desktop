@@ -62,6 +62,8 @@ pub struct UiState {
     pub loaded: bool,
     pub document_url: Option<tauri::Url>,
     pub snapshot: Option<Arc<UiSnapshot>>,
+    pub recovery: Option<crate::recovery_store::Handle>,
+    pub recovery_lease: Option<crate::maintenance::Lease>,
     pub geometry: Option<WindowGeometry>,
     pub focus_requested: bool,
     pub last_error: Option<String>,
@@ -81,6 +83,8 @@ impl Default for UiState {
             loaded: false,
             document_url: None,
             snapshot: None,
+            recovery: None,
+            recovery_lease: None,
             geometry: None,
             focus_requested: false,
             last_error: None,
@@ -176,6 +180,8 @@ pub struct Draft {
     pub selection: Option<Selection>,
     pub attachment_keys: Vec<String>,
     pub revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_updated_at: Option<u64>,
     pub view: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -440,6 +446,14 @@ pub struct UiSnapshot {
     pub payload: UiPayload,
     /// Only an explicit, verified dsh update may restore across frontend versions.
     pub restore_frontend_version: Option<String>,
+    pub cold_recovery: bool,
+    // Explicit partial cold restore retains the original terminal-containing
+    // package after the required UI acknowledgement.
+    pub retained_terminal_state: bool,
+    pub drafts_only: bool,
+    /// Host-issued restore expectations; never accepted from a UI payload or
+    /// persisted as foreign executable state in a recovery package.
+    pub profile_switches: Vec<ProfileRestoreTarget>,
     files: Option<SnapshotFiles>,
 }
 #[derive(Serialize)]
@@ -448,9 +462,16 @@ pub struct SnapshotWire {
     snapshot_id: u64,
     source: Identity,
     captured_at: u64,
-    payload: UiPayload,
+    pub(crate) payload: UiPayload,
     restore_frontend_version: Option<String>,
+    cold_recovery: bool,
+    drafts_only: bool,
+    #[serde(skip_serializing_if="Vec::is_empty")]
+    pub(crate) profile_switches: Vec<ProfileRestoreTarget>,
 }
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct ProfileRestoreTarget {pub patch_id:String,pub module_name:String,pub enabled:bool}
 impl UiSnapshot {
     /// Validate and stage on a worker before acknowledging that destruction is safe.
     pub fn capture(mut payload: UiPayload, source: Identity) -> Result<Self, String> {
@@ -502,6 +523,10 @@ impl UiSnapshot {
             captured_at,
             payload,
             restore_frontend_version: None,
+            cold_recovery: false,
+            retained_terminal_state: false,
+            drafts_only: false,
+            profile_switches: vec![],
             files,
         })
     }
@@ -527,6 +552,9 @@ impl UiSnapshot {
             captured_at: self.captured_at,
             payload,
             restore_frontend_version: self.restore_frontend_version.clone(),
+            cold_recovery: self.cold_recovery,
+            drafts_only: self.drafts_only,
+            profile_switches: self.profile_switches.clone(),
         })
     }
 }
@@ -781,7 +809,12 @@ pub async fn request_ui_restore(
             .await
             .map_err(|_| "snapshot-worker")?;
         match result {
-            Ok(wire) => Some(wire),
+            Ok(mut wire) => {
+                // A rollback verifies the original runtime through its normal
+                // UI ACK; it must not demand the failed imported switch state.
+                if !crate::backup::expects_profile(&app) {wire.profile_switches.clear();}
+                Some(wire)
+            },
             Err(error) => {
                 crate::minimal::restore_failed(&app, current.operation_id, &error);
                 return Err(error);
@@ -799,7 +832,7 @@ pub async fn request_ui_restore(
 }
 
 #[tauri::command]
-pub fn finish_ui_restore(
+pub async fn finish_ui_restore(
     app: AppHandle,
     window: WebviewWindow,
     identity: Identity,
@@ -808,13 +841,13 @@ pub fn finish_ui_restore(
     error: Option<String>,
 ) -> Result<(), String> {
     validate_caller(&window, identity)?;
-    crate::minimal::restored(
+    tauri::async_runtime::spawn_blocking(move || crate::minimal::restored(
         &app,
         identity,
         snapshot_id,
         &restored,
         error.as_deref().map(safe_error),
-    )
+    )).await.map_err(|_| "recovery-worker")?
 }
 
 fn safe_error(error: &str) -> &str {
@@ -873,7 +906,8 @@ pub fn refresh_bridge(window: &WebviewWindow) {
             crate::state::Phase::Running { version, .. } => version.as_deref(),
             _ => None,
         };
-        serde_json::json!({ "identity":guard.ui.identity(), "phase":guard.ui.phase, "error":guard.ui.last_error, "frontendVersion":version })
+        serde_json::json!({ "identity":guard.ui.identity(), "phase":guard.ui.phase, "error":guard.ui.last_error, "frontendVersion":version,
+            "coldRecovery": guard.ui.snapshot.as_ref().is_some_and(|s| s.cold_recovery) })
     };
     let _ = window.eval(&format!("window.__DSH_UI_STATE__?.configure({packet});"));
 }

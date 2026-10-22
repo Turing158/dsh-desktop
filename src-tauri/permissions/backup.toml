@@ -1,0 +1,14 @@
+[[permission]]
+identifier = "allow-backup-export"
+description = "Export selected desktop-owned configuration snapshots to a native destination."
+commands.allow = ["desktop_backup_export"]
+
+[[permission]]
+identifier = "allow-backup-inspect"
+description = "Verify a natively selected backup in private staging without changing active data."
+commands.allow = ["desktop_backup_inspect"]
+
+[[permission]]
+identifier = "allow-backup-restore"
+description = "Restore selected validated desktop configuration using a native preview and durable checkpoint."
+commands.allow = ["desktop_backup_restore"]

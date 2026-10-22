@@ -49,7 +49,9 @@ const el = {
  * Served from Rust rather than written here so the instruction cannot drift
  * away from the command the app actually runs. The fallback is only for the
  * case where the status call itself failed. */
-let installCommand = 'npm install -g @deepseek-ai/dsh@latest';
+let installCommand = '';
+let diagnosticsOpen = false;
+let latestStatus;
 
 /** Keep the animated mark mounted while only the status content changes. */
 function render(node, state = 'loading') {
@@ -111,6 +113,8 @@ async function refresh() {
 }
 
 function renderPhase(status) {
+  latestStatus = status;
+  if (diagnosticsOpen) return;
   const phase = status?.phase ?? { kind: 'probing' };
   switch (phase.kind) {
     case 'probing':
@@ -155,6 +159,7 @@ function renderNeedsNode(phase) {
         button(t('使用 winget 安装 Node.js'), () => installNode()),
         button(t('打开 Node.js 下载页'), () => openExternal('https://nodejs.org/en/download'), 'secondary'),
         button(t('重新检测'), () => retry(), 'secondary'),
+        button(t('查看诊断'), () => showDiagnostics(), 'secondary'),
       ),
       paragraph(t('winget 安装会打开一个命令行窗口并可能请求管理员权限，安装完成后回到本窗口点击「重新检测」。')),
     ),
@@ -226,6 +231,7 @@ function renderFailed(phase) {
       'div',
       { class: 'actions' },
       button(t('重新检测'), () => retry()),
+      button(t('查看诊断'), () => showDiagnostics(), 'secondary'),
       phase.manual_install
         ? button(t('打开 npm 文档'), () => openExternal('https://docs.npmjs.com/cli/v10/commands/npm-install'), 'secondary')
         : null,
@@ -254,7 +260,45 @@ function renderFailed(phase) {
  */
 function showFailure(message) {
   if (message === 'stale-origin') return;
-  render(h('div', { class: 'stack' }, h('h2', { get text() { return t('出错了') } }), paragraph(message, 'error')), 'failed');
+  render(h('div', { class: 'stack' }, h('h2', { get text() { return t('出错了') } }), paragraph(message, 'error'), button(t('查看诊断'), () => showDiagnostics(), 'secondary')), 'failed');
+}
+
+/** This page uses only host APIs, so missing DSH or failed plugins cannot hide it. */
+async function showDiagnostics() {
+  diagnosticsOpen = true;
+  const content = h('div', { class: 'stack local-diagnostics' });
+  const notice = paragraph(t('等待读取当前运行时状态…'));
+  const facts = h('dl', { class: 'diagnostic-facts' });
+  const checks = h('div', { class: 'stack' });
+  const checkButton = button(t('重新检测'), () => run('desktop_diagnostics_check'), 'secondary');
+  const exportButton = button(t('导出诊断报告'), () => run('desktop_diagnostics_export'), 'secondary');
+  const back = button(t('返回'), () => { diagnosticsOpen = false; renderPhase(latestStatus); }, 'secondary');
+  content.append(h('h2', { text: t('故障诊断') }), notice,
+    h('div', { class: 'actions' }, checkButton, exportButton, back), facts, checks,
+    paragraph(t('默认报告省略私人路径、凭据、聊天正文和原始子进程输出，包含结构化状态、检查结果及能力清单。')));
+  render(content, 'attention');
+  async function run(command) {
+    checkButton.disabled = exportButton.disabled = true;
+    notice.textContent = t('正在执行诊断操作…');
+    try {
+      const result = await call(command);
+      if (!diagnosticsOpen || !content.isConnected) return;
+      if (command === 'desktop_diagnostics_export') {
+        notice.textContent = result ? t('报告已保存：{path}', { path: result }) : t('已取消导出');
+        return;
+      }
+      notice.textContent = t('诊断状态已更新');
+      const runtime = result.runtime;
+      const sourceLabels = {configured:'固定入口',managed:'受管安装',private:'私有安装',global:'全局安装'};
+      const rows = [['桌面版本',runtime.desktopVersion],['实际 dsh 版本',runtime.dshVersion],['实际运行入口',runtime.dshEntry],['运行时来源',t(sourceLabels[runtime.dshSource] || '未知')],['Node 版本',runtime.nodeVersion],['npm 版本',runtime.npmVersion],['WebView2 版本',runtime.webviewVersion]];
+      facts.replaceChildren(...rows.flatMap(([label,value]) => [h('dt', { text:t(label) }),h('dd', { text:value ?? t('未知') })]));
+      checks.replaceChildren(...result.checks.map(check => h('p', { text:check.id + ' — ' + t(({available:'可用',limited:'受限',unavailable:'不可用',unknown:'未知'})[check.status]) + ' (' + check.reasonCode + ')' })));
+      if (result.incompleteOperations.length) checks.append(paragraph(t('发现未完成的维护记录，请保留恢复材料。'), 'warn'));
+      if (result.unreadableJournals) checks.append(paragraph(t('部分维护记录无法读取，请保留文件并查看诊断。'), 'warn'));
+    } catch (error) { notice.textContent = String(error?.message ?? error); }
+    finally { checkButton.disabled = exportButton.disabled = false; }
+  }
+  await run('desktop_diagnostics');
 }
 
 /** Copy the install command, confirming on the button itself. */

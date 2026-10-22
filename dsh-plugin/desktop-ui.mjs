@@ -26,6 +26,7 @@ import { appendFileSync, readFileSync, statSync, truncateSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
+import { colorSchemeStyles, normalizeColorScheme } from './ui-overlay/color-schemes.mjs'
 
 /** Stable Cordis plugin name. */
 const name = 'desktop-ui'
@@ -122,11 +123,12 @@ function readUiMode(ctx) {
  * Legacy titlebar/titlebarHover settings deliberately do not enter this path.
  * Values are JSON-encoded and '<' is escaped for safe inline script content.
  */
-function chromeAttributesScript(uiMode, titlebarMode, titlebarHover) {
+function chromeAttributesScript(uiMode, titlebarMode, titlebarHover, colorScheme) {
   const pairs = [
     [MODE_ATTRIBUTE, uiMode],
     [TITLEBAR_MODE_ATTRIBUTE, titlebarMode],
     [TITLEBAR_HOVER_ATTRIBUTE, titlebarHover],
+    ['data-dsh-color-scheme', normalizeColorScheme(colorScheme)],
   ]
   const statements = pairs
     .map(([name, value]) => {
@@ -384,7 +386,9 @@ function apply(ctx, rawConfig) {
     table.push({
       kind: 'script',
       placement: 'head',
-      text: chromeAttributesScript(readUiMode(ctx), TITLEBAR_FULL, 'on'),
+      text: chromeAttributesScript(readUiMode(ctx), TITLEBAR_FULL, 'on', (() => {
+        try { return readSettingsSection(ctx, APPEARANCE_NAMESPACE)?.colorScheme } catch { return undefined }
+      })()),
     })
     // LAN HTTP lacks secure-context-only helpers required by upstream clients.
     for (const [file, kind] of [['ui-overlay/browser-compat.js', 'script'], ['ui-overlay/mobile.css', 'style'], ['ui-remote/style.css', 'style']]) {
@@ -407,6 +411,7 @@ function apply(ctx, rawConfig) {
       const css = readAsset(CSS_FILE, ctx)
       if (css !== undefined) {
         table.push({ kind: 'style', text: neutralise(css, 'style') })
+        table.push({ kind: 'style', placement: 'head', text: neutralise(colorSchemeStyles(), 'style') })
       }
     }
 

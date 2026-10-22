@@ -122,11 +122,28 @@
     var bar = document.querySelector('.dshTb')
     if (!bar || typeof getComputedStyle !== 'function') return null
     var style = getComputedStyle(bar)
-    return {
-      dark: document.body.hasAttribute('data-ds-dark-theme'),
-      background: style.backgroundColor,
-      foreground: getComputedStyle(bar.querySelector('.dshTb__wordmark') || bar).color,
-      border: style.borderBottomColor,
+    // Background images use a black/white canvas underneath their theme tint.
+    // Resolve the theme tokens instead of carrying that canvas into the update.
+    var probe = document.createElement('span')
+    probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;'
+    bar.appendChild(probe)
+    function color(token, fallback) {
+      probe.style.color = 'var(' + token + ',' + fallback + ')'
+      return getComputedStyle(probe).color
+    }
+    try {
+      var background = color('--dsw-specific-sidebar-fill', style.backgroundColor)
+      var foreground = color('--dsw-alias-label-primary', getComputedStyle(bar.querySelector('.dshTb__wordmark') || bar).color)
+      return {
+        dark: document.body.hasAttribute('data-ds-dark-theme'),
+        background: background,
+        foreground: foreground,
+        border: color('--dsw-alias-border-l2', style.borderBottomColor),
+        contentBackground: color('--dsw-alias-bg-base', background),
+        secondaryForeground: color('--dsw-alias-label-secondary', foreground),
+      }
+    } finally {
+      probe.remove()
     }
   }
 
@@ -181,10 +198,19 @@
       root.style.setProperty('--dsh-desktop-titlebar-border', palette.border)
       root.style.setProperty('--dsh-desktop-titlebar-hover', palette.dark ? 'rgb(255 255 255 / 8%)' : 'rgb(0 0 0 / 6%)')
       root.style.setProperty('--dsh-desktop-titlebar-menu-bg', palette.background)
+      var contentBackground = typeof palette.contentBackground === 'string' && window.CSS.supports('color', palette.contentBackground)
+        ? palette.contentBackground : palette.background
+      var secondaryForeground = typeof palette.secondaryForeground === 'string' && window.CSS.supports('color', palette.secondaryForeground)
+        ? palette.secondaryForeground : palette.foreground
+      root.style.setProperty('--dsh-desktop-page-bg', contentBackground)
+      root.style.setProperty('--dsh-desktop-page-muted', secondaryForeground)
       if (context.local) {
         root.setAttribute('data-dsh-boot-scheme', palette.dark ? 'dark' : 'light')
-        root.style.setProperty('--bg', palette.background)
+        root.style.setProperty('--bg', contentBackground)
         root.style.setProperty('--text', palette.foreground)
+        root.style.setProperty('--muted', secondaryForeground)
+        root.style.setProperty('--boot-mark', palette.foreground)
+        root.style.setProperty('--boot-wordmark-secondary', secondaryForeground)
       }
     }
     // Context enriches an already visible animation; a delayed/failed IPC must
@@ -242,13 +268,13 @@
    */
   var PROGRESS_CSS = [
     '.' + CLS('loading') + '{position:fixed;inset:44px 0 0;z-index:1199;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;',
-    'background:var(--dsh-desktop-titlebar-bg,#f9fafb);color:var(--dsh-desktop-titlebar-fg,#0f1115);font:14px/1.7 system-ui;}',
-    'body[data-ds-dark-theme] .' + CLS('loading') + '{background:var(--dsh-desktop-titlebar-bg,#1b1b1c);color:var(--dsh-desktop-titlebar-fg,#f9fafb);}',
+    'background:var(--dsw-alias-bg-base,var(--dsh-desktop-page-bg,var(--dsh-desktop-titlebar-bg,#f9fafb)));color:var(--dsw-alias-label-primary,var(--dsh-desktop-titlebar-fg,#0f1115));font:14px/1.7 system-ui;}',
+    'body[data-ds-dark-theme] .' + CLS('loading') + '{background:var(--dsw-alias-bg-base,var(--dsh-desktop-page-bg,var(--dsh-desktop-titlebar-bg,#1b1b1c)));color:var(--dsw-alias-label-primary,var(--dsh-desktop-titlebar-fg,#f9fafb));}',
     '.' + CLS('progress') + '{position:relative;display:grid;place-items:center;align-self:center;justify-self:center;width:112px;height:112px;margin:0 auto 12px;color:inherit;}',
     '.' + CLS('progress') + ' .' + CLS('logo') + '{width:48px;height:48px;color:inherit;opacity:.9;}',
     '.' + CLS('spinner') + '{position:absolute;inset:0;box-sizing:border-box;border:2px solid color-mix(in srgb,currentColor 14%,transparent);border-top-color:currentColor;border-radius:50%;animation:dsh-boot-spin 1.4s linear infinite;}',
     '.' + CLS('loadingLabel') + '{font-size:16px;font-weight:600;text-align:center;}',
-    '.' + CLS('loadingHint') + '{font-size:13px;opacity:.65;text-align:center;}',
+    '.' + CLS('loadingHint') + '{font-size:13px;color:var(--dsw-alias-label-secondary,var(--dsh-desktop-page-muted,color-mix(in srgb,currentColor 65%,transparent)));text-align:center;}',
     '@keyframes dsh-boot-spin{to{transform:rotate(360deg)}}',
   ].join('')
 

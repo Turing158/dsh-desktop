@@ -1,14 +1,19 @@
 import { balanceRows, formatBalance, platformHref } from './model.mjs'
 import { createLogoutIcon } from './icons.mjs'
 import { createPopoverMotion } from './motion.mjs'
+import { createUpdateBadge } from './update-badge.mjs'
 
 /** Keep the native launcher mounted: it still owns login, expiry and grant notices. */
 export function createAccountLauncher(React, ReactDOM, ui, Original) {
   const h = React.createElement
   const LogoutIcon = createLogoutIcon(React)
+  const UpdateBadge = createUpdateBadge(React, ui)
   function AccountLauncher(props) {
     if (typeof props.useAccount !== 'function' || typeof props.contactUs !== 'function'
-      || typeof props.signOut !== 'function' || typeof props.hasRunningAccountTasks !== 'function') return h(Original, props)
+      || typeof props.signOut !== 'function' || typeof props.hasRunningAccountTasks !== 'function') {
+      return h('div', { className: 'dshAccountLauncher', 'data-collapsed': !props.wide },
+        h('div', { className: 'dshAccountLauncher__native' }, h(Original, props)), h(UpdateBadge, { wide: props.wide }))
+    }
     return h(EnhancedLauncher, props)
   }
   function EnhancedLauncher(props) {
@@ -197,6 +202,7 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
     }
     return h('div', { className: 'dshAccountLauncher', 'data-collapsed': !props.wide, onClickCapture: activate, onKeyDownCapture: activate },
       h('div', { ref: native, className: 'dshAccountLauncher__native' }, h(Original, props)),
+      h(UpdateBadge, { wide: props.wide }),
       signedIn && !props.hasDesktopSettingsLauncher && iconButton(t('settings'), 'dshAccount__settings', () => { close(); props.openSettings() }, h(ui.IconSettingsOutlineMedium, { size: 16 })),
       (open || present) && signedIn && ReactDOM.createPortal(h('section', { ref: panel, id, className: 'dshAccount', role: 'dialog',
         'data-state': open ? 'open' : 'closing', inert: open ? undefined : '', 'aria-hidden': open ? undefined : true,

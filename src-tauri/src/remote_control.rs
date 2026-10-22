@@ -605,6 +605,11 @@ pub fn current_invocation(invoke: &tauri::ipc::Invoke) -> bool {
     // `tauri dev` that document is served by the CLI's server, so answering with
     // the packaged protocol URL alone refused every boot-page command.
     let app_document = crate::ui_snapshot::is_app_document(app, &url);
+    if webview.label() == "diagnostics" {
+        return app_document
+            && matches!(invoke.message.command(), "desktop_diagnostics" | "desktop_diagnostics_check" | "desktop_diagnostics_export" | "desktop_recovery_list" | "desktop_backup_inspect")
+            && invoke.acl.as_ref().is_some_and(|acl| acl.iter().any(|grant| matches!(grant.context, tauri::utils::acl::ExecutionContext::Local)));
+    }
     webview.label() == "main"
         && invoke.acl.as_ref().is_some_and(|acl| {
             acl.iter()
@@ -652,7 +657,7 @@ pub fn authorize_backend(app: &AppHandle, instance: u64, url: &str) -> Result<()
     let url = url.parse::<tauri::Url>().map_err(|_| "remote-origin")?;
     app.add_capability(serde_json::json!({ "identifier": format!("remote-control-{instance}"), "windows": ["main"], "local": false,
         "remote": { "urls": [format!("{}/*", url.origin().ascii_serialization())] },
-        "permissions": ["allow-desktop-locale", "allow-remote-control", "allow-window-controls", "allow-clipboard", "allow-edit-shortcut", "allow-folder-focus", "allow-workspace-directory", "allow-session-export", "allow-attachment-images", "core:app:allow-version"]
+        "permissions": ["allow-desktop-locale", "allow-remote-control", "allow-window-controls", "allow-clipboard", "allow-edit-shortcut", "allow-folder-focus", "allow-workspace-directory", "allow-session-export", "allow-attachment-images", "allow-diagnostics-read", "allow-diagnostics-export", "allow-capability-report", "allow-recovery-read", "allow-recovery-restore", "allow-draft-checkpoint", "allow-backup-export", "allow-backup-inspect", "allow-backup-restore", "core:app:allow-version"]
     }).to_string()).map_err(|_| "remote-permission".into())
 }
 pub fn page_load(window: &WebviewWindow, started: bool) {
@@ -698,6 +703,9 @@ pub fn remote_status(window: WebviewWindow, identity: Identity) -> Result<Status
     let s = shared
         .lock()
         .map_err(|_| Error::from("后台状态不可用".to_string()))?;
+    Ok(status_for_state(&s))
+}
+fn status_for_state(s: &crate::state::AppState) -> Status {
     let r = &s.remote;
     let running = matches!(s.phase, Phase::Running { .. });
     let lan = running && r.active.as_ref().is_some_and(|c| c.enabled) && !r.applying;
@@ -709,7 +717,7 @@ pub fn remote_status(window: WebviewWindow, identity: Identity) -> Result<Status
     } else {
         vec![]
     };
-    Ok(Status {
+    Status {
         saved: r.saved.clone(),
         active: r.active.clone(),
         operation_id: r.operation_id,
@@ -738,7 +746,23 @@ pub fn remote_status(window: WebviewWindow, identity: Identity) -> Result<Status
         error: r.error.clone(),
         instance: s.ui.backend_instance,
         frontend_version: s.runtime.as_ref().and_then(|r| r.version.clone()),
-    })
+    }
+}
+/// Diagnostics consume the same effective listener selection as remote_status.
+/// This observes saved intent without starting listeners or probing networks.
+pub(crate) fn capability(s: &crate::state::AppState) -> crate::compatibility::Observation {
+    use crate::compatibility::{Availability,Implementation,Observation};
+    let status=status_for_state(s);
+    let running=matches!(s.phase,Phase::Running {..});
+    let (availability,reason)=if status.applying {(Availability::Checking,"remote-configuration-applying")}
+        else if !running {(Availability::Unavailable,"remote-backend-unavailable")}
+        else if status.error.is_some() {(Availability::Limited,"remote-local-fallback")}
+        else if !status.saved.enabled {(Availability::Available,"remote-access-user-disabled")}
+        else if status.state=="lan" && !status.listeners.is_empty() {(Availability::Limited,"remote-client-reachability-unverified")}
+        else {(Availability::Unknown,"remote-listener-unconfirmed")};
+    Observation {feature_id:"lan-mobile".into(),availability,implementation:Some(Implementation::Hybrid),
+        plugin_state:if status.saved.enabled {"enabled"} else {"user-disabled"}.into(),
+        reason_codes:vec![reason.into()],evidence:vec!["remote-status-selector".into()]}
 }
 #[tauri::command]
 pub async fn remote_lan_addresses(
@@ -831,6 +855,12 @@ async fn apply_backend(
 ) -> Result<ApplyReply, Error> {
     caller(&window, identity)?;
     let shared = app.state::<Shared>().inner().clone();
+    // Acquire the coordinator before AppState. The lease outlives backend boot
+    // and is released only by the required UI acknowledgement or explicit defer.
+    let update_guard = app
+        .state::<crate::dsh_update::UpdateManager>()
+        .begin_kind(crate::maintenance::Kind::Restart)
+        .map_err(Error::from)?;
     let guard = {
         let mut s = shared
             .lock()
@@ -850,12 +880,6 @@ async fn apply_backend(
         s.remote.applying = true;
         ApplyingGuard(shared.clone())
     };
-    // Share the package-update lock: updating the executable while restarting it
-    // must never race. The lock is retained by the background operation.
-    let update_guard = app
-        .state::<crate::dsh_update::UpdateManager>()
-        .begin()
-        .map_err(Error::from)?;
     let path = config_path(&app)?;
     let work_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -903,9 +927,20 @@ async fn apply_backend(
         if payload.page.kind != "dsh" {
             return Err(Error::from("无法安全保存当前页面".to_string()));
         }
+        let update_guard = update_guard.durable(&work_app).map_err(Error::from)?;
+        let progress = update_guard.progress();
+        progress.update(crate::maintenance::Stage::Capturing, "capture-started").map_err(Error::from)?;
         let snapshot = UiSnapshot::capture(payload, source)
             .map_err(|_| Error::new("snapshot", "", "草稿或附件保存失败，原页面和服务已保留"))?;
+        let recovery = crate::recovery_store::persist(&work_app, &snapshot)
+            .map_err(|code| Error::new("recovery", "", code))?;
+        progress.checkpoint(recovery.id, &recovery.binding.runtime_version).map_err(Error::from)?;
+        progress.update(crate::maintenance::Stage::Checkpointing, "recovery-saved").map_err(Error::from)?;
         caller(&window, identity)?;
+        // The maintenance/applying guards serialize mutations. Never perform
+        // filesystem IO while holding AppState, including config commits.
+        progress.update(crate::maintenance::Stage::StartingCandidate, "restart-requested").map_err(Error::from)?;
+        if !restart_only { save(&path, &config)?; }
         {
             let mut s = shared
                 .lock()
@@ -913,19 +948,18 @@ async fn apply_backend(
             if s.ui.phase != UiPhase::Active || self::identity(&s) != identity {
                 return Err(Error::from("页面已变化，请重试".to_string()));
             }
-            // Serialize the final check and disk commit against exit/destruction.
             if !restart_only {
-                save(&path, &config)?;
                 s.remote.saved = config.clone();
                 s.remote.error = None;
             }
             s.remote.operation_id += 1;
+            s.ui.recovery = Some(recovery);
             s.ui.snapshot = Some(Arc::new(snapshot));
+            s.ui.recovery_lease = Some(update_guard.into_lease());
         }
         let operation_id = shared.lock().unwrap().remote.operation_id;
         std::thread::spawn(move || {
             let _guard = guard;
-            let _update_guard = update_guard;
             crate::restart_backend(&work_app, &shared, runtime, config);
         });
         Ok(ApplyReply {
@@ -2042,6 +2076,7 @@ mod tests {
             dsh_bin: Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/fake-dsh-remote.mjs"),
             source: crate::dsh::DshSource::Global,
             version: None,
+            managed: None,
         };
         let c = Config {
             enabled: true,

@@ -3,6 +3,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const out = root + 'dsh-plugin/sidebar-terminal/assets/'
+await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/ui-state/checkpoint-bridge-entry.mjs'], outfile: root + 'dsh-plugin/ui-state/checkpoints.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline' })
+await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/desktop-maintenance/capability-bridge-entry.mjs'], outfile: root + 'dsh-plugin/desktop-maintenance/capability-bridge.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline' })
+await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/desktop-maintenance/local-entry.mjs'], outfile: root + 'src-tauri/ui/diagnostics.js', bundle: true, format: 'esm', target: 'es2022', legalComments: 'inline' })
 await mkdir(out, { recursive: true })
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/sidebar-terminal/runtime.mjs'], outfile: out + 'terminal.js', bundle: true, format: 'iife', globalName: 'DSHTerminal', target: 'es2020', minify: true, legalComments: 'inline' })
 await writeFile(out + 'terminal.css', (await readFile(root + 'node_modules/@xterm/xterm/css/xterm.css', 'utf8')) + '\n' + (await readFile(root + 'dsh-plugin/sidebar-terminal/terminal.css', 'utf8')))
@@ -38,3 +41,5 @@ console.log('Built sidebar file editor client.')
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/directory-picker/client-entry.mjs'], outfile: root + 'dsh-plugin/directory-picker/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline', loader: { '.css': 'text' } })
 console.log('Built remote directory picker client.')
 await import('./build-account-popover.mjs')
+await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/desktop-maintenance/client-entry.mjs'], outfile: root + 'dsh-plugin/desktop-maintenance/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline', loader: { '.css': 'text' } })
+console.log('Built desktop diagnostics settings client.')
