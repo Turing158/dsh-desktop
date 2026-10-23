@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "deepseek-harness-desktop"
-version = "0.1.4"
+version = "1.0.0"
 dependencies = [
  "aes-gcm",
  "argon2",

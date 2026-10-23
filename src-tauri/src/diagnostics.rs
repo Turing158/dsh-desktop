@@ -50,7 +50,7 @@ pub struct Report {
 #[derive(Clone, Default)]
 struct Cache { checked_at: Option<u64>, backend_instance: u64, checks: Vec<Check>, inventory: Option<crate::data_inventory::DataInventory>, runtime: Option<RuntimeDescriptor>, incomplete_operations: Vec<crate::maintenance::OperationJournal>, unreadable_journals: usize }
 #[derive(Default)]
-pub struct Diagnostics { cache: Mutex<Cache>, check: Mutex<()>, log: Mutex<()> }
+pub struct Diagnostics { cache: Mutex<Cache>, check: Mutex<()>, log: Mutex<()>, dialog_requested: Mutex<bool> }
 
 fn data_root(app: &AppHandle) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
@@ -124,23 +124,42 @@ fn authorize(window: &WebviewWindow, claimed: Option<crate::remote_control::Iden
     crate::remote_control::caller(window, claimed.ok_or("diagnostics-identity-required")?).map_err(|e| e.message)
 }
 
-/// Native tray entry survives optional plugin failures and main WebView disposal.
+/// Keep the request until the main document's dialog handler is ready, including
+/// when showing the interface first has to restore a disposed WebView.
 pub fn open(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("diagnostics") {
-        let _ = window.show(); let _ = window.set_focus(); return;
+    if let Ok(mut requested) = app.state::<Diagnostics>().dialog_requested.lock() {
+        *requested = true;
     }
-    let title = crate::locale::text(app, "故障诊断", "Diagnostics");
-    let builder = tauri::WebviewWindowBuilder::new(app, "diagnostics", tauri::WebviewUrl::App("diagnostics.html".into()));
-    #[cfg(debug_assertions)]
-    let builder = if let Some(dir) = std::env::var_os("DSH_DESKTOP_SMOKE_DIR") {
-        builder.data_directory(PathBuf::from(dir).join("webview"))
-    } else { builder };
-    let navigation_app = app.clone();
-    if builder
-        .title(title).inner_size(760.0, 720.0).min_inner_size(420.0, 480.0)
-        .initialization_script(crate::locale::initialization_script(app))
-        .on_navigation(move |url| crate::ui_snapshot::is_app_document(&navigation_app, url))
-        .build().is_err() { record(app, "diagnostics", "window-open-failed"); }
+    crate::tray::show_main_window(app);
+    if let Some(window) = app.get_webview_window("main") { request_dialog(&window); }
+}
+
+pub fn request_dialog(window: &WebviewWindow) {
+    let pending = window.state::<Diagnostics>().dialog_requested.lock().map(|requested| *requested).unwrap_or(false);
+    if !pending { return; }
+    let Ok(url) = window.url() else { return };
+    let ready = window.state::<crate::state::Shared>().lock().map(|state| {
+        state.ui.loaded
+            && !matches!(state.ui.phase, crate::ui_snapshot::UiPhase::Destroying | crate::ui_snapshot::UiPhase::Minimal | crate::ui_snapshot::UiPhase::Exiting)
+            && crate::ui_snapshot::allowed_origin(window.app_handle(), &url, &state.phase)
+    }).unwrap_or(false);
+    if ready {
+        let _ = window.eval("document.dispatchEvent(new Event('dsh-desktop:diagnostics-request'));");
+    }
+}
+
+#[tauri::command]
+pub fn desktop_diagnostics_dialog(window: WebviewWindow, identity: Option<crate::remote_control::Identity>) -> Result<bool, String> {
+    if window.label() != "main" { return Err("diagnostics-origin".into()); }
+    authorize(&window, identity)?;
+    let url = window.url().map_err(|_| "diagnostics-origin")?;
+    if crate::ui_snapshot::is_app_document(window.app_handle(), &url)
+        && matches!(window.state::<crate::state::Shared>().lock().map_err(|_| "diagnostics-state")?.phase, crate::state::Phase::Running { .. }) {
+        return Ok(false);
+    }
+    let service = window.state::<Diagnostics>();
+    let mut requested = service.dialog_requested.lock().map_err(|_| "diagnostics-dialog")?;
+    Ok(std::mem::take(&mut *requested))
 }
 
 #[tauri::command]

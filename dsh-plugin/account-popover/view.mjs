@@ -9,7 +9,7 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
   const LogoutIcon = createLogoutIcon(React)
   const UpdateBadge = createUpdateBadge(React, ui)
   function AccountLauncher(props) {
-    if (typeof props.useAccount !== 'function' || typeof props.contactUs !== 'function'
+    if (typeof props.useAccount !== 'function' || typeof props.contactUs !== 'function' || typeof props.start !== 'function'
       || typeof props.signOut !== 'function' || typeof props.hasRunningAccountTasks !== 'function') {
       return h('div', { className: 'dshAccountLauncher', 'data-collapsed': !props.wide },
         h('div', { className: 'dshAccountLauncher__native' }, h(Original, props)), h(UpdateBadge, { wide: props.wide }))
@@ -17,10 +17,11 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
     return h(EnhancedLauncher, props)
   }
   function EnhancedLauncher(props) {
+    window.__DSH_I18N__?.use(React)
     const { t } = props
     const account = props.useAccount(value => value)
     const signedIn = account.view?.status === 'credential-stored'
-    const native = React.useRef(null), panel = React.useRef(null), releasePage = React.useRef(null)
+    const native = React.useRef(null), signInButton = React.useRef(null), panel = React.useRef(null), releasePage = React.useRef(null)
     const alive = React.useRef(true), currentSignedIn = React.useRef(signedIn), pending = React.useRef(false)
     currentSignedIn.current = signedIn
     const [open, setOpen] = React.useState(false), [position, setPosition] = React.useState(null)
@@ -29,8 +30,9 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
     const [checking, setChecking] = React.useState(false), [impact, setImpact] = React.useState(undefined)
     const [busy, setBusy] = React.useState(false), [failed, setFailed] = React.useState(false)
     const [actionFailed, setActionFailed] = React.useState(false)
+    const [feedbackFailed, setFeedbackFailed] = React.useState(false)
     const id = React.useId()
-    const getTrigger = () => native.current?.querySelector('button[aria-haspopup]')
+    const getTrigger = () => signedIn ? native.current?.querySelector('button[aria-haspopup]') : signInButton.current
     const close = (restore = false) => {
       setOpen(false)
       if (restore) getTrigger()?.focus({ preventScroll: true })
@@ -133,9 +135,15 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
         })
       }
     }
+    function signIn() {
+      // Invoke immediately so browser sign-in retains the user's activation.
+      // The mounted native launcher owns the waiting, failure and retry dialog.
+      try { Promise.resolve(props.start()).catch(() => {}) } catch {}
+    }
     async function feedback() {
-      try { await props.contactUs(); if (alive.current) close(true) }
-      catch { if (alive.current) setActionFailed(true) }
+      setFeedbackFailed(false)
+      try { await props.contactUs(); if (alive.current) close() }
+      catch { if (alive.current) setFeedbackFailed(true) }
     }
     async function requestSignOut() {
       if (pending.current) return
@@ -200,10 +208,23 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
         'aria-label': label, title: ui.Tooltip ? undefined : label, onClick, disabled }, icon)
       return ui.Tooltip ? h(ui.Tooltip, { label, portal: true, side: 'top', delayMs: 400 }, button) : button
     }
+    const feedbackButton = h('button', { type: 'button', className: 'dshAccountLauncher__feedback',
+      'aria-label': t('contactUs'), title: ui.Tooltip ? undefined : t('contactUs'), onClick: feedback },
+    h('svg', { className: 'dshAccountLauncher__feedbackGlyph', width: 16, height: 16, viewBox: '0 0 24 24',
+      fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+    h('path', { d: 'M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 4V6a2 2 0 0 1 2-2Z M7 9h10M7 13h6' })))
     return h('div', { className: 'dshAccountLauncher', 'data-collapsed': !props.wide, onClickCapture: activate, onKeyDownCapture: activate },
-      h('div', { ref: native, className: 'dshAccountLauncher__native' }, h(Original, props)),
+      h('div', { ref: native, className: 'dshAccountLauncher__native', 'data-signed-out': !signedIn },
+        h(Original, props),
+        !signedIn && h('button', { ref: signInButton, type: 'button', className: 'dshAccountLauncher__signIn',
+          'data-collapsed': !props.wide, 'data-dsh-account-sign-in': '',
+          'aria-label': window.__DSH_I18N__?.t('未登录') ?? '未登录', onClick: signIn },
+        h(ui.IconUserOutlineMedium, { size: 14 }),
+        props.wide && h('span', null, window.__DSH_I18N__?.t('未登录') ?? '未登录'))),
       h(UpdateBadge, { wide: props.wide }),
-      signedIn && !props.hasDesktopSettingsLauncher && iconButton(t('settings'), 'dshAccount__settings', () => { close(); props.openSettings() }, h(ui.IconSettingsOutlineMedium, { size: 16 })),
+      !signedIn && (ui.Tooltip ? h(ui.Tooltip, { label: t('contactUs'), portal: true, side: props.wide ? 'top' : 'right', delayMs: 250 }, feedbackButton) : feedbackButton),
+      !props.hasDesktopSettingsLauncher && iconButton(t('settings'), 'dshAccount__settings', () => { close(); props.openSettings() }, h(ui.IconSettingsOutlineMedium, { size: 16 })),
+      feedbackFailed && h(ui.Toast, { text: t('failed'), onDone: () => setFeedbackFailed(false) }),
       (open || present) && signedIn && ReactDOM.createPortal(h('section', { ref: panel, id, className: 'dshAccount', role: 'dialog',
         'data-state': open ? 'open' : 'closing', inert: open ? undefined : '', 'aria-hidden': open ? undefined : true,
         'aria-label': t('nav'), tabIndex: -1, style: position || { visibility: 'hidden' }, 'data-dsh-account-popover': '' },
@@ -213,8 +234,7 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
           : h(ui.IconUserOutlineMedium, { size: 20 })),
         h('span', { className: 'dshAccount__name', title: name }, name),
         iconButton(t('signOut'), 'dshAccount__logout', requestSignOut, h(LogoutIcon, { size: 14 }), checking),
-        h('div', { className: 'dshAccount__contact' }, h('span', { className: 'dshAccount__phone', title: contact }, contact),
-          iconButton(t('contactUs'), 'dshAccount__feedback', feedback, h(ui.IconPaperPlaneOutlineMedium, { size: 13 })))),
+        h('div', { className: 'dshAccount__contact' }, h('span', { className: 'dshAccount__phone', title: contact }, contact))),
       h('div', { className: 'dshAccount__finance' }, wallet(false), wallet(true)),
       actionFailed && h('p', { className: 'dshAccount__error', role: 'alert' }, t('failed'))), document.body),
       signedIn && impact !== undefined && h(ui.Modal, { open: true, title: t('signOut'), closeLabel: t('close'),

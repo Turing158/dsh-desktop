@@ -1,8 +1,32 @@
-.dshAccountLauncher { position: relative; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.dshAccountLauncher { --dsh-account-launcher-height: 32px; position: relative; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
 .dshAccountLauncher__native { flex: 1; min-width: 0; }
+/* Match the signed-out entry while fitting the native 24px avatar. */
+.dshAccountLauncher[data-collapsed=false] .dshAccountLauncher__native [data-dsh-account-trigger] { box-sizing: border-box; height: var(--dsh-account-launcher-height); padding-block: 4px; line-height: 20px; }
+/* Keep the mounted native launcher's empty inline anchor off the sign-in row. */
+.dshAccountLauncher__native[data-signed-out=true] { display: flex; align-items: center; }
+.dshAccountLauncher__native[data-signed-out=true] button[data-signed-out=true] { display: none; }
+.dshAccountLauncher__signIn { display: flex; align-items: center; gap: 8px; width: 100%; height: var(--dsh-account-launcher-height); padding: 6px; border: 0; border-radius: var(--dsw-radius-md, 8px); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 20px; cursor: pointer; }
+.dshAccountLauncher__signIn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dshAccountLauncher__signIn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary, #4176e6); outline-offset: -2px; }
+.dshAccountLauncher__signIn[data-collapsed=true] { justify-content: center; gap: 0; width: 36px; height: 36px; padding: 0; }
 .dshAccountLauncher[data-collapsed=true] { flex-direction: column; }
 .dshAccountLauncher .dshAccount__settings { width: 36px; height: 36px; }
+.dshAccountLauncher__feedback { position: relative; display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: var(--dsw-radius-sm, 8px); background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; transition: color 180ms ease; }
+.dshAccountLauncher__feedback::before { content: ''; position: absolute; inset: 0; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--dsw-alias-link, #4176e6) 42%, transparent); border-radius: inherit; background: color-mix(in srgb, var(--dsw-alias-link, #4176e6) 10%, transparent); opacity: 0; transform: var(--dsh-feedback-rest, scale(.9)); transition: opacity 180ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1); pointer-events: none; }
+.dshAccountLauncher__feedbackGlyph { position: relative; transition: transform 220ms cubic-bezier(.2, .8, .2, 1); }
+.dshAccountLauncher__feedback:is(:hover, :focus-visible) { color: var(--dsw-alias-link, #4176e6); }
+.dshAccountLauncher__feedback:is(:hover, :focus-visible)::before { opacity: 1; transform: scale(1); }
+.dshAccountLauncher__feedback:is(:hover, :focus-visible) .dshAccountLauncher__feedbackGlyph { transform: var(--dsh-feedback-hover, translateY(-1px)); }
+.dshAccountLauncher__feedback:active .dshAccountLauncher__feedbackGlyph { transform: var(--dsh-feedback-press, translateY(0) scale(.95)); }
+.dshAccountLauncher__feedback:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #5686fe); outline-offset: -2px; }
+html[data-dsh-desktop-animation=off] .dshAccountLauncher__feedback { --dsh-feedback-rest: none; --dsh-feedback-hover: none; --dsh-feedback-press: none; }
+html[data-dsh-desktop-animation=off] :is(.dshAccountLauncher__feedback, .dshAccountLauncher__feedbackGlyph), html[data-dsh-desktop-animation=off] .dshAccountLauncher__feedback::before { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-desktop-animation=on]) .dshAccountLauncher__feedback { --dsh-feedback-rest: none; --dsh-feedback-hover: none; --dsh-feedback-press: none; }
+  html:not([data-dsh-desktop-animation=on]) :is(.dshAccountLauncher__feedback, .dshAccountLauncher__feedbackGlyph), html:not([data-dsh-desktop-animation=on]) .dshAccountLauncher__feedback::before { transition: none; }
+}
 .dshUpdateBadge__anchor { position: absolute; inset-inline-end: 4px; top: 50%; transform: translateY(-50%); z-index: 1; display: inline-flex; }
+.dshAccountLauncher[data-collapsed=false] > .dshUpdateBadge__anchor { position: static; transform: none; flex: none; }
 .dshAccountLauncher[data-collapsed=true] .dshUpdateBadge__anchor { inset-inline-end: 50%; top: 0; transform: translate(50%, -100%); }
 .dshUpdateBadge { display: inline-flex; align-items: center; justify-content: center; flex: none; min-height: 32px; padding: 0 2px; border: 0; border-radius: 6px; background: transparent; color: #246541; font: inherit; cursor: pointer; }
 .dshUpdateBadge__pill { position: relative; display: inline-flex; align-items: center; justify-content: center; height: 20px; padding: 0 6px; border: 1px solid #31865735; border-radius: 6px; background: #31865714; font-size: 11px; font-weight: 500; line-height: 1; white-space: nowrap; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms cubic-bezier(.2, .8, .2, 1); }
@@ -56,7 +80,6 @@ body[data-ds-dark-theme] .dshAccount { --dsh-account-surface-tint: rgb(0 0 0 / .
 .dshAccount__icon:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .dshAccount__logout { grid-column: 3; grid-row: 1; width: 20px; height: 20px; }
 .dshAccount__logout:hover { color: var(--dsw-alias-state-error-primary, #d74d64); }
-.dshAccount__feedback { width: 18px; height: 18px; }
 .dshAccount__finance { border-top: 1px solid var(--dsw-alias-border-l2); padding: 14px 16px; }
 .dshAccount__balance + .dshAccount__balance { margin-top: 12px; }
 .dshAccount__label { font-size: 11px; line-height: 16px; margin-bottom: 4px; color: var(--dsw-alias-label-secondary); }

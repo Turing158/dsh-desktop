@@ -23,7 +23,24 @@ await writeFile(join(probe, 'package.json'), JSON.stringify({
 await writeFile(join(probe, 'index.js'), 'export function apply() {}\n')
 await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({
   id: '@dsh-desktop/color-schemes-smoke',
-  factory: () => ({ inject: ['configForms', 'slots', 'theme'], apply(ctx) { window.__COLOR_SCHEMES_SMOKE__ = ctx } }),
+  factory: require => {
+    const React = require('react'), { createRoot } = require('react-dom/client')
+    const { Switch } = require('@deepseek-ai/dsh-client-ui-primitives')
+    return { inject: ['configForms', 'slots', 'theme', 'sessions', 'workspaces', 'uiWorkspace', 'modelDirectories'], apply(ctx) {
+      window.__MOUNT_PALETTE_SWITCHES__ = surface => {
+        function Controls() {
+          const [checked, setChecked] = React.useState(true)
+          return React.createElement(React.Fragment, null,
+            React.createElement(Switch, { checked, onChange: setChecked, label: 'Palette switch' }),
+            React.createElement(Switch, { checked: false, disabled: true, label: 'Disabled palette switch' }))
+        }
+        const root = createRoot(surface)
+        root.render(React.createElement(Controls))
+        return () => root.unmount()
+      }
+      window.__COLOR_SCHEMES_SMOKE__ = ctx
+    } }
+  },
 })\n`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8'))
   .replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
@@ -56,14 +73,29 @@ function stop() {
 }
 function pass(name) { report.checks.push(name); console.log('PASS: ' + name) }
 function rgb(hex) { return 'rgb(' + [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16)).join(', ') + ')' }
+function luminance(hex) {
+  const linear = [1, 3, 5].map(offset => {
+    const channel = parseInt(hex.slice(offset, offset + 2), 16) / 255
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  return linear.reduce((sum, channel, i) => sum + channel * [0.2126, 0.7152, 0.0722][i], 0)
+}
+function contrast(foreground, background) {
+  const values = [luminance(foreground), luminance(background)]
+  return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05)
+}
 async function ready(page, url) {
   await page.goto(url)
   await page.waitForFunction(() => {
-    if (document.body.textContent.includes('Failed to load plugins')) throw Error(document.body.textContent)
+    if (document.body.textContent.includes('Failed to load plugins')) throw Error(document.body.innerText)
     return window.__COLOR_SCHEMES_SMOKE__?.configForms.get('desktop-appearance').getSnapshot().status === 'ready'
   }, undefined, { timeout: 30000 })
 }
 async function openAppearance(page) {
+  if (await page.locator('[class*=_frame][data-sidebar-collapsed]').count()) {
+    await page.locator('.dshTb__mark').click()
+    await page.locator('[class*=_frame][data-sidebar-collapsed]').waitFor({ state: 'detached' })
+  }
   await openDshSettings(page)
   await page.getByRole('button', { name: '外观', exact: true }).click()
   await page.locator('.dshAppearance').waitFor()
@@ -114,9 +146,9 @@ async function checkSelectedOptions(page) {
 async function readPalette(page) {
   return page.evaluate(() => {
     const s = getComputedStyle(document.body)
-    const keys = ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-bg-module-platform', '--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-link', '--dsw-alias-button-primary-fill', '--dsw-alias-border-l3', '--dsw-alias-state-success-primary']
+    const keys = ['--dsw-alias-bg-base', '--dsw-alias-bg-layer-1', '--dsw-alias-bg-layer-2', '--dsw-alias-bg-layer-3', '--dsw-alias-bg-module-platform', '--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-link', '--dsw-alias-brand-primary', '--dsw-alias-button-primary-fill', '--dsw-alias-button-elevated-fill', '--dsw-alias-button-floating-hover', '--dsh-palette-dialog', '--dsh-palette-control-soft', '--dsh-palette-control-hover', '--dsw-alias-border-l3', '--dsw-alias-interactive-bg-hover', '--dsw-alias-interactive-bg-active', '--dsw-alias-state-success-primary']
     const sidebar = document.querySelector('[class*=_sidebarCol]')
-    const surfaces = Object.fromEntries(['[class*=_sidebarCol]', '[data-slot=sidebar]', '[class*=_centerCol]', '[data-dsh-desktop=composer]', '[data-dsh-desktop=composer] button[class*=_primary]', '.dshTb', '[class*=_composerSeat]'].map(selector => {
+    const surfaces = Object.fromEntries(['[class*=_sidebarCol]', '[data-slot=sidebar]', '[class*=_centerCol]', '[data-dsh-desktop=composer]', '[data-dsh-desktop=composer] button[class*=_primary]', '.dshTb', '[class*=_composerSeat]', '[data-shortcut-modal=settings]', 'button[class*=_newSession]'].map(selector => {
       const el = document.querySelector(selector)
       if (!el) return [selector, null]
       const cs = getComputedStyle(el)
@@ -124,6 +156,128 @@ async function readPalette(page) {
     }))
     return { scheme: document.documentElement.getAttribute('data-dsh-color-scheme'), dark: document.body.hasAttribute('data-ds-dark-theme'), tokens: Object.fromEntries(keys.map(k => [k, s.getPropertyValue(k).trim()])), sidebar: sidebar ? getComputedStyle(sidebar).backgroundColor : null, surfaces }
   })
+}
+function paletteColors(palette) {
+  // Palette restoration concerns paint, not asynchronously updated layout sizes.
+  return { scheme: palette.scheme, dark: palette.dark, tokens: palette.tokens, sidebar: palette.sidebar,
+    surfaces: Object.fromEntries(Object.entries(palette.surfaces).map(([selector, surface]) =>
+      [selector, surface && { background: surface.background, image: surface.image }])) }
+}
+async function checkTintedSurfaces(page, p, mode, actual) {
+  for (const [selector, token, base] of [
+    ['[data-shortcut-modal=settings]', '--dsh-palette-dialog', p['layer-2']],
+    ['button[class*=_newSession]', '--dsw-alias-button-elevated-fill', p.panel],
+  ]) {
+    const fill = actual.tokens[token]
+    assert.equal(actual.surfaces[selector]?.background, rgb(fill), selector + ' uses the theme tint')
+    assert.notEqual(fill, base, selector + ' carries a little theme color')
+    const distance = Math.max(...[1, 3, 5].map(offset => Math.abs(
+      parseInt(fill.slice(offset, offset + 2), 16) - parseInt(base.slice(offset, offset + 2), 16))))
+    assert.ok(distance <= 18, selector + ' remains close to the neutral surface')
+    for (const foreground of [p.ink, p.muted]) assert.ok(contrast(foreground, fill) >= 4.5, 'tinted surfaces retain readable text')
+  }
+  const outline = page.locator('[data-shortcut-modal=settings] button[class*="_outline_"]').first()
+  assert.equal(await outline.evaluate(el => getComputedStyle(el).backgroundColor), rgb(actual.tokens['--dsh-palette-control-soft']))
+  for (const token of ['--dsh-palette-control-soft', '--dsh-palette-control-hover']) {
+    for (const foreground of [p.ink, p.muted]) assert.ok(contrast(foreground, actual.tokens[token]) >= 4.5, 'secondary actions retain readable rest and hover text')
+  }
+  const group = page.getByRole('group', { name: 'Dialog 效果', exact: true })
+  const tint = actual.tokens['--dsh-palette-dialog']
+  const channels = [1, 3, 5].map(offset => parseInt(tint.slice(offset, offset + 2), 16))
+  for (const [id, label] of [['glass', '毛玻璃'], ['frosted', '纯磨砂'], ['transparent', '透明'], ['opaque', '不透明']]) {
+    await group.getByRole('button', { name: label, exact: true }).click()
+    await page.waitForFunction(id => document.documentElement.getAttribute('data-dsh-dialog-material') === id, id)
+    const style = await page.locator('[data-shortcut-modal=settings]').evaluate(el => {
+      const s = getComputedStyle(el), canvas = document.createElement('canvas')
+      canvas.width = canvas.height = 1
+      const context = canvas.getContext('2d'); context.fillStyle = s.backgroundColor; context.fillRect(0, 0, 1, 1)
+      return { rgba: Array.from(context.getImageData(0, 0, 1, 1).data), blur: s.backdropFilter, opacity: s.opacity }
+    })
+    assert.ok(channels.every((channel, i) => Math.abs(style.rgba[i] - channel) <= 2), mode + '/' + id + ' retains the subtle dialog tint')
+    assert.equal(style.blur.includes('blur('), id === 'glass' || id === 'frosted')
+    assert.equal(style.opacity, '1')
+    assert.equal(style.rgba[3], id === 'opaque' ? 255 : Math.round(255 * (id === 'transparent' ? .8 : mode === 'dark' ? .58 : .72)))
+  }
+}
+async function checkButtonHover(page, actual) {
+  // Escape also closes the remote sidebar drawer when settings unmounts.
+  if (await page.locator('[class*=_frame][data-sidebar-collapsed]').count()) {
+    await page.locator('.dshTb__mark').click()
+    await page.locator('[class*=_frame][data-sidebar-collapsed]').waitFor({ state: 'detached' })
+  }
+  const button = page.locator('button[class*=_newSession]').first()
+  await button.hover()
+  await button.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))))
+  assert.equal(await button.evaluate(el => getComputedStyle(el).backgroundColor), rgb(actual.tokens['--dsw-alias-button-floating-hover']))
+  await page.mouse.move(0, 0)
+}
+async function prepareAccentControls(page) {
+  await page.evaluate(async root => {
+    const ctx = window.__COLOR_SCHEMES_SMOKE__
+    const workspace = await ctx.workspaces.create({ path: root })
+    const id = await ctx.sessions.create({ workspaceId: workspace.workspaceId })
+    await ctx.uiWorkspace.openSession(id)
+    const directory = ctx.modelDirectories.directoryFor(id)
+    await directory.load()
+    const result = await directory.select({ provider: 'desktop-smoke', model: 'offline-fixture', reasoningEffort: 'high' })
+    if (!result.ok) throw Error(JSON.stringify(result.error))
+    await ctx.configForms.get('desktop-appearance').set('reasoningControl', 'slider')
+  }, root)
+}
+async function checkAccentControls(page, label, expected) {
+  await page.keyboard.press('Escape')
+  await page.locator('[data-shortcut-modal="settings"]').waitFor({ state: 'detached' })
+  const drawer = page.locator('.dshMobile__backdrop')
+  if (await drawer.isVisible()) {
+    await drawer.click()
+    await drawer.waitFor({ state: 'hidden' })
+  }
+  await page.locator('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]').click()
+  const slider = page.getByRole('slider', { name: '推理等级', exact: true })
+  await slider.waitFor()
+  for (const [key, value] of [['End', '5'], ['Home', '0'], ['End', '5']]) {
+    await slider.focus()
+    await page.keyboard.press(key)
+    await page.waitForFunction(value => {
+      const input = document.querySelector('.dshReasoning input')
+      return input?.value === value && input.getAttribute('aria-disabled') === 'false'
+    }, value)
+  }
+  assert.equal(await page.locator('.dshReasoning__track').evaluate(el => getComputedStyle(el, '::before').backgroundColor), rgb(expected), label + ' filled slider uses the palette accent')
+  await page.locator('[data-dsh-reasoning-slider]').screenshot({ path: join(root, label + '-slider.png') })
+  await page.keyboard.press('Escape')
+  await slider.waitFor({ state: 'detached' })
+  await page.evaluate(() => {
+    const surface = document.createElement('div')
+    surface.id = 'palette-switches'
+    Object.assign(surface.style, { position: 'fixed', top: '60px', right: '20px', display: 'flex', gap: '12px', padding: '12px', background: 'var(--dsw-alias-bg-layer-2)', zIndex: '1000' })
+    document.body.append(surface)
+    window.__UNMOUNT_PALETTE_SWITCHES__ = window.__MOUNT_PALETTE_SWITCHES__(surface)
+  })
+  const toggle = page.getByRole('switch', { name: 'Palette switch', exact: true })
+  await toggle.waitFor()
+  try {
+    assert.equal(await toggle.evaluate(el => getComputedStyle(el).backgroundColor), rgb(expected), label + ' enabled switch uses the palette accent')
+    await toggle.click()
+    assert.equal(await toggle.getAttribute('aria-checked'), 'false')
+    const inactive = await toggle.evaluate(el => getComputedStyle(el).backgroundColor)
+    assert.notEqual(inactive, rgb(expected), label + ' inactive switch remains distinct')
+    const disabled = page.getByRole('switch', { name: 'Disabled palette switch', exact: true })
+    assert.equal(await disabled.isDisabled(), true)
+    assert.equal(await disabled.evaluate(el => getComputedStyle(el).backgroundColor), inactive)
+    await toggle.press('Space')
+    assert.equal(await toggle.getAttribute('aria-checked'), 'true')
+    assert.equal(await toggle.evaluate(el => getComputedStyle(el).backgroundColor), rgb(expected))
+    await page.locator('#palette-switches').screenshot({ path: join(root, label + '-switches.png') })
+  } finally {
+    await page.evaluate(() => {
+      window.__UNMOUNT_PALETTE_SWITCHES__()
+      delete window.__UNMOUNT_PALETTE_SWITCHES__
+      document.getElementById('palette-switches').remove()
+    })
+    await page.keyboard.press('Escape')
+    await openAppearance(page)
+  }
 }
 async function mountTerminal(page) {
   await page.evaluate(() => {
@@ -164,6 +318,13 @@ try {
   await handleOnboarding(page)
   await ready(page, firstUrl)
   await dismissInitialWelcome(page)
+  await prepareAccentControls(page)
+  await page.locator('[data-dsh-desktop=composer] button[class*=_primary]').waitFor()
+  // Inspect the navigation while expanded, where its theme tint occupies space.
+  if (await page.locator('[class*=_frame][data-sidebar-collapsed]').count()) {
+    await page.locator('.dshTb__mark').click()
+    await page.locator('[class*=_frame][data-sidebar-collapsed]').waitFor({ state: 'detached' })
+  }
   await openAppearance(page)
   const buttons = page.locator('.dshAppearance [data-color-scheme]')
   assert.deepEqual(await buttons.allTextContents(), ['默认', '经典蓝', '雾海青', '苔原绿', '暮光紫', '纸墨琥珀', '玫瑰灰'])
@@ -185,6 +346,7 @@ try {
       await page.waitForFunction(dark => document.body.hasAttribute('data-ds-dark-theme') === dark, mode === 'dark')
       await checkSelectedOptions(page)
       const actual = await readPalette(page), p = scheme[mode]
+      await checkTintedSurfaces(page, p, mode, actual)
       for (const [token, value] of Object.entries({
         '--dsw-alias-bg-base': p.canvas, '--dsw-alias-bg-layer-1': p.panel, '--dsw-alias-bg-module-platform': p.panel,
         '--dsw-alias-label-primary': p.ink, '--dsw-alias-label-secondary': p.muted,
@@ -194,17 +356,60 @@ try {
         '[class*=_sidebarCol]': p.sidebar, '.dshTb': p.sidebar,
         '[data-dsh-desktop=composer]': p.panel, '[data-dsh-desktop=composer] button[class*=_primary]': p.button,
       })) assert.equal(actual.surfaces[selector]?.background, rgb(value), scheme.id + '/' + mode + '/' + selector)
+      const colors = actual.tokens
+      assert.equal(colors['--dsw-alias-brand-primary'], p.accent, 'interactive brand token uses the palette accent')
+      assert.notEqual(colors['--dsw-alias-brand-primary'], colors['--dsw-alias-label-primary'], 'interactive accent remains distinct from neutral text')
+      const layers = [1, 2, 3].map(layer => colors['--dsw-alias-bg-layer-' + layer])
+      assert.equal(new Set(layers).size, 3, scheme.id + '/' + mode + ' has distinct surface layers')
+      const layerLuminance = layers.map(luminance)
+      assert.ok(layerLuminance.every((value, i) => !i || (mode === 'dark'
+        ? value > layerLuminance[i - 1] : value < layerLuminance[i - 1])), 'surface brightness follows the theme')
+      const hover = colors['--dsw-alias-interactive-bg-hover'], active = colors['--dsw-alias-interactive-bg-active']
+      assert.ok(mode === 'dark' ? luminance(hover) < luminance(active) : luminance(hover) > luminance(active), 'hover is quieter than selection')
+      const surfaces = [p.canvas, p.sidebar, p.soft, ...layers, hover, active]
+      for (const token of ['--dsw-alias-label-primary', '--dsw-alias-label-secondary', '--dsw-alias-link']) {
+        for (const background of surfaces) {
+          assert.ok(contrast(colors[token], background) >= 4.5, scheme.id + '/' + mode + '/' + token + ' is readable on ' + background)
+        }
+      }
+      for (const background of [p.button, p['button-hover']]) {
+        assert.ok(contrast(p['on-button'], background) >= 4.5, 'button text is readable at rest and on hover')
+      }
+      for (const selector of ['[class*=_sidebarCol]', '[data-slot=sidebar]', '.dshTb']) {
+        const region = 'sidebar'
+        const navigation = actual.surfaces[selector]
+        assert.ok(navigation, selector + ' is mounted')
+        const navigationHover = navigation.tokens['--dsw-alias-interactive-bg-hover']
+        const navigationActive = navigation.tokens['--dsw-alias-interactive-bg-active']
+        assert.equal(navigationHover, p[region + '-hover'], selector + ' uses its tinted hover fill')
+        assert.equal(navigationActive, p[region + '-selection'], selector + ' uses its tinted selected fill')
+        assert.ok(mode === 'dark' ? luminance(navigationHover) < luminance(navigationActive)
+          : luminance(navigationHover) > luminance(navigationActive), 'navigation hover is quieter than selection')
+        for (const foreground of [p.ink, p.muted, p.accent]) {
+          for (const background of [p[region], navigationHover, navigationActive]) {
+            assert.ok(contrast(foreground, background) >= 4.5, selector + ' keeps navigation text readable')
+          }
+        }
+      }
       assert.equal(actual.tokens['--dsw-alias-state-success-primary'], baseline[mode].tokens['--dsw-alias-state-success-primary'])
       report.palettes.push({ id: scheme.id, mode, ...actual })
       await page.screenshot({ path: join(root, scheme.id + '-' + mode + '.png'), fullPage: true })
       await page.keyboard.press('Escape')
       await page.locator('.dshAppearance').waitFor({ state: 'hidden' })
+      await checkButtonHover(page, actual)
       await page.screenshot({ path: join(root, scheme.id + '-' + mode + '-app.png'), fullPage: true })
+      await checkAccentControls(page, scheme.id + '-' + mode, p.accent)
     }
   }
   pass('all twelve variants color actual sidebars, title bars and composers, preserving semantic status colors')
+  pass('all twelve variants color enabled switches and filled reasoning sliders, preserving inactive and disabled states and keyboard input')
+  pass('all twelve variants have readable neutral text, ordered surface layers and quieter hover fills')
+  pass('sidebars and title bars share base, hover and selected colors with readable navigation text')
+  pass('all twelve variants gently tint Dialogs, new-session buttons and secondary actions, preserving material opacity and blur')
   await ensureAppearance(page)
   await page.locator('[data-color-scheme=moss]').click()
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-dsh-color-scheme') === 'moss' &&
+    window.__COLOR_SCHEMES_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.colorScheme === 'moss')
   await page.getByRole('group', { name: '动画', exact: true }).getByRole('button', { name: '开启', exact: true }).click()
   await page.waitForFunction(() => document.documentElement.getAttribute('data-dsh-desktop-animation') === 'on')
   await checkSelectedOptions(page)
@@ -221,7 +426,7 @@ try {
   pass('all appearance options retain selection through hover, pointer exit and theme changes with animations enabled or disabled')
   const composer = page.locator('[data-dsh-desktop=composer]')
   for (const [id, label] of [['glass', '毛玻璃'], ['frosted', '纯磨砂'], ['transparent', '透明'], ['opaque', '不透明']]) {
-    await page.getByRole('button', { name: label, exact: true }).click()
+    await page.getByRole('group', { name: '输入框/面板效果', exact: true }).getByRole('button', { name: label, exact: true }).click()
     await page.waitForFunction(id => document.documentElement.getAttribute('data-dsh-composer-material') === id, id)
     const style = await composer.evaluate(el => {
       const s = getComputedStyle(el)
@@ -229,8 +434,10 @@ try {
       const context = canvas.getContext('2d'); context.fillStyle = s.backgroundColor; context.fillRect(0, 0, 1, 1)
       return { background: s.backgroundColor, rgba: Array.from(context.getImageData(0, 0, 1, 1).data), blur: s.backdropFilter }
     })
-    assert.ok([37, 48, 32].every((channel, i) => Math.abs(style.rgba[i] - channel) <= 2), id + ' keeps the selected panel tint: ' + style.background)
+    const panelChannels = [1, 3, 5].map(offset => parseInt(colorSchemes.find(scheme => scheme.id === 'moss').dark.panel.slice(offset, offset + 2), 16))
+    assert.ok(panelChannels.every((channel, i) => Math.abs(style.rgba[i] - channel) <= 2), id + ' keeps the selected panel tint: ' + style.background)
     assert.equal(style.blur.includes('blur('), id === 'glass' || id === 'frosted')
+    if (id === 'glass') assert.ok(/saturate\(1\)/.test(style.blur), 'glass does not boost wallpaper saturation')
   }
   pass('glass, frosted, transparent and opaque materials retain the selected tint and their effects')
   const vanilla = await page.evaluate(() => {
@@ -261,7 +468,8 @@ try {
     await page.getByRole('button', { name: mode === 'light' ? '浅色' : '深色', exact: true }).click()
     await page.waitForFunction(dark => document.body.hasAttribute('data-ds-dark-theme') === dark, mode === 'dark')
     await checkSelectedOptions(page)
-    assert.deepEqual(await readPalette(page), baseline[mode])
+    assert.deepEqual(paletteColors(await readPalette(page)), paletteColors(baseline[mode]))
+    await checkAccentControls(page, 'default-' + mode, baseline[mode].tokens['--dsw-alias-brand-primary'])
   }
   pass('Default restores the exact original light and dark tokens')
   await page.locator('[data-color-scheme=teal]').click()

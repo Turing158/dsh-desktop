@@ -896,6 +896,161 @@ test('a refused material intensity write restores its saved value and reports fa
   assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert'))
 })
 
+test('Dialog previews and commits keep composer values independent', async () => {
+  const document = createDocument()
+  let saved = { composerMaterial: 'glass', composerGlassIntensity: 35, dialogMaterial: 'transparent' }
+  const { ctx, state } = createContext({ section: saved, write: async (field, value) => {
+    saved = { ...saved, [field]: value }
+    state.setSection(saved)
+    return true
+  } })
+  loadBundle(document, recordingReact).apply(ctx)
+  const dialog = () => renderSection(state.sectionComponent, n => n.props?.title === 'Dialog 效果')
+  const slider = () => renderSection(() => dialog().props.control, n => n.type === 'input' && n.props.type === 'range')
+  for (const [choice, field, level, variable, cssValue] of [
+    ['transparent', 'dialogTransparency', 65, '--dsh-dialog-transparent-tint', '35%'],
+    ['frosted', 'dialogFrostedIntensity', 75, '--dsh-dialog-frosted-strength', '0.75'],
+    ['glass', 'dialogGlassIntensity', 25, '--dsh-dialog-glass-strength', '0.25'],
+  ]) {
+    await dialog().props.onChange(choice)
+    const event = { target: { value: String(level) } }
+    slider().props.onChange(event)
+    assert.equal(document.bodyStyle.get(variable), cssValue)
+    assert.equal(saved[field], undefined)
+    await slider().props.onPointerUp(event)
+    await slider().props.onBlur(event)
+    assert.equal(saved[field], level)
+    assert.equal(state.writes.filter(([key]) => key === field).length, 1)
+    assert.equal(saved.composerMaterial, 'glass')
+    assert.equal(saved.composerGlassIntensity, 35)
+    assert.equal(document.bodyStyle.get('--dsh-composer-glass-strength'), '0.35')
+  }
+  for (const [choice, level] of [['transparent', 65], ['frosted', 75], ['glass', 25]]) {
+    await dialog().props.onChange(choice)
+    assert.equal(slider().props.value, level)
+  }
+  state.setSection({ ...saved, dialogMaterial: 'frosted', dialogFrostedIntensity: 45 })
+  assert.equal(document.documentElement.getAttribute('data-dsh-dialog-material'), 'frosted')
+  assert.equal(slider().props.value, 45, 'changes from another window converge')
+})
+
+test('a refused Dialog write restores its own material and intensity', async () => {
+  const document = createDocument()
+  const { ctx, state } = createContext({ writeResult: false,
+    section: { composerMaterial: 'transparent', dialogMaterial: 'frosted', dialogFrostedIntensity: 40 } })
+  loadBundle(document, recordingReact).apply(ctx)
+  const dialog = () => renderSection(state.sectionComponent, n => n.props?.title === 'Dialog 效果')
+  const pending = dialog().props.onChange('glass')
+  assert.equal(document.documentElement.getAttribute('data-dsh-dialog-material'), 'glass')
+  await pending
+  assert.equal(dialog().props.value, 'frosted')
+  const slider = () => renderSection(() => dialog().props.control, n => n.type === 'input' && n.props.type === 'range')
+  await slider().props.onKeyUp({ target: { value: '80' } })
+  assert.equal(slider().props.value, 40)
+  assert.equal(document.bodyStyle.get('--dsh-dialog-frosted-strength'), '0.4')
+  assert.equal(document.documentElement.getAttribute('data-dsh-composer-material'), 'transparent')
+  assert.match(renderSection(state.sectionComponent, n => n.props?.role === 'alert').children[0], /Dialog/)
+})
+
+test('navigation transparency migrates separate settings and saves one shared value', async () => {
+  const document = createDocument()
+  const { ctx, state } = createContext({ section: { backgroundImage: 'data:image/png;base64,aGVsbG8=' } })
+  loadBundle(document, recordingReact).apply(ctx)
+  await new Promise(resolve => setImmediate(resolve))
+  const slider = () => renderSection(state.sectionComponent,
+    node => node.type === 'input' && node.props['aria-label'] === '标题栏与左边导航栏底色透明度')
+  assert.equal(slider().props.value, 15)
+  for (const [section, expected] of [
+    [{ backgroundLeftSurfaceTransparency: 60, backgroundTitlebarSurfaceTransparency: 20 }, 60],
+    [{ backgroundLeftTransparency: 30, backgroundTitlebarSurfaceTransparency: 20 }, 70],
+    [{ backgroundTitlebarSurfaceTransparency: 20 }, 20],
+    [{ backgroundTitlebarTransparency: 30 }, 70],
+    [{ backgroundNavigationSurfaceTransparency: 0, backgroundLeftSurfaceTransparency: 60 }, 0],
+  ]) {
+    state.setSection({ backgroundImage: 'data:image/png;base64,aGVsbG8=', ...section })
+    assert.equal(slider().props.value, expected)
+    assert.equal(Number(document.bodyStyle.get('--dsh-background-navigation-opacity')), 1 - expected / 100)
+  }
+  slider().props.onChange({ target: { value: '80' } })
+  assert.equal(Number(document.bodyStyle.get('--dsh-background-navigation-opacity')), 1 - 80 / 100)
+  assert.deepEqual(state.writes, [], 'dragging only previews the shared value')
+  await slider().props.onPointerUp({ target: { value: '80' } })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(state.writes, [['backgroundNavigationSurfaceTransparency', 80]])
+  state.setSection({ backgroundTitlebar: true, backgroundLeft: false, backgroundImage: 'data:image/png;base64,aGVsbG8=', backgroundNavigationSurfaceTransparency: 80 })
+  assert.equal(slider().props.disabled, false, 'either legacy switch enables the merged region')
+  state.setSection({ backgroundTitlebar: false, backgroundLeft: false, backgroundImage: 'data:image/png;base64,aGVsbG8=' })
+  assert.equal(slider().props.disabled, true)
+})
+
+test('one navigation switch migrates legacy values and controls both background regions', async () => {
+  const document = createDocument()
+  const image = 'data:image/png;base64,aGVsbG8='
+  let saved = { backgroundImage: image, backgroundTitlebar: true, backgroundLeft: false }
+  const { ctx, state } = createContext({ section: saved, write: async (field, value) => {
+    saved = { ...saved, [field]: value }
+    state.setSection(saved)
+    return true
+  } })
+  loadBundle(document, recordingReact).apply(ctx)
+  await new Promise(resolve => setImmediate(resolve))
+  const row = () => renderSection(state.sectionComponent, n => n.props?.className === 'dshAppearance__backgroundRegion')
+  const checkbox = () => renderSection(() => row(), n => n.type === 'input' && n.props.type === 'checkbox')
+  const slider = () => renderSection(() => row(), n => n.type === 'input' && n.props.type === 'range')
+  const assertNavigation = enabled => {
+    assert.equal(checkbox().props.checked, enabled)
+    assert.equal(slider().props.disabled, !enabled)
+    for (const region of ['titlebar', 'left']) {
+      assert.equal(document.documentElement.getAttribute('data-dsh-background-' + region), enabled ? '' : null)
+    }
+  }
+  for (const [section, expected] of [
+    [{}, true],
+    [{ backgroundTitlebar: false }, true],
+    [{ backgroundLeft: false }, true],
+    [{ backgroundTitlebar: false, backgroundLeft: false }, false],
+    [{ backgroundTitlebar: true, backgroundLeft: false }, true],
+    [{ backgroundTitlebar: false, backgroundLeft: true }, true],
+    [{ backgroundTitlebar: true, backgroundLeft: true }, true],
+    [{ backgroundNavigation: false, backgroundTitlebar: true, backgroundLeft: true }, false],
+    [{ backgroundNavigation: true, backgroundTitlebar: false, backgroundLeft: false }, true],
+  ]) {
+    state.setSection({ backgroundImage: image, ...section })
+    assertNavigation(expected)
+  }
+  await checkbox().props.onChange({ target: { checked: false } })
+  await new Promise(resolve => setImmediate(resolve))
+  assertNavigation(false)
+  await checkbox().props.onChange({ target: { checked: true } })
+  await new Promise(resolve => setImmediate(resolve))
+  assertNavigation(true)
+  assert.deepEqual(state.writes, [['backgroundNavigation', false], ['backgroundNavigation', true]])
+  const dispose = state.effects.get('desktop-appearance: background preference')()
+  dispose()
+  for (const region of ['titlebar', 'left']) {
+    assert.equal(document.documentElement.getAttribute('data-dsh-background-' + region), null)
+  }
+})
+
+test('a refused navigation switch write restores both background regions', async () => {
+  const document = createDocument()
+  const { ctx, state } = createContext({ writeResult: false,
+    section: { backgroundImage: 'data:image/png;base64,aGVsbG8=', backgroundNavigation: true } })
+  loadBundle(document, recordingReact).apply(ctx)
+  await new Promise(resolve => setImmediate(resolve))
+  const row = () => renderSection(state.sectionComponent, n => n.props?.className === 'dshAppearance__backgroundRegion')
+  renderSection(() => row(), n => n.type === 'input' && n.props.type === 'checkbox')
+    .props.onChange({ target: { checked: false } })
+  for (const region of ['titlebar', 'left']) {
+    assert.equal(document.documentElement.getAttribute('data-dsh-background-' + region), null)
+  }
+  await new Promise(resolve => setImmediate(resolve))
+  for (const region of ['titlebar', 'left']) {
+    assert.equal(document.documentElement.getAttribute('data-dsh-background-' + region), '')
+  }
+  assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert'))
+})
+
 test('a refused background write restores the saved surface and exposes an error', async () => {
   const document = createDocument()
   const { ctx, state } = createContext({ writeResult: false, section: { backgroundImage: 'data:image/png;base64,aGVsbG8=', backgroundChat: true } })

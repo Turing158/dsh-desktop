@@ -51,7 +51,6 @@ const el = {
  * case where the status call itself failed. */
 let installCommand = '';
 let diagnosticsOpen = false;
-let latestStatus;
 
 /** Keep the animated mark mounted while only the status content changes. */
 function render(node, state = 'loading') {
@@ -113,8 +112,6 @@ async function refresh() {
 }
 
 function renderPhase(status) {
-  latestStatus = status;
-  if (diagnosticsOpen) return;
   const phase = status?.phase ?? { kind: 'probing' };
   switch (phase.kind) {
     case 'probing':
@@ -265,18 +262,24 @@ function showFailure(message) {
 
 /** This page uses only host APIs, so missing DSH or failed plugins cannot hide it. */
 async function showDiagnostics() {
+  if (diagnosticsOpen) return;
   diagnosticsOpen = true;
+  const dialog = h('dialog', { class: 'local-diagnostics-dialog', 'aria-labelledby': 'local-diagnostics-title' });
   const content = h('div', { class: 'stack local-diagnostics' });
   const notice = paragraph(t('等待读取当前运行时状态…'));
   const facts = h('dl', { class: 'diagnostic-facts' });
   const checks = h('div', { class: 'stack' });
   const checkButton = button(t('重新检测'), () => run('desktop_diagnostics_check'), 'secondary');
   const exportButton = button(t('导出诊断报告'), () => run('desktop_diagnostics_export'), 'secondary');
-  const back = button(t('返回'), () => { diagnosticsOpen = false; renderPhase(latestStatus); }, 'secondary');
-  content.append(h('h2', { text: t('故障诊断') }), notice,
+  const back = button(t('关闭弹窗'), () => dialog.close(), 'secondary');
+  dialog.addEventListener('close', () => { diagnosticsOpen = false; dialog.remove(); });
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  content.append(h('h2', { id: 'local-diagnostics-title', text: t('故障诊断') }), notice,
     h('div', { class: 'actions' }, checkButton, exportButton, back), facts, checks,
     paragraph(t('默认报告省略私人路径、凭据、聊天正文和原始子进程输出，包含结构化状态、检查结果及能力清单。')));
-  render(content, 'attention');
+  dialog.append(content);
+  document.body.append(dialog);
+  dialog.showModal();
   async function run(command) {
     checkButton.disabled = exportButton.disabled = true;
     notice.textContent = t('正在执行诊断操作…');
@@ -300,6 +303,13 @@ async function showDiagnostics() {
   }
   await run('desktop_diagnostics');
 }
+
+async function requestedDiagnostics() {
+  try {
+    if (await call('desktop_diagnostics_dialog') === true) await showDiagnostics();
+  } catch { /* The host retries after the document has finished loading. */ }
+}
+document.addEventListener('dsh-desktop:diagnostics-request', requestedDiagnostics);
 
 /** Copy the install command, confirming on the button itself. */
 async function copyCommand(target) {
@@ -364,3 +374,4 @@ on('status-changed', () => {
 // probe stays visibly alive without restarting the animation or delaying boot.
 render(statusLine(t('正在检查运行环境…')));
 refresh();
+requestedDiagnostics();

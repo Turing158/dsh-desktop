@@ -1,7 +1,7 @@
 [[permission]]
 identifier = "allow-diagnostics-read"
 description = "Read host diagnostics and run bounded checks from the current desktop document."
-commands.allow = ["desktop_diagnostics", "desktop_diagnostics_check"]
+commands.allow = ["desktop_diagnostics", "desktop_diagnostics_check", "desktop_diagnostics_dialog"]
 
 [[permission]]
 identifier = "allow-diagnostics-export"

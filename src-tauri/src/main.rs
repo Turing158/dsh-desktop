@@ -123,6 +123,7 @@ fn main() {
                 open_external,
                 dsh_update::check_dsh_update,
                 diagnostics::desktop_diagnostics,
+                diagnostics::desktop_diagnostics_dialog,
                 diagnostics::desktop_diagnostics_check,
                 diagnostics::desktop_diagnostics_export,
                 compatibility::desktop_capabilities_report,
@@ -281,6 +282,7 @@ fn create_main_window(app: &AppHandle, restoring: bool) -> tauri::Result<()> {
             // link can be pushed into it. See `deep_link::page_loaded`.
             if !started {
                 deep_link::page_loaded(&window);
+                diagnostics::request_dialog(&window);
             }
         })
         // File drag-and-drop belongs to the PAGE, not to Tauri. See

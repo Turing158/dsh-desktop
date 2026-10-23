@@ -170,12 +170,36 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/maintenance', factory(require) 
       useLocale(React)
       const [kind, setKind] = React.useState(null)
       React.useEffect(() => {
+        let disposed = false
+        const requested = async () => {
+          if (!desktop) return
+          try {
+            const pending = await window.__TAURI__.core.invoke('desktop_diagnostics_dialog', { identity: window.__DSH_REMOTE_IDENTITY__ })
+            if (pending === true && !disposed) {
+              const settingsEntry = ctx.slots.entriesOfSlot?.('sidebar.settings')[0]
+              const settingsShell = settingsEntry?.store?.create?.()
+              if (typeof settingsShell?.actions?.close === 'function') settingsShell.actions.close()
+              else if (document.querySelector('[data-shortcut-modal="settings"]')) {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+              }
+              setKind('diagnostics')
+            }
+          } catch { /* A new document retries when its host identity arrives. */ }
+        }
         const open = event => {
           const next = event.detail?.kind
           if (next === null || desktop && ['diagnostics', 'backup'].includes(next)) setKind(next)
         }
         document.addEventListener('dsh-desktop:maintenance-dialog', open)
-        return () => document.removeEventListener('dsh-desktop:maintenance-dialog', open)
+        document.addEventListener('dsh-desktop:diagnostics-request', requested)
+        window.addEventListener('dsh-remote-ready', requested)
+        void requested()
+        return () => {
+          disposed = true
+          document.removeEventListener('dsh-desktop:maintenance-dialog', open)
+          document.removeEventListener('dsh-desktop:diagnostics-request', requested)
+          window.removeEventListener('dsh-remote-ready', requested)
+        }
       }, [])
       if (!kind) return null
       return h(Modal, {

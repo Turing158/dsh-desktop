@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.1.4",
+  "version": "1.0.0",
   "private": true,
   "description": "dsh desktop shell (Rust + WebView2) with Windows notifications",
   "scripts": {

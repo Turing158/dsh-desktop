@@ -382,21 +382,21 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body :is([data-dsh
   /* Two linear ranges keep the previous tint at the default 50% strength,
      reach full transparency at zero, and keep changing through 100%. */
   --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 144%), calc(48% + var(--dsh-composer-strength) * 48%));
-  --dsh-composer-shine: rgb(255 255 255 / min(100%, calc(var(--dsh-composer-strength) * 120%)));
+  --dsh-composer-shine: rgb(255 255 255 / min(100%, calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-shine, 120%))));
   --dsh-composer-blur: calc(var(--dsh-composer-strength) * 36px);
 }
 /* Opaque keeps the original theme surface, including its subtle border. */
 html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body[data-ds-dark-theme] :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
   --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 116%), calc(26% + var(--dsh-composer-strength) * 64%));
-  --dsh-composer-shine: rgb(255 255 255 / calc(var(--dsh-composer-strength) * 24%));
+  --dsh-composer-shine: rgb(255 255 255 / calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-shine, 24%)));
 }
 html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
   --dsh-composer-strength: var(--dsh-composer-glass-strength, .5);
-  background: var(--dsh-surface-overlay, none), linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-composer-strength) * 24%)), transparent 55%),
+  background: var(--dsh-surface-overlay, none), linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-highlight, 24%))), transparent 55%),
     color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
   box-shadow: inset 0 1px 0 var(--dsh-composer-shine), inset 0 0 0 1px var(--dsh-composer-shine), 0 8px 24px rgb(0 0 0 / calc(var(--dsh-composer-strength) * 24%));
-  -webkit-backdrop-filter: blur(var(--dsh-composer-blur)) saturate(calc(100% + var(--dsh-composer-strength) * 60%));
-  backdrop-filter: blur(var(--dsh-composer-blur)) saturate(calc(100% + var(--dsh-composer-strength) * 60%));
+  -webkit-backdrop-filter: blur(var(--dsh-composer-blur)) saturate(var(--dsh-composer-glass-saturation, calc(100% + var(--dsh-composer-strength) * 60%)));
+  backdrop-filter: blur(var(--dsh-composer-blur)) saturate(var(--dsh-composer-glass-saturation, calc(100% + var(--dsh-composer-strength) * 60%)));
 }
 html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='frosted'] body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
   --dsh-composer-strength: var(--dsh-composer-frosted-strength, .5);
@@ -415,6 +415,50 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='glass'], [data-dsh-composer-material='frosted']) body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
     background: var(--dsh-surface-overlay, none) var(--dsw-alias-bg-module-platform);
+  }
+}
+
+/* Dialog materials have their own strengths. Only the panel is filtered; the
+   full-screen mask, image viewer, menus and text keep their native rendering. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-dialog-material] body :is([role='dialog'][aria-modal='true'], [role='dialog'][class*='_dialog_'], [role='alertdialog']):not([data-dsh-chrome='layer']):not(:has(> img)) {
+  --dsh-dialog-tint: min(calc(var(--dsh-dialog-strength) * 144%), calc(48% + var(--dsh-dialog-strength) * 48%));
+  --dsh-dialog-shine: rgb(255 255 255 / min(100%, calc(var(--dsh-dialog-strength) * 120%)));
+  --dsh-dialog-blur: calc(var(--dsh-dialog-strength) * 36px);
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-dialog-material] body[data-ds-dark-theme] :is([role='dialog'][aria-modal='true'], [role='dialog'][class*='_dialog_'], [role='alertdialog']):not([data-dsh-chrome='layer']):not(:has(> img)) {
+  --dsh-dialog-tint: min(calc(var(--dsh-dialog-strength) * 116%), calc(26% + var(--dsh-dialog-strength) * 64%));
+  --dsh-dialog-shine: rgb(255 255 255 / calc(var(--dsh-dialog-strength) * 24%));
+}
+/* Settings paints its navigation and content separately. Clear those two
+   surfaces so the panel's single backdrop can show through them. */
+html:not([data-dsh-ui='vanilla']):is([data-dsh-dialog-material='glass'], [data-dsh-dialog-material='frosted'], [data-dsh-dialog-material='transparent']) body [data-shortcut-modal='settings'] > :is(nav, [class*='_options']) {
+  background: transparent;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-dialog-material='glass'] body :is([role='dialog'][aria-modal='true'], [role='dialog'][class*='_dialog_'], [role='alertdialog']):not([data-dsh-chrome='layer']):not(:has(> img)) {
+  --dsh-dialog-strength: var(--dsh-dialog-glass-strength, .5);
+  background: linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-dialog-strength) * 24%)), transparent 55%),
+    color-mix(in srgb, var(--dsw-alias-bg-layer-2) var(--dsh-dialog-tint), transparent);
+  box-shadow: inset 0 1px 0 var(--dsh-dialog-shine), inset 0 0 0 1px var(--dsh-dialog-shine), 0 8px 24px rgb(0 0 0 / calc(var(--dsh-dialog-strength) * 24%));
+  -webkit-backdrop-filter: blur(var(--dsh-dialog-blur)) saturate(calc(100% + var(--dsh-dialog-strength) * 60%));
+  backdrop-filter: blur(var(--dsh-dialog-blur)) saturate(calc(100% + var(--dsh-dialog-strength) * 60%));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-dialog-material='frosted'] body :is([role='dialog'][aria-modal='true'], [role='dialog'][class*='_dialog_'], [role='alertdialog']):not([data-dsh-chrome='layer']):not(:has(> img)) {
+  --dsh-dialog-strength: var(--dsh-dialog-frosted-strength, .5);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) var(--dsh-dialog-tint), transparent);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(var(--dsh-dialog-blur));
+  backdrop-filter: blur(var(--dsh-dialog-blur));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-dialog-material='transparent'] body :is([role='dialog'][aria-modal='true'], [role='dialog'][class*='_dialog_'], [role='alertdialog']):not([data-dsh-chrome='layer']):not(:has(> img)) {
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) var(--dsh-dialog-transparent-tint, 80%), transparent);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* Opaque leaves the original panel colors, borders and elevation intact. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html:not([data-dsh-ui='vanilla']):is([data-dsh-dialog-material='glass'], [data-dsh-dialog-material='frosted']) body :is([role='dialog'][aria-modal='true'], [role='dialog'][class*='_dialog_'], [role='alertdialog']):not([data-dsh-chrome='layer']):not(:has(> img)) {
+    background: var(--dsw-alias-bg-layer-2);
   }
 }
 
@@ -2410,6 +2454,18 @@ html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] {
   padding-bottom: 0;
 }
 
+/* The conversation's clipped corner reveals the same surface as the sidebar
+   and title bar, joining the two navigation edges with one continuous curve. */
+html:not([data-dsh-ui='vanilla']):not([data-dsh-browser]) body :has(> [data-shell-overlay]) {
+  background-color: var(--dsw-specific-sidebar-fill);
+}
+html:not([data-dsh-ui='vanilla']):not([data-dsh-browser]) body :has(> [data-shell-overlay]) > [class*='_centerCol'] {
+  background-color: var(--dsw-alias-bg-base);
+  border-top-left-radius: 16px;
+  corner-shape: round;
+  overflow: hidden;
+}
+
 html:not([data-dsh-ui='vanilla']) body .dshTerminal {
   display: flex;
   flex-direction: column;
@@ -2771,25 +2827,29 @@ html:not([data-dsh-ui='vanilla']) body .dshTerminal__hint {
  * to the region, so overlays cannot reveal another panel's text underneath. */
 html:not([data-dsh-ui='vanilla']) body { --dsh-background-canvas: #fff; }
 html:not([data-dsh-ui='vanilla']) body[data-ds-dark-theme] { --dsh-background-canvas: #000; }
-html:not([data-dsh-ui='vanilla'])[data-dsh-background-titlebar] body :is(.dshTb) {
-  --dsh-background-surface: color-mix(in srgb, var(--dsw-specific-sidebar-fill) calc(var(--dsh-background-titlebar-opacity) * 100%), transparent);
+/* Navigation surfaces share their tint and paint recipe; image switches remain
+   independent so either region can keep its opaque theme background. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-titlebar] body .dshTb,
+html:not([data-dsh-ui='vanilla']):not([data-dsh-browser])[data-dsh-background-left] body :has(> [data-shell-overlay]),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sidebarCol'] {
+  --dsh-background-surface: color-mix(in srgb, var(--dsw-specific-sidebar-fill) calc(var(--dsh-background-navigation-opacity) * 100%), transparent);
   --dsh-background-image-fade: color-mix(in srgb, var(--dsh-background-canvas) calc((1 - var(--dsh-background-image-opacity)) * 100%), transparent);
   background-color: var(--dsh-background-canvas);
-  background-image: linear-gradient(var(--dsh-background-surface), var(--dsh-background-surface)), linear-gradient(var(--dsh-background-image-fade), var(--dsh-background-image-fade)), var(--dsh-background-image);
+  /* Even constant gradients are dithered, adding one RGB step to some rows.
+     Uniform inset fills avoid those bands, including at the title bar seam.
+     The first shadow is on top, matching the previous background layer order. */
+  background-image: var(--dsh-background-image);
+  box-shadow: inset 0 0 0 100vmax var(--dsh-background-surface), inset 0 0 0 100vmax var(--dsh-background-image-fade);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
   background-attachment: fixed;
 }
+html:not([data-dsh-ui='vanilla']):not([data-dsh-browser])[data-dsh-background-left] body :has(> [data-shell-overlay]),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sidebarCol'] {
-  --dsh-background-surface: color-mix(in srgb, var(--dsw-specific-sidebar-fill) calc(var(--dsh-background-left-opacity) * 100%), transparent);
-  --dsh-background-image-fade: color-mix(in srgb, var(--dsh-background-canvas) calc((1 - var(--dsh-background-image-opacity)) * 100%), transparent);
-  background-color: var(--dsh-background-canvas);
-  background-image: linear-gradient(var(--dsh-background-surface), var(--dsh-background-surface)), linear-gradient(var(--dsh-background-image-fade), var(--dsh-background-image-fade)), var(--dsh-background-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  background-attachment: fixed;
+  /* The fixed title bar is composited. Match its alpha rounding here so equal
+     surface transparency paints identical colors on both navigation surfaces. */
+  will-change: opacity;
 }
 /* The saved Right preference controls both sidebar locations and Automations. */
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-testid='task-manager-page'],
@@ -2821,6 +2881,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-chat] body [class*='_cente
  * no extra layer or stacking context is created. */
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-titlebar] .dshTb,
+  html:not([data-dsh-browser])[data-dsh-background-left] :has(> [data-shell-overlay]),
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
   [data-dsh-background-right] [data-testid='task-manager-page'],
@@ -2842,6 +2903,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
 }
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-titlebar] .dshTb,
+  html:not([data-dsh-browser])[data-dsh-background-left] :has(> [data-shell-overlay]),
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
   [data-dsh-background-right] [data-testid='task-manager-page'],
@@ -2877,6 +2939,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-test
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) :is(.xterm-viewport, .xterm-scrollable-element) {
   background-color: transparent !important;
 }
+.dshAppearance { container-type: inline-size; }
 .dshAppearance__background { padding: 20px 0; border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .dshAppearance__background h3 { font-size: 15px; margin: 0 0 8px; font-weight: 500; }
 .dshAppearance__background p { font-size: 12px; color: var(--dsw-alias-label-tertiary); line-height: 1.6; margin: 0 0 12px; }
@@ -2886,7 +2949,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-side
 .dshAppearance__backgroundActions span { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
 .dshAppearance__background button:disabled, .dshAppearance__background input:disabled { opacity: .45; cursor: default; }
 .dshAppearance__backgroundPreview { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 10px; margin-top: 12px; }
-:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) { display: flex; align-items: center; gap: 12px; padding: 12px 0; font-size: 13px; }
+:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) { display: flex; align-items: center; gap: 12px; padding: 12px 0; font-size: 13px; line-height: 1.5; }
 :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) span { flex: 0 1 150px; }
 :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) input { min-width: 60px; flex: 1; accent-color: var(--dsh-ui-accent); }
 :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) output { flex: 0 0 38px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -2894,6 +2957,26 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-side
 .dshAppearance__backgroundRegion { border-top: 1px solid var(--dsw-alias-border-l3); padding-top: 12px; }
 .dshAppearance__backgroundRegion > label { font-size: 13px; }
 .dshAppearance__backgroundRegion input[type='checkbox'] { accent-color: var(--dsh-ui-accent); margin: 0 8px 0 0; vertical-align: middle; }
+
+/* Put the label and value above the track when the settings content is narrow. */
+@container (max-width: 440px) {
+  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 8px 12px; }
+  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) span { min-width: 0; }
+  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) input { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; box-sizing: border-box; margin: 0; }
+  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) output { grid-column: 2; grid-row: 1; }
+}
+/* A fixed-width settings sidebar leaves too little room for controls on small
+   windows. Keep every section reachable with a horizontal row of tabs. */
+@media (max-width: 600px) {
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] { flex-direction: column; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] > nav { width: 100%; padding: 14px 12px 0; gap: 12px; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] [class*='_navTitle'] { min-height: 28px; padding: 0 160px 0 4px; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] [class*='_navList'] { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] [class*='_navCell'] { flex: none; min-height: 44px; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] [class*='_content'] { min-height: 0; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] [class*='_header'] { position: absolute; top: 12px; right: 12px; height: 28px; padding: 0; }
+  html:not([data-dsh-ui='vanilla']) body [data-shortcut-modal='settings'] [class*='_options'] { padding: 0 16px 16px; }
+}
 
 /* One duration follows the desktop preference, including explicit "on" when
    Windows requests reduced motion. Inventory scope comes from its aria-busy

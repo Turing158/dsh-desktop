@@ -288,8 +288,12 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   })
 
   assert.equal(rehydrated({ backgroundTransparency: 50 }).backgroundTransparency, 50)
+  assert.equal(rehydrated({ backgroundNavigationSurfaceTransparency: 60 }).backgroundNavigationSurfaceTransparency, 60)
+  assert.equal(rehydrated({ backgroundNavigation: false }).backgroundNavigation, false)
   assert.equal(rehydrated({ backgroundLeft: false }).backgroundLeft, false)
   assert.throws(() => rehydrated({ backgroundTransparency: 101 }), /backgroundTransparency/)
+  assert.throws(() => rehydrated({ backgroundNavigationSurfaceTransparency: 101 }), /backgroundNavigationSurfaceTransparency/)
+  assert.throws(() => rehydrated({ backgroundNavigation: 'false' }), /backgroundNavigation/)
 
   for (const composerMaterial of ['glass', 'frosted', 'transparent', 'opaque']) {
     const value = { composerMaterial }
@@ -312,7 +316,15 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
     assert.throws(() => rehydrated({ colorScheme }), /colorScheme/)
     assert.deepEqual(module.SettingsSchema['~standard'].validate({ colorScheme }).issues[0].path, ['colorScheme'])
   }
-  for (const field of ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity']) {
+  for (const dialogMaterial of ['glass', 'frosted', 'transparent', 'opaque']) {
+    const value = { dialogMaterial, composerMaterial: 'opaque' }
+    assert.deepEqual(rehydrated(value), module.normalize(value))
+    assert.equal(module.SettingsSchema(value).dialogMaterial, dialogMaterial)
+  }
+  assert.throws(() => rehydrated({ dialogMaterial: 'unknown' }), /dialogMaterial/)
+  assert.equal(module.normalize({ dialogMaterial: 'unknown' }), undefined)
+  assert.deepEqual(module.SettingsSchema['~standard'].validate({ dialogMaterial: 'unknown' }).issues[0].path, ['dialogMaterial'])
+  for (const field of ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity', 'dialogTransparency', 'dialogFrostedIntensity', 'dialogGlassIntensity']) {
     for (const level of [0, 25.5, 50, 100]) {
       const value = { [field]: level }
       assert.deepEqual(rehydrated(value), module.normalize(value))
@@ -333,10 +345,11 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   assert.deepEqual(fields.sort(), [
     'animation',
     'backgroundBlur', 'backgroundChat', 'backgroundChatSurfaceTransparency', 'backgroundChatTransparency', 'backgroundImage',
-    'backgroundLeft', 'backgroundLeftSurfaceTransparency', 'backgroundLeftTransparency', 'backgroundRight', 'backgroundRightSurfaceTransparency', 'backgroundRightTransparency',
+    'backgroundLeft', 'backgroundLeftSurfaceTransparency', 'backgroundLeftTransparency', 'backgroundNavigation', 'backgroundNavigationSurfaceTransparency', 'backgroundRight', 'backgroundRightSurfaceTransparency', 'backgroundRightTransparency',
     'backgroundTitlebar', 'backgroundTitlebarSurfaceTransparency', 'backgroundTitlebarTransparency', 'backgroundTransparency',
     'colorScheme',
     'composerFrostedIntensity', 'composerGlassIntensity', 'composerMaterial', 'composerTransparency',
+    'dialogFrostedIntensity', 'dialogGlassIntensity', 'dialogMaterial', 'dialogTransparency',
     'fontSizeOverride',
     'reasoningControl',
     'titlebar',

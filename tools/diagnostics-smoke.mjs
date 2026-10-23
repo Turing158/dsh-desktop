@@ -50,6 +50,7 @@ try {
     window.__DSH_REMOTE_IDENTITY__ = {backendInstance:1, documentGeneration:1, windowGeneration:1, documentNonce:[]}
     window.__TAURI__ = {app:{getVersion:async()=> '0.1.4'},core:{invoke:async (command,args) => {
       window.diagnosticCalls.push(command)
+      if(command==='desktop_diagnostics_dialog')return window.trayDiagnosticsRequested === true ? (window.trayDiagnosticsRequested=false,true) : false
       if(command==='desktop_diagnostics_export') return null
       if(command==='desktop_recovery_list') return {entries:window.recoveryFixture || [],unreadable:0}
       if(command==='desktop_recovery_restore') {window.recoveryRequests.push(args);return null}
@@ -81,6 +82,18 @@ try {
   pass('More opens an independent diagnostics dialog in vanilla appearance')
   await page.getByRole('button',{name:'关闭弹窗',exact:true}).click()
   await page.locator('.dshMaintenance__dialog').waitFor({state:'hidden'})
+  await openDshSettings(page)
+  await page.evaluate(()=>{
+    window.trayDiagnosticsRequested=true
+    document.dispatchEvent(new Event('dsh-desktop:diagnostics-request'))
+  })
+  await page.locator('.dshMaintenance__dialog').waitFor()
+  assert.equal(await page.getByRole('dialog').count(),1)
+  assert.equal(await page.locator('[data-shortcut-modal="settings"]').count(),0)
+  assert.equal(browser.contexts().flatMap(context=>context.pages()).length,1)
+  await page.getByRole('button',{name:'关闭弹窗',exact:true}).click()
+  await page.locator('.dshMaintenance__dialog').waitFor({state:'hidden'})
+  pass('tray request opens the existing diagnostics dialog without creating a browser window')
   await openDshMaintenance(page,'diagnostics')
   await page.keyboard.press('Escape')
   await page.locator('.dshMaintenance__dialog').waitFor({state:'hidden'})
@@ -260,17 +273,30 @@ try {
     window.__TAURI__={core:{invoke:async command=>{
       if(command==='probe_state')return {phase:{kind:'failed',message:'missing dsh',details:[]}}
       if(command==='desktop_diagnostics_export')return null
+      if(command==='desktop_diagnostics_dialog')return window.trayDiagnosticsRequested === true ? (window.trayDiagnosticsRequested=false,true) : false
       return {runtime:{desktopVersion:'0.1.4'},checks:[],incompleteOperations:[],unreadableJournals:0}
     }}}
   })
   await local.goto('http://127.0.0.1:'+localServer.address().port)
   await local.getByRole('button',{name:'查看诊断',exact:true}).click()
   await local.getByRole('heading',{name:'故障诊断',exact:true}).waitFor()
+  assert.equal(await local.getByRole('dialog').count(),1)
   await local.getByRole('button',{name:'导出诊断报告',exact:true}).click()
   await local.getByText('已取消导出',{exact:true}).waitFor()
   assert.equal(await local.getByRole('button',{name:'导出诊断报告',exact:true}).isDisabled(),false)
   pass('local failure diagnostics works without DSH and cancellation releases controls')
   await local.screenshot({path:join(root,'local-diagnostics.png')})
+  await local.keyboard.press('Escape')
+  await local.getByRole('dialog').waitFor({state:'hidden'})
+  await local.getByRole('button',{name:'查看诊断',exact:true}).waitFor()
+  await local.evaluate(()=>{
+    window.trayDiagnosticsRequested=true
+    document.dispatchEvent(new Event('dsh-desktop:diagnostics-request'))
+  })
+  await local.getByRole('dialog').waitFor()
+  await local.getByRole('button',{name:'关闭弹窗',exact:true}).click()
+  await local.getByRole('dialog').waitFor({state:'hidden'})
+  pass('local tray diagnostics uses a dismissible dialog over the failure page')
   assert.deepEqual(report.errors,[])
 } finally {
   if(activePage) { await activePage.screenshot({path:join(root,'last-page.png')}).catch(()=>{}); await writeFile(join(root,'last-page.txt'),await activePage.locator('body').innerText().catch(()=>'')) }

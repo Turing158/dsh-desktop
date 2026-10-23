@@ -104,21 +104,27 @@ test('background settings validate images and percentage bounds, and persist ind
     assert.equal(appearance.validate({ backgroundTransparency: value }), undefined)
     assert.equal(appearance.validate({ backgroundLeftTransparency: value }), undefined)
     assert.equal(appearance.validate({ backgroundLeftSurfaceTransparency: value }), undefined)
+    assert.equal(appearance.validate({ backgroundNavigationSurfaceTransparency: value }), undefined)
   }
   for (const value of ['https://example.com/photo.png', 'data:image/svg+xml;base64,AAAA', 'url(x)', 'data:image/png;base64,AAA;']) {
     assert.equal(appearance.validate({ backgroundImage: value }), undefined)
   }
   assert.equal(appearance.validate({ backgroundRight: 'true' }), undefined)
+  assert.equal(appearance.validate({ backgroundNavigation: 'true' }), undefined)
   assert.equal(appearance['~standard'].validate({ backgroundTransparency: 101 }).issues[0].path[0], 'backgroundTransparency')
   const h = await fixture(t)
   if (!h) return
   await h.settings.update('desktop-appearance', { backgroundImage: image, backgroundTransparency: 25, backgroundTitlebar: false, backgroundLeft: true, backgroundLeftTransparency: 60, backgroundChat: true })
-  await h.settings.update('desktop-appearance', { animation: 'off' })
+  await h.settings.update('desktop-appearance', { animation: 'off', backgroundNavigation: false, backgroundNavigationSurfaceTransparency: 60 })
   const saved = JSON.parse(await readFile(h.file, 'utf8')).namespaces['desktop-appearance']
   assert.equal(saved.backgroundImage, image)
   assert.equal(saved.backgroundLeftTransparency, 60)
   assert.equal(saved.backgroundTitlebar, false)
+  assert.equal(saved.backgroundNavigation, false)
+  assert.equal(saved.backgroundNavigationSurfaceTransparency, 60)
   await h.settings.update('desktop-appearance', { backgroundImage: '' })
   assert.equal(h.settings.get('desktop-appearance').backgroundImage, '')
   assert.equal(h.settings.get('desktop-appearance').backgroundLeftTransparency, 60)
+  assert.equal(h.settings.get('desktop-appearance').backgroundNavigation, false)
+  assert.equal(h.settings.get('desktop-appearance').backgroundNavigationSurfaceTransparency, 60)
 })

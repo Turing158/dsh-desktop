@@ -12,7 +12,7 @@ import { handleOnboarding, dismissInitialWelcome, offlineModelPatch } from './ds
 const require = createRequire(import.meta.url)
 const {chromium} = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const root = await mkdtemp(resolve('src-tauri/target/native-diagnostics-'))
-const exe = resolve('src-tauri/target/debug/deepseek-harness-desktop.exe')
+const exe = resolve(process.env.DSH_DESKTOP_SMOKE_EXE || 'src-tauri/target/debug/deepseek-harness-desktop.exe')
 const realBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
 const report = {root,checks:[]}
 const pass = name=> {report.checks.push(name); console.log('PASS: '+name)}
@@ -35,7 +35,20 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
     DSH_UI_SMOKE_KEY:'mock-key',DSH_DESKTOP_WEBVIEW_RESTORE:'1',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port='+port,
   }})
-  let browser
+  let browser, sequence = 0
+  const command = async action => {
+    await writeFile(join(dir,'command.json'),JSON.stringify({sequence:++sequence,action}))
+  }
+  const state = async expected => {
+    for(let i=0;i<400;i++) {
+      let value={}
+      try {value=JSON.parse(await readFile(join(dir,'state.json'),'utf8'))}catch{}
+      if(value.command===sequence && expected(value))return value
+      await sleep(100)
+    }
+    throw Error('native window state did not settle')
+  }
+  const invokeDiagnostics = page => page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics',{identity:window.__DSH_REMOTE_IDENTITY__}))
   try {
     for(let i=0;i<400;i++) {
       // The debug status file is rewritten by the native smoke bridge. Retry a
@@ -47,18 +60,32 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
       await sleep(100)
     }
     browser = await chromium.connectOverCDP('http://127.0.0.1:'+port)
-    await writeFile(join(dir,'command.json'),JSON.stringify({sequence:1,action:'diagnostics'}))
     let page
     for(let i=0;i<100;i++) {
-      page = browser.contexts().flatMap(context=>context.pages()).find(page=>page.url().includes('diagnostics.html'))
+      page = browser.contexts().flatMap(context=>context.pages()).find(page=>failed ? page.url().includes('tauri.localhost') : page.url().startsWith('http://127.0.0.1:'))
       if(page)break
       await sleep(100)
     }
-    assert.ok(page,'tray diagnostics window opens: '+browser.contexts().flatMap(context=>context.pages()).map(page=>page.url()).join(', '))
-    await page.getByRole('heading',{name:/故障诊断|Diagnostics/}).waitFor()
-    await page.getByRole('button',{name:/重新检测|Run checks|Check again/}).click()
-    await page.waitForFunction(()=>!document.getElementById('diagnostics-check').disabled)
-    let value = await page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics'))
+    assert.ok(page,'main desktop page found')
+    if(!failed) {
+      await page.waitForFunction(()=>window.__DSH_REMOTE_IDENTITY__ && window.__DSH_CAPABILITIES__ && window.__DSH_UI_STATE__)
+      await handleOnboarding(page)
+      await dismissInitialWelcome(page)
+    }
+    await command('diagnostics')
+    await page.getByRole('dialog').waitFor()
+    await state(value=>value.visible && value.windowCount===1)
+    assert.equal(browser.contexts().flatMap(context=>context.pages()).length,1)
+    await page.getByRole('heading',{name:/故障诊断|诊断|Diagnostics/}).waitFor()
+    await page.getByRole('dialog').getByText(/^(实际 dsh 版本|Actual dsh version)$/).waitFor()
+    const checkButton = page.getByRole('dialog').getByRole('button',{name:/重新检测|Run checks|Check again/})
+    await checkButton.click()
+    let value
+    for(let i=0;i<300;i++) {
+      value = await invokeDiagnostics(page)
+      if(value.checkedAt)break
+      await sleep(100)
+    }
     assert.equal(value.runtime.dshEntry.replace(/\\/g,'/'),bin.replace(/\\/g,'/'))
     assert.equal(value.runtime.dshSource,'configured')
     assert.ok(value.checks.some(check=>check.id==='node' && check.status==='available'))
@@ -74,16 +101,14 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
       assert.equal(value.runtime.dshVersion,'0.2.1-rc.2')
       assert.equal(value.inventory.roots.dataRoot.replace(/\\/g,'/'),home.replace(/\\/g,'/'))
       assert.ok(value.capabilities.some(row=>row.featureId==='plugin-management' && row.evidence.includes('plugin-control-status')))
-      const main = browser.contexts().flatMap(context=>context.pages()).find(page=>page!==undefined && !page.url().includes('diagnostics.html') && page.url().startsWith('http://127.0.0.1:'))
+      const main = page
       assert.ok(main,'running desktop page found')
       await main.waitForFunction(()=>window.__DSH_REMOTE_IDENTITY__)
       await main.waitForFunction(()=>window.__DSH_CAPABILITIES__ && window.__DSH_UI_STATE__)
-      await handleOnboarding(main)
-      await dismissInitialWelcome(main)
       await main.evaluate(()=>window.__DSH_CAPABILITIES__.refresh())
       let selected
       for(let i=0;i<100;i++) {
-        selected = await page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics'))
+        selected = await invokeDiagnostics(page)
         if(['file-editor','ui-recovery'].every(id=>selected.capabilities.some(row=>row.featureId===id && row.availability==='limited')))break
         await sleep(100)
       }
@@ -121,7 +146,7 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
         })
         let changes
         for(let i=0;i<100;i++) {
-          const current=await page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics'))
+          const current=await invokeDiagnostics(page)
           changes=current.capabilities.find(row=>row.featureId==='session-changes-git')
           if(changes.reasonCodes.includes('changes-no-current-session'))break
           await sleep(100)
@@ -145,13 +170,13 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
         },[repository,plain])
         async function workspaceRow(code) {
           for(let i=0;i<100;i++) {
-            const report=await page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics'))
+            const report=await invokeDiagnostics(page)
             const row=report.capabilities.find(row=>row.featureId==='session-changes-git')
             if(row.availability==='limited' && row.reasonCodes.includes(code))return row
             await sleep(100)
           }
           const state=await main.evaluate(()=>({selection:window.__DSH_SMOKE_CONTEXT__.sessions.list.getSnapshot(),identity:window.__DSH_REMOTE_IDENTITY__}))
-          const diagnostics=await page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics'))
+          const diagnostics=await invokeDiagnostics(page)
           await writeFile(join(dir,'workspace-failure.json'),JSON.stringify({state,diagnostics},null,2))
           throw Error('workspace report not ready: '+code)
         }
@@ -164,7 +189,7 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
         assert.equal(changes.scope,'current-workspace')
         assert.equal(JSON.stringify(changes).includes('plain-workspace'),false)
         pass('actual repository and non-repository workspaces recheck on session selection and exclude paths from capability evidence')
-        value=await page.evaluate(()=>window.__TAURI__.core.invoke('desktop_diagnostics'))
+        value=await invokeDiagnostics(page)
       }
       pass('real file editor and recovery selectors report current contracts with explicit limits')
       const overrideDenied=await main.evaluate(async()=>{
@@ -185,15 +210,51 @@ async function scenario(name,bin,failed,enhancementsDisabled=false) {
       assert.equal(denied,true)
       pass('actual desktop IPC rejects a stale backend identity')
     }
-    const denied = await page.evaluate(async()=>{
-      try {await window.__TAURI__.core.invoke('retry_boot');return false}catch{return true}
-    })
-    assert.equal(denied,true,'diagnostic window cannot invoke boot mutation')
+    if(!failed) {
+      const denied = await page.evaluate(async()=>{
+        try {await window.__TAURI__.core.invoke('retry_boot');return false}catch{return true}
+      })
+      assert.equal(denied,true,'backend diagnostics dialog retains the main document ACL')
+    }
+    await command('diagnostics')
+    await page.getByRole('dialog').waitFor()
+    assert.equal(await page.getByRole('dialog').count(),1)
     await writeFile(join(dir,'diagnostics.json'),JSON.stringify(value,null,2))
     await page.screenshot({path:join(dir,'diagnostics.png')})
-    pass(name+': independent native diagnostics reads actual entry, bounded checks and restricted ACL')
+    await page.keyboard.press('Escape')
+    await page.getByRole('dialog').waitFor({state:'hidden'})
+    await command('close')
+    await state(value=>!value.visible && value.windowCount===1)
+    await command('diagnostics')
+    await page.getByRole('dialog').waitFor()
+    await state(value=>value.visible && value.windowCount===1)
+    pass(name+': tray diagnostics reuses one dialog and shows the hidden main window with working checks and ACL')
+    if(!failed) {
+      await page.keyboard.press('Escape')
+      await page.waitForFunction(()=>window.__DSH_SMOKE_CONTEXT__?.sessions.list.getSnapshot().phase==='ready' && window.__DSH_SMOKE_CONTEXT__?.workspaces.list.getSnapshot().phase==='ready')
+      await command('enter')
+      await state(value=>value.phase==='minimal' && value.windowCount===0)
+      await browser.close().catch(()=>{})
+      await command('diagnostics')
+      await state(value=>value.visible && value.windowCount===1 && value.loaded)
+      page=undefined
+      for(let i=0;i<200;i++) {
+        try {
+          if(!browser.isConnected())browser=await chromium.connectOverCDP('http://127.0.0.1:'+port)
+          page=browser.contexts().flatMap(context=>context.pages()).find(page=>!page.isClosed() && page.url().startsWith('http://127.0.0.1:'))
+          if(!page)await browser.close().catch(()=>{})
+        } catch {}
+        if(page)break
+        await sleep(100)
+      }
+      assert.ok(page,'minimal mode restores the main document')
+      await page.getByRole('dialog').waitFor()
+      await state(value=>value.visible && value.windowCount===1 && value.phase==='active')
+      assert.equal(await page.getByRole('dialog').count(),1)
+      pass(name+': tray diagnostics restores the disposed main WebView and opens its dialog')
+    }
   } finally {
-    await writeFile(join(dir,'command.json'),JSON.stringify({sequence:2,action:'quit'}))
+    await command('quit')
     for(let i=0;i<50 && child.exitCode===null;i++)await sleep(100)
     if(child.exitCode===null)try {execFileSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'})}catch{}
     await browser?.close().catch(()=>{})

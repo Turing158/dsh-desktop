@@ -254,12 +254,12 @@ var React = require('react')
     var COLOR_SCHEME_ATTRIBUTE = 'data-dsh-color-scheme'
     var COLOR_SCHEME_OPTIONS = [
       { id: 'default', get label() { return t('默认') }, swatch: '#4176E6' },
-      { id: 'blue', get label() { return t('经典蓝') }, swatch: '#315FD5' },
-      { id: 'teal', get label() { return t('雾海青') }, swatch: '#087366' },
-      { id: 'moss', get label() { return t('苔原绿') }, swatch: '#496F42' },
-      { id: 'violet', get label() { return t('暮光紫') }, swatch: '#7354AC' },
-      { id: 'amber', get label() { return t('纸墨琥珀') }, swatch: '#855820' },
-      { id: 'rose', get label() { return t('玫瑰灰') }, swatch: '#9B435E' },
+      { id: 'blue', get label() { return t('经典蓝') }, swatch: '#3F5D9C' },
+      { id: 'teal', get label() { return t('雾海青') }, swatch: '#31675D' },
+      { id: 'moss', get label() { return t('苔原绿') }, swatch: '#4E6544' },
+      { id: 'violet', get label() { return t('暮光紫') }, swatch: '#6B5681' },
+      { id: 'amber', get label() { return t('纸墨琥珀') }, swatch: '#765D3A' },
+      { id: 'rose', get label() { return t('玫瑰灰') }, swatch: '#845665' },
     ]
     function colorScheme(value) {
       return COLOR_SCHEME_OPTIONS.some(function (option) { return option.id === value }) ? value : 'default'
@@ -579,21 +579,43 @@ var React = require('react')
       frosted: { field: 'composerFrostedIntensity', get label() { return t('纯磨砂效果程度') }, defaultValue: 50, variable: '--dsh-composer-frosted-strength' },
       glass: { field: 'composerGlassIntensity', get label() { return t('毛玻璃效果程度') }, defaultValue: 50, variable: '--dsh-composer-glass-strength' },
     }
+    var DIALOG_TUNING = {
+      transparent: { field: 'dialogTransparency', get label() { return t('底色透明度') }, defaultValue: 20, variable: '--dsh-dialog-transparent-tint' },
+      frosted: { field: 'dialogFrostedIntensity', get label() { return t('纯磨砂效果程度') }, defaultValue: 50, variable: '--dsh-dialog-frosted-strength' },
+      glass: { field: 'dialogGlassIntensity', get label() { return t('毛玻璃效果程度') }, defaultValue: 50, variable: '--dsh-dialog-glass-strength' },
+    }
+    var MATERIAL_SURFACES = [
+      { field: 'composerMaterial', attribute: COMPOSER_MATERIAL_ATTRIBUTE, tuning: COMPOSER_TUNING,
+        get error() { return t('输入框/面板效果设置保存失败，请重试。') } },
+      { field: 'dialogMaterial', attribute: 'data-dsh-dialog-material', tuning: DIALOG_TUNING,
+        get error() { return t('Dialog 效果设置保存失败，请重试。') } },
+    ]
+    function materialSurface(field) {
+      return MATERIAL_SURFACES.find(function (surface) {
+        return surface.field === field || Object.values(surface.tuning).some(function (control) { return control.field === field })
+      })
+    }
     function validComposerSetting(field, value) {
-      if (field === 'composerMaterial') return composerMaterial(value) === value
-      return Object.values(COMPOSER_TUNING).some(function (control) { return control.field === field }) &&
-        typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
+      var surface = materialSurface(field)
+      if (!surface) return false
+      if (field === surface.field) return composerMaterial(value) === value
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
     }
     function composerSettings(section) {
-      var result = { composerMaterial: composerMaterial(section && section.composerMaterial) }
-      Object.values(COMPOSER_TUNING).forEach(function (control) {
-        var value = section && section[control.field]
-        result[control.field] = validComposerSetting(control.field, value) ? value : control.defaultValue
+      var result = {}
+      MATERIAL_SURFACES.forEach(function (surface) {
+        result[surface.field] = composerMaterial(section && section[surface.field])
+        Object.values(surface.tuning).forEach(function (control) {
+          var value = section && section[control.field]
+          result[control.field] = validComposerSetting(control.field, value) ? value : control.defaultValue
+        })
       })
       return result
     }
     function ComposerMaterialSlider(props) {
-      var control = COMPOSER_TUNING[props.state.composerMaterial]
+      var surface = props.surface || MATERIAL_SURFACES[0]
+      var material = props.state[surface.field]
+      var control = surface.tuning[material]
       if (!control) return null
       var value = props.state[control.field]
       function save(event) { return props.save(control.field, Number(event.target.value)) }
@@ -605,7 +627,7 @@ var React = require('react')
             onChange: function (event) { props.preview(control.field, Number(event.target.value)) },
             onPointerUp: save, onPointerCancel: save, onKeyUp: save, onBlur: save }),
           h('output', { 'aria-live': 'off' }, value + '%')),
-        h('p', null, props.state.composerMaterial === 'transparent'
+        h('p', null, material === 'transparent'
           ? t('数值越高，底色越透明；100% 完全透出背景。')
           : t('程度越高，背景越模糊，底色透明度同步降低；0% 完全透出背景。')))
     }
@@ -1089,15 +1111,33 @@ var React = require('react')
      *   setters the option rows call.
      * @returns a component taking only slot props.
      */
-    var BACKGROUND_REGIONS = [['Titlebar', t('标题栏')], ['Left', t('左边导航栏')], ['Right', t('侧边栏区域')], ['Chat', t('中间会话区域')]]
+    var BACKGROUND_REGIONS = [['Navigation', t('标题栏与左边导航栏')], ['Right', t('侧边栏区域')], ['Chat', t('中间会话区域')]]
+    var BACKGROUND_TARGETS = { Navigation: ['titlebar', 'left'], Right: ['right'], Chat: ['chat'] }
     function backgroundSettings(section) {
       var result = { backgroundImage: '', backgroundTransparency: 40, backgroundBlur: 0 }
-      var surfaceDefaults = { Titlebar: 2, Left: 15, Right: 15, Chat: 40 }
+      var surfaceDefaults = { Right: 15, Chat: 40 }
       BACKGROUND_REGIONS.forEach(function (region) {
         result['background' + region[0]] = true
+        if (region[0] === 'Navigation') return
         var previous = section && section['background' + region[0] + 'Transparency']
         result['background' + region[0] + 'SurfaceTransparency'] = typeof previous === 'number' ? 100 - previous : surfaceDefaults[region[0]]
       })
+      // Missing legacy switches were enabled. Keep the merged region enabled
+      // whenever either old region was enabled; the shared field takes priority.
+      result.backgroundNavigation = !section || section.backgroundTitlebar !== false || section.backgroundLeft !== false
+      // Prefer the sidebar's saved tint when migrating separate controls. Only
+      // fall back to the title bar when the sidebar has no saved preference.
+      result.backgroundNavigationSurfaceTransparency = 15
+      if (section) {
+        for (var region of ['Left', 'Titlebar']) {
+          var surface = section['background' + region + 'SurfaceTransparency']
+          var legacy = section['background' + region + 'Transparency']
+          if (typeof surface === 'number' || typeof legacy === 'number') {
+            result.backgroundNavigationSurfaceTransparency = typeof surface === 'number' ? surface : 100 - legacy
+            break
+          }
+        }
+      }
       Object.keys(result).forEach(function (key) {
         if (section && typeof section[key] === typeof result[key]) result[key] = section[key]
       })
@@ -1161,10 +1201,14 @@ var React = require('react')
         h('p', null, t('0% 保持原图清晰，100% 模糊最强。')),
         BACKGROUND_REGIONS.map(function (region) {
           var field = 'background' + region[0]
+          var navigation = region[0] === 'Navigation'
           return h('div', { key: field, className: 'dshAppearance__backgroundRegion' },
             h('label', null, h('input', { type: 'checkbox', checked: state[field], disabled: !state.backgroundImage,
               onChange: function (event) { props.save(field, event.target.checked) } }), t('在{region}显示', { region: t(region[1]) })),
-            slider(t('{region}底色透明度', { region: t(region[1]) }), field + 'SurfaceTransparency', !state.backgroundImage || !state[field]))
+            slider(
+              navigation ? t('标题栏与左边导航栏底色透明度') : t('{region}底色透明度', { region: t(region[1]) }),
+              navigation ? 'backgroundNavigationSurfaceTransparency' : field + 'SurfaceTransparency',
+              !state.backgroundImage || !state[field]))
         }))
     }
 
@@ -1208,7 +1252,7 @@ var React = require('react')
           }),
           h(OptionGroup, {
             title: t('配色方案'),
-            note: t('默认保留原有配色；其他方案同时调整背景、侧栏和强调色，并随浅色或深色主题切换。'),
+            note: t('默认保留原有配色；其他方案以主题色区分侧边栏和标题栏，内容区域保持柔和的中性色，并随浅色或深色主题切换。'),
             options: COLOR_SCHEME_OPTIONS,
             value: state.colorScheme,
             onChange: deps.setColorScheme,
@@ -1227,6 +1271,17 @@ var React = require('react')
               preview: deps.previewComposerSetting, save: deps.saveComposerSetting }),
           }),
           state.composerMaterialError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.composerMaterialError) : null,
+          h(OptionGroup, {
+            title: t('Dialog 效果'),
+            note: t('独立应用于设置、确认等对话框。') + COMPOSER_MATERIAL_NOTES[state.dialogMaterial],
+            options: COMPOSER_MATERIAL_OPTIONS,
+            value: state.dialogMaterial,
+            onChange: deps.setDialogMaterial,
+            compact: true,
+            control: h(ComposerMaterialSlider, { key: state.dialogMaterial, state: state, surface: MATERIAL_SURFACES[1],
+              preview: deps.previewComposerSetting, save: deps.saveComposerSetting }),
+          }),
+          state.dialogMaterialError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.dialogMaterialError) : null,
           h(OptionGroup, {
             title: t('推理等级控件'),
             note: t('选择列表保留二级菜单；滑块直接在模型菜单中调整，档位和配色跟随当前模型与主题。'),
@@ -1502,6 +1557,7 @@ var React = require('react')
         reasoningControlError: '',
         ...composerSettings(loadedSection()),
         composerMaterialError: '',
+        dialogMaterialError: '',
         ...backgroundSettings(loadedSection()),
         backgroundError: '',
         // The host half publishes the mode before first paint, so the attribute
@@ -1621,11 +1677,13 @@ var React = require('react')
         if (materialDisposed) return
         store.update(Object.assign(composerSettings(loadedSection()), materialDrafts))
         var state = store.getState()
-        document.documentElement.setAttribute(COMPOSER_MATERIAL_ATTRIBUTE, state.composerMaterial)
-        Object.keys(COMPOSER_TUNING).forEach(function (material) {
-          var control = COMPOSER_TUNING[material]
-          var value = state[control.field]
-          document.body.style.setProperty(control.variable, material === 'transparent' ? (100 - value) + '%' : String(value / 100))
+        MATERIAL_SURFACES.forEach(function (surface) {
+          document.documentElement.setAttribute(surface.attribute, state[surface.field])
+          Object.keys(surface.tuning).forEach(function (material) {
+            var control = surface.tuning[material]
+            var value = state[control.field]
+            document.body.style.setProperty(control.variable, material === 'transparent' ? (100 - value) + '%' : String(value / 100))
+          })
         })
       }
       function previewComposerSetting(field, value) {
@@ -1634,7 +1692,7 @@ var React = require('react')
           materialDrafts[field] = value
           materialVersions[field] = (materialVersions[field] || 0) + 1
         }
-        store.update({ composerMaterialError: '' })
+        store.update({ [materialSurface(field).field + 'Error']: '' })
         applyComposerSettings()
       }
       function saveComposerSetting(field, value) {
@@ -1649,7 +1707,10 @@ var React = require('react')
         }
         materialQueued[field] = version
         materialQueue = materialQueue.then(function () { return scope.set(field, value) }).then(checkSaved).catch(function () {
-          if (!materialDisposed && materialVersions[field] === version) store.update({ composerMaterialError: t('输入框/面板效果设置保存失败，请重试。') })
+          if (!materialDisposed && materialVersions[field] === version) {
+            var surface = materialSurface(field)
+            store.update({ [surface.field + 'Error']: surface.error })
+          }
         }).finally(function () {
           if (materialQueued[field] === version) delete materialQueued[field]
           if (materialVersions[field] === version) delete materialDrafts[field]
@@ -1658,6 +1719,7 @@ var React = require('react')
         return materialQueue
       }
       function setComposerMaterial(next) { return saveComposerSetting('composerMaterial', next) }
+      function setDialogMaterial(next) { return saveComposerSetting('dialogMaterial', next) }
       applyComposerSettings()
       ctx.effect(function () {
         var dispose = scope.subscribe(function () {
@@ -1667,8 +1729,10 @@ var React = require('react')
         return function () {
           materialDisposed = true
           dispose()
-          document.documentElement.removeAttribute(COMPOSER_MATERIAL_ATTRIBUTE)
-          Object.values(COMPOSER_TUNING).forEach(function (control) { document.body.style.removeProperty(control.variable) })
+          MATERIAL_SURFACES.forEach(function (surface) {
+            document.documentElement.removeAttribute(surface.attribute)
+            Object.values(surface.tuning).forEach(function (control) { document.body.style.removeProperty(control.variable) })
+          })
         }
       }, 'desktop-appearance: composer material')
 
@@ -1865,16 +1929,21 @@ var React = require('react')
           }
         }
         document.body.style.setProperty('--dsh-background-image-opacity', String(1 - state.backgroundTransparency / 100))
+        document.body.style.setProperty('--dsh-background-navigation-opacity', String(1 - state.backgroundNavigationSurfaceTransparency / 100))
         document.body.style.setProperty('--dsh-background-blur', (state.backgroundBlur * 0.4) + 'px')
         if (backgroundObjectUrl && state.backgroundImage && state.backgroundBlur > 0) root.setAttribute('data-dsh-background-blur', '')
         else root.removeAttribute('data-dsh-background-blur')
         BACKGROUND_REGIONS.forEach(function (region) {
           var field = 'background' + region[0]
-          var attr = 'data-dsh-background-' + region[0].toLowerCase()
-          if (backgroundObjectUrl && state.backgroundImage && state[field]) root.setAttribute(attr, '')
-          else root.removeAttribute(attr)
-          var opacity = 1 - state[field + 'SurfaceTransparency'] / 100
-          document.body.style.setProperty('--dsh-background-' + region[0].toLowerCase() + '-opacity', String(opacity))
+          BACKGROUND_TARGETS[region[0]].forEach(function (target) {
+            var attr = 'data-dsh-background-' + target
+            if (backgroundObjectUrl && state.backgroundImage && state[field]) root.setAttribute(attr, '')
+            else root.removeAttribute(attr)
+          })
+          if (region[0] !== 'Navigation') {
+            var opacity = 1 - state[field + 'SurfaceTransparency'] / 100
+            document.body.style.setProperty('--dsh-background-' + region[0].toLowerCase() + '-opacity', String(opacity))
+          }
         })
       }
       function previewBackground(field, value) {
@@ -1911,10 +1980,13 @@ var React = require('react')
           if (backgroundObjectUrl) URL.revokeObjectURL(backgroundObjectUrl)
           dispose()
           BACKGROUND_REGIONS.forEach(function (region) {
-            document.documentElement.removeAttribute('data-dsh-background-' + region[0].toLowerCase())
-            document.body.style.removeProperty('--dsh-background-' + region[0].toLowerCase() + '-opacity')
+            BACKGROUND_TARGETS[region[0]].forEach(function (target) {
+              document.documentElement.removeAttribute('data-dsh-background-' + target)
+              document.body.style.removeProperty('--dsh-background-' + target + '-opacity')
+            })
           })
           document.body.style.removeProperty('--dsh-background-image-opacity')
+          document.body.style.removeProperty('--dsh-background-navigation-opacity')
           document.body.style.removeProperty('--dsh-background-blur')
           document.documentElement.removeAttribute('data-dsh-background-blur')
           document.body.style.removeProperty('--dsh-background-image')
@@ -1931,6 +2003,7 @@ var React = require('react')
         setReasoningControl: setReasoningControl,
         setColorScheme: setColorScheme,
         setComposerMaterial: setComposerMaterial,
+        setDialogMaterial: setDialogMaterial,
         previewComposerSetting: previewComposerSetting,
         saveComposerSetting: saveComposerSetting,
         previewBackground: previewBackground,

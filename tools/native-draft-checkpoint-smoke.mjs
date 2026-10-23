@@ -98,13 +98,12 @@ try {
     try {await window.__TAURI__.core.invoke('desktop_draft_checkpoint',{identity:{...window.__DSH_REMOTE_IDENTITY__,documentGeneration:9999},payload});return false}catch{return true}
   },third.payload);assert.equal(stale,true)
   await writeFile(join(root,'command.json'),JSON.stringify({sequence:++sequence,action:'diagnostics'}))
-  let diagnostics
-  for(let i=0;i<100;i++){diagnostics=browser.contexts().flatMap(context=>context.pages()).find(page=>page.url().includes('diagnostics.html'));if(diagnostics)break;await sleep(100)}
-  assert.ok(diagnostics);await diagnostics.waitForFunction(()=>window.__TAURI__?.core?.invoke)
-  const localDenied=await diagnostics.evaluate(async payload=>{
+  await page.locator('.dshMaintenance__dialog').waitFor()
+  assert.equal(browser.contexts().flatMap(context=>context.pages()).length,1)
+  const staleDialogDenied=await page.evaluate(async payload=>{
     try {await window.__TAURI__.core.invoke('desktop_draft_checkpoint',{identity:{backendInstance:1,documentGeneration:1,windowGeneration:1,documentNonce:[]},payload});return false}catch{return true}
-  },third.payload);assert.equal(localDenied,true)
-  pass('native IPC rejects stale page checkpoint reports and local diagnostics cannot invoke draft writes')
+  },third.payload);assert.equal(staleDialogDenied,true)
+  pass('native IPC rejects stale checkpoint reports while tray diagnostics stays in the main dialog')
   await page.screenshot({path:join(root,'restored.png')})
 } catch(error) {
   report.error=error.message

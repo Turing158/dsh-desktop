@@ -159,10 +159,9 @@ try {
   const cancelledResponse = await externalContext.request.get(staleCallback)
   assert.ok(cancelledResponse.status() >= 400, 'cancelled authorization cannot complete')
   assert.equal(exchanges, 0)
-  // Cancelling dismisses the onboarding card. Reopen login from the account
-  // menu, just as a user would after returning to the conversation screen.
-  await page.getByRole('button', { name: '账号菜单', exact: true }).click()
-  await page.getByRole('menuitem', { name: '登录', exact: true }).click()
+  // Cancelling dismisses the onboarding card. The desktop account button now
+  // starts sign-in directly, without an intermediate account menu.
+  await page.getByRole('button', { name: '未登录', exact: true }).click()
   const retryUrl = await until(async () => (await launches())[1])
   await until(onlyMainWindow)
   assert.equal(initializations, 2)
@@ -176,7 +175,7 @@ try {
 
   await externalPage.getByRole('link', { name: 'Authorize test account' }).click()
   await until(() => page.evaluate(async () => (await window.__ACCOUNT_SMOKE__.remote.account.getState()).value?.status === 'credential-stored'))
-  await until(async () => await page.getByRole('button', { name: '账号菜单', exact: true }).getAttribute('data-signed-out') === 'false')
+  await until(async () => await page.locator('[data-dsh-account-trigger]').getAttribute('data-signed-out') === 'false')
   assert.equal(exchanges, 1)
   assert.equal(new URL(authorization.redirect_uri).origin, report.origin)
   assert.ok(externalPage.url().startsWith(platformOrigin + '/dsh/authorized'))

@@ -47,6 +47,9 @@
 }
 
 .local-diagnostics{text-align:left;width:100%}
+.local-diagnostics-dialog{width:min(800px,calc(100% - 48px));max-height:calc(100% - 96px);margin:auto;padding:24px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:auto;overscroll-behavior:contain;box-shadow:var(--dsh-menu-shadow)}
+.local-diagnostics-dialog::backdrop{background:rgb(0 0 0 / 45%)}
+.local-diagnostics-dialog h2{margin:0;font-size:20px}
 .diagnostic-facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 16px;margin:0;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
 .diagnostic-facts dt{color:var(--muted)}.diagnostic-facts dd{margin:0;overflow-wrap:anywhere}
 @media(max-width:480px){.diagnostic-facts{grid-template-columns:1fr}.diagnostic-facts dd{margin-bottom:8px}}

@@ -29,15 +29,17 @@ export async function dismissInitialWelcome(page) {
 
 export async function openDshSettings(page) {
   if (await page.locator('[data-shortcut-modal="settings"]').count()) return
+  const desktop = page.locator('.dshSidebarSettings__button, .dshAccount__settings')
   const legacy = page.locator('button[aria-haspopup="dialog"]')
   const account = page.getByRole('button', { name: /^(账号菜单|Account menu)$/, includeHidden: true })
-  await legacy.or(account).first().waitFor({ state: 'attached' })
+  await desktop.or(legacy).or(account).first().waitFor({ state: 'attached' })
   // Finish blocking onboarding before opening another modal. Locator handlers
   // run during this actionability check; raw DOM clicks alone bypass them.
   await page.locator('#root').click({ trial: true })
   if (await page.locator('[data-shortcut-modal="settings"]').count()) return
   // The collapsed desktop sidebar deliberately hides its original trigger.
-  if (await legacy.count()) await legacy.first().evaluate(button => button.click())
+  if (await desktop.count()) await desktop.first().evaluate(button => button.click())
+  else if (await legacy.count()) await legacy.first().evaluate(button => button.click())
   else {
     await account.evaluate(button => button.click())
     await page.getByRole('menuitem', { name: /^(设置|Settings)(\s|$)/ }).click()

@@ -9,6 +9,7 @@ import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { handleOnboarding, dismissInitialWelcome, openDshSettings, offlineModelPatch } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -20,6 +21,8 @@ await writeFile(join(home, 'settings.yaml'), `desktop-appearance:
   animation: off
   ui: vanilla
   fontSizeOverride: 10
+  backgroundTitlebar: false
+  backgroundLeft: false
 desktop-terminal-dock:
   layout: { height: 312, collapsed: false }
   profileId: cmd
@@ -37,7 +40,7 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({
 })\n`)
 const originalPatch = await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')
 const patch = originalPatch.replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
-  + '\n- insert:\n    - id: desktop-settings-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
+  + offlineModelPatch + '\n- insert:\n    - id: desktop-settings-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 const patchPath = join(root, 'desktop.patch.yml')
 await writeFile(patchPath, patch)
 
@@ -48,7 +51,7 @@ async function start() {
   output = ''
   child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--no-open', '--port', '0'], {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin },
+    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_UI_SMOKE_KEY: 'offline-fixture' },
   })
   child.stdout.on('data', data => { output += data })
   child.stderr.on('data', data => { output += data })
@@ -91,20 +94,37 @@ try {
   const firstUrl = await start()
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   const page = await browser.newPage({ viewport: { width: 1280, height: 840 } })
-  await page.addLocatorHandler(page.getByRole('button', {name:'稍后配置',exact:true}), async button => { await button.click() })
+  await handleOnboarding(page)
   const pageErrors = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await ready(page, firstUrl)
   await page.evaluate(() => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').set('ui', 'desktop'))
-  await page.evaluate(() => { for(const b of document.querySelectorAll('button')) if(['稍后配置','继续'].includes(b.textContent)) b.click() })
-  await page.locator('button[aria-haspopup="dialog"]').first().evaluate(e=>e.click())
+  await dismissInitialWelcome(page)
+  await openDshSettings(page)
   await page.getByRole('button', {name:'外观',exact:true}).click()
   await page.locator('.dshAppearance__background').waitFor()
   const png = await page.evaluate(() => { const c=document.createElement('canvas');c.width=1200;c.height=800;const x=c.getContext('2d');const g=x.createLinearGradient(0,0,1200,800);g.addColorStop(0,'#006c88');g.addColorStop(.5,'#cc8844');g.addColorStop(1,'#553366');x.fillStyle=g;x.fillRect(0,0,1200,800);const pixels=x.getImageData(0,0,1200,800);let seed=42;for(let i=0;i<pixels.data.length;i++){if(i%4===3)continue;seed=(Math.imul(seed,1664525)+1013904223)|0;pixels.data[i]=Math.max(0,Math.min(255,pixels.data[i]+(seed>>>27)-16))}x.putImageData(pixels,0,0);return c.toDataURL() })
   assert.ok(png.length > 1048576,'fixture must exceed Chromium custom-property limit')
   await page.locator('.dshAppearance input[type=file]').setInputFiles({name:'background.png',mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')})
   await page.waitForFunction(() => document.documentElement.hasAttribute('data-dsh-background-chat'))
-  for(const name of ['标题栏','左边导航栏','侧边栏区域']) await page.getByRole('checkbox',{name:'在'+name+'显示',exact:true}).check()
+  assert.equal(await page.getByRole('checkbox', { name: /^在(标题栏|左边导航栏)显示$/ }).count(), 0)
+  const navigationSwitch = page.getByRole('checkbox', { name: '在标题栏与左边导航栏显示', exact: true })
+  const navigation = page.getByRole('slider', { name: '标题栏与左边导航栏底色透明度', exact: true })
+  assert.equal(await navigationSwitch.isChecked(), false, 'both disabled legacy regions migrate to disabled')
+  assert.equal(await navigation.isDisabled(), true)
+  await navigationSwitch.check()
+  await page.waitForFunction(() => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.backgroundNavigation === true)
+  await navigationSwitch.uncheck()
+  await page.waitForFunction(() => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.backgroundNavigation === false
+    && !document.documentElement.hasAttribute('data-dsh-background-titlebar') && !document.documentElement.hasAttribute('data-dsh-background-left'))
+  for (const selector of ['.dshTb', '[class*=_sidebarCol]']) {
+    assert.equal(await page.locator(selector).evaluate(node => getComputedStyle(node).backgroundImage), 'none')
+  }
+  assert.equal(await navigation.isDisabled(), true)
+  await navigationSwitch.check()
+  await page.waitForFunction(() => document.documentElement.hasAttribute('data-dsh-background-titlebar') && document.documentElement.hasAttribute('data-dsh-background-left'))
+  assert.equal(await navigation.isDisabled(), false)
+  await page.getByRole('checkbox', { name: '在侧边栏区域显示', exact: true }).check()
   const total = page.getByRole('slider',{name:'图片总透明度',exact:true})
   await total.fill('25'); await total.dispatchEvent('pointerup')
   const blur = page.getByRole('slider',{name:'图片模糊程度',exact:true})
@@ -114,20 +134,26 @@ try {
   assert.equal(await page.evaluate(() => document.body.style.getPropertyValue('--dsh-background-blur')), '26px')
   assert.equal((await values(page))['desktop-appearance'].backgroundBlur, undefined, 'drag previews before saving')
   await blur.dispatchEvent('pointerup')
-  const left = page.getByRole('slider',{name:'左边导航栏底色透明度',exact:true})
-  await left.fill('60'); await left.dispatchEvent('pointerup')
-  await page.waitForFunction(() => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.backgroundLeftSurfaceTransparency === 60)
+  assert.equal(await page.getByRole('slider',{name:/^(标题栏|左边导航栏)底色透明度$/}).count(), 0)
+  await navigation.fill('60')
+  assert.ok(Math.abs(await page.evaluate(()=>Number(document.body.style.getPropertyValue('--dsh-background-navigation-opacity')))-.4)<.001)
+  assert.equal((await values(page))['desktop-appearance'].backgroundNavigationSurfaceTransparency, undefined, 'shared drag previews before saving')
+  await navigation.dispatchEvent('pointerup')
+  await page.waitForFunction(() => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.backgroundNavigationSurfaceTransparency === 60)
   const expected=(await values(page))['desktop-appearance']
   assert.equal(expected.backgroundImage,png)
   assert.equal(expected.backgroundTransparency,25)
   assert.equal(expected.backgroundBlur,65)
+  assert.equal(expected.backgroundNavigation, true)
+  assert.equal(expected.backgroundTitlebar, false, 'shared setting takes priority over retained legacy fields')
+  assert.equal(expected.backgroundLeft, false)
   assert.equal(await page.locator('[data-conversation-region=chat]').evaluate(e=>getComputedStyle(e.parentElement).backgroundColor),'rgba(0, 0, 0, 0)')
   assert.equal(await page.locator('[data-slot=sidebar] > [class*=_root]').evaluate(e=>getComputedStyle(e).backgroundColor),'rgba(0, 0, 0, 0)')
   for(const selector of ['.dshTb','[class*=_sidebarCol]','[class*=_centerCol]']) assert.match(await page.locator(selector).evaluate(e=>getComputedStyle(e).backgroundImage),/blob:/)
   for(const selector of ['.dshTb','[class*=_sidebarCol]','[class*=_centerCol]']) {
     assert.deepEqual(await page.locator(selector).evaluate(e => ({filter:getComputedStyle(e).filter, blur:getComputedStyle(e,'::before').backdropFilter})), {filter:'none',blur:'blur(26px)'})
   }
-  assert.ok(Math.abs(await page.evaluate(()=>Number(document.body.style.getPropertyValue('--dsh-background-left-opacity')))-.4)<.001)
+  assert.ok(Math.abs(await page.evaluate(()=>Number(document.body.style.getPropertyValue('--dsh-background-navigation-opacity')))-.4)<.001)
   await page.screenshot({path:join(root,'settings.png'),fullPage:true})
   console.log('PASS: upload, region switches, live transparency and unobstructed backgrounds')
   await page.reload(); await ready(page,page.url())

@@ -1,4 +1,4 @@
-/** Verify composer material controls, coupled effects, and restart persistence.
+/** Verify composer and Dialog materials, coupled effects, and restart persistence.
  * Run: node tools/composer-material-smoke.mjs (isolated DSH profile + headless Edge).
  */
 import assert from 'node:assert/strict'
@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { openDshSettings, handleOnboarding, dismissInitialWelcome, offlineModelPatch } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -34,7 +35,7 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({
 })\n`)
 const originalPatch = await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')
 const patch = originalPatch.replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
-  + '\n- insert:\n    - id: desktop-settings-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
+  + offlineModelPatch + '\n- insert:\n    - id: desktop-settings-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 const patchPath = join(root, 'desktop.patch.yml')
 await writeFile(patchPath, patch)
 
@@ -45,7 +46,7 @@ async function start() {
   output = ''
   child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--no-open', '--port', '0'], {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin },
+    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_UI_SMOKE_KEY: 'offline-fixture' },
   })
   child.stdout.on('data', data => { output += data })
   child.stderr.on('data', data => { output += data })
@@ -92,13 +93,14 @@ const controls = [
   ['glass', '毛玻璃', '毛玻璃效果程度', 'composerGlassIntensity', 35],
 ]
 async function appearance() {
-  await page.locator('button[aria-haspopup="dialog"]').first().evaluate(n => n.click())
+  await openDshSettings(page)
   await page.getByRole('button', { name: '外观', exact: true }).click()
   await page.locator('.dshAppearance').waitFor()
 }
 async function section() { return (await values(page))['desktop-appearance'] }
+function materialGroup(name = '输入框/面板效果') { return page.getByRole('group', { name, exact: true }) }
 async function choose(id, label) {
-  await page.getByRole('group', {name:'输入框/面板效果',exact:true}).getByRole('button',{name:label,exact:true}).click()
+  await materialGroup().getByRole('button',{name:label,exact:true}).click()
   await page.waitForFunction(id => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.composerMaterial === id, id)
 }
 async function adjust(name, field, value) {
@@ -115,22 +117,55 @@ async function surface() {
       opacity:s.opacity, editorOpacity:editor && getComputedStyle(editor).opacity, width:b.width, height:b.height }
   })
 }
+async function chooseDialog(id, label) {
+  await materialGroup('Dialog 效果').getByRole('button', { name: label, exact: true }).click()
+  await page.waitForFunction(id => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.dialogMaterial === id, id)
+}
+async function adjustDialog(name, field, value) {
+  const slider = materialGroup('Dialog 效果').getByRole('slider', { name, exact: true })
+  await slider.fill(String(value))
+  await slider.dispatchEvent('pointerup')
+  await page.waitForFunction(([field, value]) => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value[field] === value, [field, value])
+}
+async function dialogSurface(locator = page.locator('[data-shortcut-modal="settings"]')) {
+  return locator.evaluate(node => {
+    const style = getComputedStyle(node), bounds = node.getBoundingClientRect()
+    const text = node.querySelector('h2, [class*="_navTitle"]')
+    return { color: style.backgroundColor,
+      alpha: Number(style.backgroundColor.match(/\/\s*([\d.]+)\)/)?.[1] ?? (style.backgroundColor === 'rgba(0, 0, 0, 0)' ? 0 : 1)),
+      blur: Number(style.backdropFilter.match(/blur\(([\d.]+)px\)/)?.[1] ?? 0), filter: style.backdropFilter,
+      shadow: style.boxShadow, opacity: style.opacity, textOpacity: text && getComputedStyle(text).opacity,
+      width: bounds.width, height: bounds.height }
+  })
+}
+async function readableNarrowSlider(slider) {
+  const layout = await slider.evaluate(input => {
+    const label = input.closest('label'), title = label.querySelector('span'), value = label.querySelector('output')
+    const content = input.closest('[class*="_options"]'), bounds = content.getBoundingClientRect()
+    const track = input.getBoundingClientRect(), text = title.getBoundingClientRect(), number = value.getBoundingClientRect()
+    const fits = rect => rect.left >= bounds.left && rect.right <= bounds.right
+    return { trackWidth: track.width, titleWidth: text.width, titleHeight: text.height,
+      lineHeight: parseFloat(getComputedStyle(title).lineHeight), fits: [track, text, number].every(fits),
+      valueVisible: number.top >= bounds.top && number.bottom <= bounds.bottom }
+  })
+  assert.ok(layout.trackWidth >= 200, 'narrow settings retain a usable slider track: ' + JSON.stringify(layout))
+  assert.ok(layout.titleWidth >= 150 && layout.titleHeight <= layout.lineHeight * 2, 'slider labels stay readable')
+  assert.ok(layout.fits && layout.valueVisible, 'the label, track and value fit in the visible settings content')
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+}
 function pass(name) { report.checks[name]=true; console.log('PASS: '+name) }
 try {
   const url=await start()
   browser=await chromium.launch({channel:'msedge',headless:true})
   page=await browser.newPage({viewport:{width:1280,height:840}})
+  await page.addInitScript(() => {
+    window.__TAURI__ = { app: { getVersion: async () => '0.1.4' }, core: { invoke: async command => command === 'window_is_maximized' ? false : null } }
+  })
   const errors=[]
   page.on('pageerror',error=>errors.push(error.message))
   await ready(page,url)
-  await page.getByRole('button',{name:'继续',exact:true}).waitFor()
-  for (const name of ['继续','我知道了','稍后配置']) {
-    const button=page.getByRole('button',{name,exact:true})
-    if(await button.count()) { await button.click(); await page.waitForTimeout(350) }
-  }
-  await page.waitForTimeout(350)
-  if(await page.locator('[data-shortcut-modal="settings"]').count()) await page.keyboard.press('Escape')
-  await page.waitForTimeout(260)
+  await handleOnboarding(page)
+  await dismissInitialWelcome(page)
   await appearance()
   assert.equal(await page.locator('.dshAppearance__materialSlider').count(),0,'opaque has no material slider')
   for(const dark of [false,true]) {
@@ -184,16 +219,14 @@ try {
     await choose(id,label)
     assert.equal(await page.getByRole('slider',{name,exact:true}).inputValue(),String(value))
   }
-  const expected=await section()
+  let expected=await section()
   await choose('opaque','不透明')
   assert.equal(await page.locator('.dshAppearance__materialSlider').count(),0)
   await choose('glass','毛玻璃')
   pass('material values are independent and opaque hides the slider')
   await page.setViewportSize({width:375,height:812})
   await glassSlider.scrollIntoViewIfNeeded()
-  const mobileBox=await glassSlider.boundingBox()
-  assert.ok(mobileBox.x>=0 && mobileBox.x+mobileBox.width<=375)
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true)
+  await readableNarrowSlider(glassSlider)
   await page.screenshot({path:join(root,'mobile-settings.png')})
   pass('375px settings show the full slider with no horizontal overflow')
   await page.setViewportSize({width:1280,height:840})
@@ -247,6 +280,91 @@ try {
   await choose('glass', '毛玻璃')
   await page.keyboard.press('Escape')
   pass('workspace placeholder matches all four composer materials in both themes')
+  await page.waitForTimeout(260)
+  await appearance()
+  const dialogControls = [
+    ['transparent', '透明', '底色透明度', 'dialogTransparency', 70],
+    ['frosted', '纯磨砂', '纯磨砂效果程度', 'dialogFrostedIntensity', 75],
+    ['glass', '毛玻璃', '毛玻璃效果程度', 'dialogGlassIntensity', 25],
+  ]
+  for (const dark of [false, true]) {
+    await page.evaluate(dark => window.__SETTINGS_SMOKE__.configForms.get('ui-theme').set('preference', dark ? 'dark' : 'light'), dark)
+    await page.waitForFunction(dark => document.body.hasAttribute('data-ds-dark-theme') === dark, dark)
+    const composer = await surface()
+    const opaque = await dialogSurface()
+    for (const [id, label, name, field, value] of dialogControls) {
+      await chooseDialog(id, label)
+      const samples = []
+      for (const level of [0, 25, 50, 75, 100]) {
+        await adjustDialog(name, field, level)
+        samples.push(await dialogSurface())
+      }
+      for (let i = 0; i < samples.length; i++) {
+        const sample = samples[i]
+        assert.equal(sample.width, opaque.width)
+        assert.equal(sample.height, opaque.height)
+        assert.equal(sample.opacity, '1')
+        assert.equal(sample.textOpacity, '1')
+        assert.equal(sample.blur, id === 'transparent' ? 0 : i * 9)
+        if (i) assert.ok(id === 'transparent' ? sample.alpha < samples[i-1].alpha : sample.alpha > samples[i-1].alpha)
+        if (id === 'frosted') assert.equal(sample.shadow, 'none')
+      }
+      if (id !== 'transparent') assert.equal(samples[0].alpha, 0)
+      await adjustDialog(name, field, value)
+      assert.deepEqual(await surface(), composer, 'Dialog changes preserve the composer surface')
+      assert.equal(await page.locator('[data-shortcut-modal="settings"] > nav').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)')
+      await materialGroup('Dialog 效果').scrollIntoViewIfNeeded()
+      await page.screenshot({ path: join(root, (dark ? 'dark-' : 'light-') + id + '-dialog-settings.png') })
+      const settings = await dialogSurface()
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(260)
+      for (const [menu, item, title] of [['更多', '关于', '关于'], ['项目', '删除项目', '删除项目']]) {
+        await page.locator('.dshTb__item').filter({ hasText: new RegExp('^' + menu + '$') }).click()
+        await page.getByRole('menuitem', { name: item, exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: title, exact: true }).filter({ hasNot: page.locator('[data-dsh-ghost]') })
+        await dialog.waitFor()
+        await page.waitForTimeout(260)
+        const current = await dialogSurface(dialog)
+        for (const key of ['color', 'blur', 'filter', 'shadow', 'opacity', 'textOpacity']) assert.equal(current[key], settings[key], title + ' shares Dialog ' + key)
+        await dialog.getByRole('button', { name: title === '删除项目' ? '取消' : '关闭', exact: true }).last().click()
+        await page.waitForTimeout(260)
+      }
+      await appearance()
+      pass((dark ? 'dark' : 'light') + '/' + id + ': settings, about and confirmation share independent Dialog effects')
+    }
+    await chooseDialog('opaque', '不透明')
+    assert.equal(await materialGroup('Dialog 效果').locator('.dshAppearance__materialSlider').count(), 0)
+    const restored = await dialogSurface()
+    assert.equal(restored.blur, 0)
+    assert.equal(restored.alpha, 1)
+    assert.deepEqual(restored, opaque, 'opaque restores the native Dialog surface')
+  }
+  for (const [id, label, name, , value] of dialogControls) {
+    await chooseDialog(id, label)
+    assert.equal(await materialGroup('Dialog 效果').getByRole('slider', { name, exact: true }).inputValue(), String(value))
+  }
+  const dialogSlider = materialGroup('Dialog 效果').getByRole('slider', { name: '毛玻璃效果程度', exact: true })
+  await dialogSlider.scrollIntoViewIfNeeded()
+  const dialogBox = await dialogSlider.boundingBox()
+  await page.mouse.move(dialogBox.x + dialogBox.width * .55, dialogBox.y + dialogBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(dialogBox.x + dialogBox.width * .8, dialogBox.y + dialogBox.height / 2, { steps: 5 })
+  const dialogPreview = Number(await dialogSlider.inputValue())
+  assert.ok(dialogPreview > 65 && dialogPreview < 90)
+  assert.equal((await section()).dialogGlassIntensity, 25)
+  await page.mouse.up()
+  await page.waitForFunction(value => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.dialogGlassIntensity === value, dialogPreview)
+  await dialogSlider.press('ArrowLeft')
+  await page.waitForFunction(value => window.__SETTINGS_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value.dialogGlassIntensity === value, dialogPreview - 1)
+  await adjustDialog('毛玻璃效果程度', 'dialogGlassIntensity', 25)
+  await page.setViewportSize({ width: 375, height: 812 })
+  await dialogSlider.scrollIntoViewIfNeeded()
+  await readableNarrowSlider(dialogSlider)
+  await page.screenshot({ path: join(root, 'mobile-dialog-settings.png') })
+  await page.setViewportSize({ width: 1280, height: 840 })
+  expected = await section()
+  await page.keyboard.press('Escape')
+  pass('Dialog sliders support pointer, keyboard and narrow layouts and remember all three values')
   await ready(page,page.url())
   assert.deepEqual(await section(),expected)
   stop()
@@ -258,7 +376,11 @@ try {
     return document.documentElement.getAttribute('data-dsh-composer-material')==='glass' &&
       style.getPropertyValue('--dsh-composer-transparent-tint')==='15%' &&
       style.getPropertyValue('--dsh-composer-frosted-strength')==='0.65' &&
-      style.getPropertyValue('--dsh-composer-glass-strength')==='0.35'
+      style.getPropertyValue('--dsh-composer-glass-strength')==='0.35' &&
+      document.documentElement.getAttribute('data-dsh-dialog-material')==='glass' &&
+      style.getPropertyValue('--dsh-dialog-transparent-tint')==='30%' &&
+      style.getPropertyValue('--dsh-dialog-frosted-strength')==='0.75' &&
+      style.getPropertyValue('--dsh-dialog-glass-strength')==='0.25'
   })
   assert.deepEqual(errors,[])
   pass('all three values survive page reload and backend restart without browser errors')
