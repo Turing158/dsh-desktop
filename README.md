@@ -10,7 +10,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/平台-Windows_x64-0078D4?style=flat-square" alt="Windows x64" />
-  <img src="https://img.shields.io/badge/桌面版本-0.1.3-4C8BF5?style=flat-square" alt="桌面版本 0.1.3" />
+  <img src="https://img.shields.io/badge/桌面版本-1.0.0-4C8BF5?style=flat-square" alt="桌面版本 1.0.0" />
   <img src="https://img.shields.io/badge/技术-Rust_%2B_Tauri_2-DEA584?style=flat-square" alt="Rust + Tauri 2" />
   <img src="https://img.shields.io/badge/界面-中文_%2F_English-2EA043?style=flat-square" alt="中文 / English" />
 </p>
@@ -59,7 +59,7 @@ dsh desktop 就是围绕这些日常操作做的增强。它启动 dsh 的 Web �
 | **缺少桌面提醒、托盘和本机会话链接** | 由桌面宿主与插件补充，无需旧版先实现这些桌面功能。 | 仍依赖可用的 dsh 事件与会话接口，具体行为以运行时能力为准。 |
 | **新旧设置、导航接口不一致** | 适配旧版设置注册方式与新版配置方式，兼容两代会话导航接口，保存桌面外观及终端偏好。 | 恢复草稿、附件和布局前检查所需接口；缺少必要能力时提示原因并取消操作。 |
 
-版本需要分开看：**`0.1.3` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
+版本需要分开看：**`1.0.0` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
 
 ## 日常使用体验优化了什么？
 
@@ -236,7 +236,7 @@ Windows 原生通知可单独验证（会发送一条测试通知，临时开始
 cargo test --manifest-path src-tauri/Cargo.toml --features single live_windows_notification -- --ignored --nocapture --test-threads=1
 ```
 
-关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v0.1.3-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
+关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v1.0.0-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
 
 设置环境变量 `DSH_DESKTOP_DEBUG` 为日志文件路径后启动 EXE，可查看通知注册、提交与失败记录。`[notify/registration] unchanged` 表示复用了已有注册，`[notify/submitted]` 表示系统接受了提交；是否显示横幅仍由 Windows 决定。
 
