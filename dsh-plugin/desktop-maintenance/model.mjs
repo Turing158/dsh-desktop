@@ -93,6 +93,7 @@ export const reasons = {
   'storage-consistency-unverified': '数据一致性接口尚未验证。',
   'runtime-snapshot-unverified': '旧运行时的离线快照尚未验证。',
   'runtime-migration-scope-unverified': '数据迁移范围尚未验证，可靠回退暂不可用。',
+  'automatic-update-rollback-only': '支持更新失败时自动恢复旧版和数据；不提供任意历史版本回退。',
   'runtime-explicitly-pinned': '当前入口由 DSH_DESKTOP_DSH 固定。',
   'node-supported': 'Node 版本符合要求。', 'node-missing': '未找到 Node.js。',
   'node-version-unsupported': 'Node 版本不符合要求或检查超时。',

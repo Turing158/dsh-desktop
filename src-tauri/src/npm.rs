@@ -24,8 +24,23 @@ pub fn candidate_argv(prefix: &Path, version: &str) -> Result<Vec<String>,String
     if version.len()>64 || version.starts_with('v') || semver::Version::parse(version).is_err() {return Err("runtime-candidate-version-invalid".into());}
     let mut args=install_argv(prefix);
     args[4]=format!("@deepseek-ai/dsh@{version}");
-    args.extend(["--cache".into(),prefix.join("npm-cache").to_string_lossy().into_owned()]);
+    // Candidate prefixes stay isolated; npm's content-addressed tarball cache
+    // is shared across attempts and checked by npm's integrity verification.
+    let cache=prefix.parent().filter(|p|p.file_name().is_some_and(|name|name=="candidates"))
+        .and_then(Path::parent).map(|root|root.join("npm-cache")).unwrap_or_else(||prefix.join("npm-cache"));
+    args.extend(["--cache".into(),cache.to_string_lossy().into_owned()]);
+    // start_candidate_metadata refreshes the dependency tree before this
+    // install. Keeping preferOnline off here allows tarball cache reuse.
+    args.extend(["--prefer-offline".into(), "--prefer-online=false".into(), "--offline=false".into()]);
     args.push("--fetch-retries=0".into());
+    Ok(args)
+}
+
+fn candidate_metadata_argv(prefix: &Path, version: &str) -> Result<Vec<String>, String> {
+    let mut args = candidate_argv(prefix, version)?;
+    // npm resolves the same dependency tree into the same metadata cache, but
+    // dry-run downloads no tarballs and ignore-scripts runs no lifecycle code.
+    args.extend(["--dry-run".into(), "--ignore-scripts".into(), "--prefer-online".into(), "--prefer-offline=false".into()]);
     Ok(args)
 }
 
@@ -112,6 +127,10 @@ impl Installer {
 
     pub(crate) fn start_candidate(node_exe:&Path,prefix:&Path,version:&str)->Result<Self,String> {
         Self::start_with_context(node_exe,&candidate_argv(prefix,version)?,Some(prefix))
+    }
+
+    pub(crate) fn start_candidate_metadata(node_exe:&Path,prefix:&Path,version:&str)->Result<Self,String> {
+        Self::start_with_context(node_exe,&candidate_metadata_argv(prefix,version)?,Some(prefix))
     }
 
     fn start_with_context(node_exe:&Path,args:&[String],candidate:Option<&Path>)->Result<Self,String> {
@@ -281,5 +300,14 @@ mod tests {
         for version in ["latest","next","^1.0.0","v1.0.0","1.0.0 --force","https://example.org/package.tgz",""] {
             assert!(candidate_argv(prefix,version).is_err());
         }
+    }
+    #[test]
+    fn candidate_attempts_share_tarballs_without_sharing_installation_prefixes() {
+        let a=candidate_argv(Path::new("C:/runtime/candidates/first"),"0.2.2-alpha.2").unwrap();
+        let b=candidate_argv(Path::new("C:/runtime/candidates/retry"),"0.2.2-alpha.2").unwrap();
+        let cache=|args:&Vec<String>|args[args.iter().position(|arg|arg=="--cache").unwrap()+1].clone();
+        assert_eq!(cache(&a),cache(&b));assert_ne!(a[3],b[3]);
+        assert_eq!(PathBuf::from(cache(&a)),PathBuf::from("C:/runtime/npm-cache"));
+        assert!(a.iter().any(|arg|arg=="--prefer-offline"));
     }
 }

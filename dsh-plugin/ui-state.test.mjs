@@ -565,6 +565,44 @@ test('remote apply on an incompatible runtime reports the missing capability and
   assert.equal(f.calls.length, 0)
 })
 
+test('connection diagnosis is suspended before update capture and resumes when capture fails or update ends', async () => {
+  const f = bridge(), changes = []
+  f.document.addEventListener('dsh-desktop:ui-state', () => changes.push(f.api.isConnectionSuspended()))
+  let resolveCapture
+  f.api.registerAdapter({ capture: () => new Promise(resolve => { resolveCapture = resolve }) })
+  const preparing = f.api.prepareRemoteApply('0.2.0', '正在更新 dsh…')
+  assert.equal(f.api.isConnectionSuspended(), true, 'suspension begins before the first capture await')
+  await new Promise(setImmediate)
+  resolveCapture({ page: { kind: 'dsh' } })
+  await preparing
+  f.api.setRemoteApplyNotice('正在备份更新前的数据…')
+  assert.equal(f.api.isConnectionSuspended(), true)
+  assert.deepEqual(changes, [true])
+  f.api.finishRemoteApply()
+  assert.equal(f.api.isConnectionSuspended(), false)
+  f.api.registerAdapter({ capture: async () => { throw new Error('snapshot-adapter-unsupported') } })
+  await assert.rejects(f.api.prepareRemoteApply('future'), /缺少.*接口/)
+  assert.equal(f.api.isConnectionSuspended(), false)
+  assert.deepEqual(changes, [true, false, true, false])
+})
+
+test('connection diagnosis remains suspended during boot restoration before an adapter registers', () => {
+  const env = environment()
+  env.window.__DSH_UI_BOOT__.restoring = true
+  vm.runInContext(bridgeSource, env.context)
+  const api = env.window.__DSH_UI_STATE__, changes = []
+  env.document.addEventListener('dsh-desktop:ui-state', () => changes.push(api.isConnectionSuspended()))
+  assert.equal(api.isConnectionSuspended(), true)
+  api.configure({ identity: identity(1), phase: 'restoring' })
+  assert.equal(api.isConnectionSuspended(), true)
+  api.configure({ identity: identity(2), phase: 'active' })
+  assert.equal(api.isConnectionSuspended(), false)
+  api.configure({ identity: identity(3), phase: 'restoring' })
+  assert.equal(api.isConnectionSuspended(), true)
+  api.configure({ identity: identity(4), phase: 'active' })
+  assert.deepEqual(changes, [false, true, false])
+})
+
 test('plugin restart accepts saved controls but still refuses unowned editable fields', async () => {
   const f = fixture()
   f.dialogs.push({ closest: () => null, querySelectorAll: selector => selector === '.dshPlugins' ? [{ closest: () => null }] : [] })

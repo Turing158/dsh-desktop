@@ -1,4 +1,9 @@
 [[permission]]
 identifier = "allow-dsh-update"
-description = "Check dsh versions; prepare or cancel an isolated exact-version candidate from the current desktop document. Preparation never changes selection or starts real-data migration."
+description = "Check versions, prepare or cancel an exact-version candidate, and switch after saving UI and checkpointing the stopped provider's data."
 commands.allow = ["check_dsh_update", "dsh_update_activity", "install_dsh_update", "prepare_dsh_candidate", "cancel_dsh_candidate"]
+
+[[permission]]
+identifier = "allow-dsh-update-progress"
+description = "Read the current upgrade stage without exposing paths or package output."
+commands.allow = ["dsh_update_progress"]

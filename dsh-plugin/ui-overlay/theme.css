@@ -375,10 +375,9 @@ html:not([data-dsh-ui='vanilla']) body [data-plugin-module] > button:focus-visib
   opacity: 1;
 }
 
-/* Shared composer/account effects change the surface, never text or controls.
-   The account surface supplies its own tint overlay across all materials.
+/* Composer effects change the surface, never text or controls.
    No clipping layer: completion menus remain usable. */
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body [data-dsh-desktop='composer'] {
   /* Two linear ranges keep the previous tint at the default 50% strength,
      reach full transparency at zero, and keep changing through 100%. */
   --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 144%), calc(48% + var(--dsh-composer-strength) * 48%));
@@ -386,11 +385,11 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body :is([data-dsh
   --dsh-composer-blur: calc(var(--dsh-composer-strength) * 36px);
 }
 /* Opaque keeps the original theme surface, including its subtle border. */
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body[data-ds-dark-theme] :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body[data-ds-dark-theme] [data-dsh-desktop='composer'] {
   --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 116%), calc(26% + var(--dsh-composer-strength) * 64%));
   --dsh-composer-shine: rgb(255 255 255 / calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-shine, 24%)));
 }
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body [data-dsh-desktop='composer'] {
   --dsh-composer-strength: var(--dsh-composer-glass-strength, .5);
   background: var(--dsh-surface-overlay, none), linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-highlight, 24%))), transparent 55%),
     color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
@@ -398,14 +397,14 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body :is([
   -webkit-backdrop-filter: blur(var(--dsh-composer-blur)) saturate(var(--dsh-composer-glass-saturation, calc(100% + var(--dsh-composer-strength) * 60%)));
   backdrop-filter: blur(var(--dsh-composer-blur)) saturate(var(--dsh-composer-glass-saturation, calc(100% + var(--dsh-composer-strength) * 60%)));
 }
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='frosted'] body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='frosted'] body [data-dsh-desktop='composer'] {
   --dsh-composer-strength: var(--dsh-composer-frosted-strength, .5);
   background: var(--dsh-surface-overlay, none) color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
   box-shadow: none;
   -webkit-backdrop-filter: blur(var(--dsh-composer-blur));
   backdrop-filter: blur(var(--dsh-composer-blur));
 }
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body [data-dsh-desktop='composer'] {
   background: var(--dsh-surface-overlay, none) color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-transparent-tint, 80%), transparent);
   box-shadow: none;
   -webkit-backdrop-filter: none;
@@ -413,7 +412,7 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body
 }
 /* Keep glass readable in older browsers without backdrop filtering. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='glass'], [data-dsh-composer-material='frosted']) body :is([data-dsh-desktop='composer'], [data-dsh-account-popover]) {
+  html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='glass'], [data-dsh-composer-material='frosted']) body [data-dsh-desktop='composer'] {
     background: var(--dsh-surface-overlay, none) var(--dsw-alias-bg-module-platform);
   }
 }
@@ -567,9 +566,16 @@ html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-menu-material][r
   isolation: isolate;
 }
 
-/* Newer upstream menus add a translucent material child; injected submenus
-   have no such child. Let the shared surface above paint both menu levels. */
-html:not([data-dsh-ui='vanilla']) body [data-menu-material]:is([role='menu'], [role='group']) > [class*='_material'] {
+/* Generic MenuSurface panels (including jobs) may have no menu role. Give
+   them the same solid default without changing their layout or semantics. */
+html:not([data-dsh-ui='vanilla']) body [data-menu-material] {
+  background: var(--dsh-menu-surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* The surface paints the configured material once, including in opaque mode.
+   Do not leave upstream's translucent, blurred backing under generic panels. */
+html:not([data-dsh-ui='vanilla']) body [data-menu-material] > [class*='_material'] {
   display: none;
 }
 
@@ -592,6 +598,104 @@ html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] > [rol
   overscroll-behavior: contain;
   scrollbar-width: thin;
   animation: none;
+}
+
+/* Popup strengths match Dialog, but are configured independently. Resolve the
+   material once on body so portalled menus and their submenus share it. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-popup-material] body {
+  --dsh-popup-tint: min(calc(var(--dsh-popup-strength) * 144%), calc(48% + var(--dsh-popup-strength) * 48%));
+  --dsh-popup-shine: rgb(255 255 255 / min(100%, calc(var(--dsh-popup-strength) * 120%)));
+  --dsh-popup-blur: calc(var(--dsh-popup-strength) * 36px);
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-popup-material] body[data-ds-dark-theme] {
+  --dsh-popup-tint: min(calc(var(--dsh-popup-strength) * 116%), calc(26% + var(--dsh-popup-strength) * 64%));
+  --dsh-popup-shine: rgb(255 255 255 / calc(var(--dsh-popup-strength) * 24%));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-popup-material='glass'] body {
+  --dsh-popup-strength: var(--dsh-popup-glass-strength, .5);
+  --dsh-popup-background: linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-popup-strength) * 24%)), transparent 55%), color-mix(in srgb, var(--dsw-alias-bg-layer-2) var(--dsh-popup-tint), transparent);
+  --dsh-popup-shadow: inset 0 1px 0 var(--dsh-popup-shine), inset 0 0 0 1px var(--dsh-popup-shine), 0 8px 24px rgb(0 0 0 / calc(var(--dsh-popup-strength) * 24%));
+  --dsh-popup-filter: blur(var(--dsh-popup-blur)) saturate(calc(100% + var(--dsh-popup-strength) * 60%));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-popup-material='frosted'] body {
+  --dsh-popup-strength: var(--dsh-popup-frosted-strength, .5);
+  --dsh-popup-background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) var(--dsh-popup-tint), transparent);
+  --dsh-popup-shadow: none;
+  --dsh-popup-filter: blur(var(--dsh-popup-blur));
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-popup-material='transparent'] body {
+  --dsh-popup-background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) var(--dsh-popup-transparent-tint, 80%), transparent);
+  --dsh-popup-shadow: none;
+  --dsh-popup-filter: none;
+}
+/* Only actual floating surfaces: the model picker's inner menu/listbox is a
+   scroll area, while a nested submenu has its own backdrop. HoverCard exposes
+   its fade variable even for compact cards. Explicit markers also let plugins
+   opt in without class-name or position guesses. Keep modal masks untouched. */
+html:not([data-dsh-ui='vanilla']):is([data-dsh-popup-material='glass'], [data-dsh-popup-material='frosted'], [data-dsh-popup-material='transparent']) body :is(
+  [role='menu']:not([data-menu-material][role='group'] > [role='menu']),
+  [data-menu-material],
+  [data-slot='conversation.session.header.actions'] ul[class*='_menu'][aria-label],
+  [data-trigger-menu],
+  [data-dockkit-tab-menu],
+  [class*='_card']:has(> [role='listbox']),
+  [role='tooltip'],
+  [style*='--dsh-hover-preview-fade'],
+  [class*='_toast_'],
+  [data-dsh-account-popover],
+  [role='dialog']:not([aria-modal='true'], [class*='_dialog_'], [data-dsh-chrome='layer']):not(:has(> img)),
+  .cm-tooltip,
+  [popover]:popover-open,
+  [data-dsh-popup-surface]
+) {
+  background: var(--dsh-popup-background);
+  box-shadow: var(--dsh-popup-shadow);
+  /* Filtering this element would rebase fixed submenus to its padding box. */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  isolation: isolate;
+  color: var(--dsw-alias-label-primary);
+}
+html:not([data-dsh-ui='vanilla']):is([data-dsh-popup-material='glass'], [data-dsh-popup-material='frosted'], [data-dsh-popup-material='transparent']) body :is(
+  [role='menu']:not([data-menu-material][role='group'] > [role='menu']),
+  [data-menu-material],
+  [data-slot='conversation.session.header.actions'] ul[class*='_menu'][aria-label],
+  [data-trigger-menu],
+  [data-dockkit-tab-menu],
+  [class*='_card']:has(> [role='listbox']),
+  [role='tooltip'],
+  [style*='--dsh-hover-preview-fade'],
+  [class*='_toast_'],
+  [data-dsh-account-popover],
+  [role='dialog']:not([aria-modal='true'], [class*='_dialog_'], [data-dsh-chrome='layer']):not(:has(> img)),
+  .cm-tooltip,
+  [popover]:popover-open,
+  [data-dsh-popup-surface]
+)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* Submenus use this pseudo-element as a 10px pointer bridge upstream.
+     Reset its size so every menu level filters the entire surface. */
+  width: auto;
+  height: auto;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  -webkit-backdrop-filter: var(--dsh-popup-filter);
+  backdrop-filter: var(--dsh-popup-filter);
+}
+/* macOS upstream places a separate opaque backing behind menus. It must not
+   hide the configured transparency when the same UI is opened remotely. */
+html:not([data-dsh-ui='vanilla']):is([data-dsh-popup-material='glass'], [data-dsh-popup-material='frosted'], [data-dsh-popup-material='transparent']) body :is([data-menu-backing], [data-menu-material] > [class*='_material']) {
+  display: none;
+}
+/* Opaque restores each original surface. Unsupported filters keep a readable
+   solid background; transparency remains available without filter support. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html:not([data-dsh-ui='vanilla']):is([data-dsh-popup-material='glass'], [data-dsh-popup-material='frosted']) body {
+    --dsh-popup-background: var(--dsw-alias-bg-layer-2);
+  }
 }
 
 html:not([data-dsh-ui='vanilla']) body [data-menu-material][role='group'] [class*='_searchRow'] {
@@ -2850,6 +2954,36 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [class*='_sideb
   /* The fixed title bar is composited. Match its alpha rounding here so equal
      surface transparency paints identical colors on both navigation surfaces. */
   will-change: opacity;
+}
+/* The upstream bottom fade paints an opaque sidebar colour over the picture.
+   Fade only the scrolling rows (and their exit animations) so the photograph
+   and its configured tint stay continuous at both edges of the list. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [data-slot='sidebar.workspaces'] [class*='_treeBody'] > [class*='_fade'] {
+  display: none;
+}
+@property --dsh-workspace-top-alpha {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [data-slot='sidebar.workspaces'] [class*='_treeBody'] {
+  --dsh-workspace-top-alpha: 1;
+  transition: --dsh-workspace-top-alpha 160ms ease-out;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left][data-dsh-desktop-animation='off'] body [data-slot='sidebar.workspaces'] [class*='_treeBody'] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-ui='vanilla'])[data-dsh-background-left]:not([data-dsh-desktop-animation='on']) body [data-slot='sidebar.workspaces'] [class*='_treeBody'] {
+    transition: none;
+  }
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [data-slot='sidebar.workspaces'] [class*='_treeBody'][data-dsh-workspace-scrolled] {
+  --dsh-workspace-top-alpha: 0;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [data-slot='sidebar.workspaces'] [class*='_treeBody'] > :is(div[class*='_list'], [class*='_exits']) {
+  -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / var(--dsh-workspace-top-alpha)), #000 24px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / var(--dsh-workspace-top-alpha)), #000 24px, #000 calc(100% - 24px), transparent);
 }
 /* The saved Right preference controls both sidebar locations and Automations. */
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-testid='task-manager-page'],

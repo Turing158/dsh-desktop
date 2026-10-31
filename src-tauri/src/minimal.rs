@@ -339,6 +339,11 @@ pub fn restored(
         return Ok(());
     }
     if let Some(checkpoint) = checkpoint {
+        if let Err(code)=crate::dsh_upgrade::acknowledge(app,checkpoint) {
+            crate::dsh_upgrade::failure(app, &code);
+            restore_failed(app,identity.operation_id,"update-commit-ack-failed");
+            return Err(code);
+        }
         if let Err(code)=crate::backup::acknowledge(app,checkpoint) {
             restore_failed(app,identity.operation_id,"backup-commit-ack-failed");
             return Err(code);
@@ -423,7 +428,8 @@ pub(crate) fn restore_failed(app: &AppHandle, operation: u64, error: &str) {
     if let Some(progress) = progress {
         if progress.failed("ui-restore-failed").is_err() { crate::diagnostics::record(app, "maintenance", "journal-save-failed"); }
     }
-    if crate::backup::rollback_pending(app) {return;}
+    if app.state::<crate::dsh_upgrade::ManagerState>().is_updating() { crate::dsh_upgrade::failure(app, error); }
+    if crate::dsh_upgrade::rollback_pending(app) || crate::backup::rollback_pending(app) {return;}
     if let Some(window) = app.get_webview_window("main") {
         ui_snapshot::refresh_bridge(&window);
     }
@@ -452,7 +458,11 @@ fn watch_timeout(app: &AppHandle, operation: u64, phase: UiPhase, duration: Dura
     });
 }
 pub(crate) fn watch_recovery(app: &AppHandle, operation: u64) {
-    watch_timeout(app, operation, UiPhase::Restoring, RESTORE_TIMEOUT);
+    // A new runtime has a cold module cache, and its acknowledgement also
+    // verifies the installed tree before committing selection. Ordinary window
+    // restoration keeps its short deadline.
+    let timeout=if app.state::<crate::dsh_upgrade::ManagerState>().is_updating() {Duration::from_secs(300)} else {RESTORE_TIMEOUT};
+    watch_timeout(app, operation, UiPhase::Restoring, timeout);
 }
 fn show_existing(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {

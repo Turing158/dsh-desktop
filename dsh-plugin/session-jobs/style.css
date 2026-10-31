@@ -1,0 +1,300 @@
+/* Session jobs control: the header button and its popup list of live work.
+ *
+ * The seat is a zero-flow span appended to the session <header>, which is
+ * already `position: relative` for this control (see client-entry.mjs). It is
+ * absolutely positioned on the tabs row so the button lines up with the
+ * shipped 打开侧边栏 control while leaving that corner seat untouched.
+ *
+ * Only desktop mode paints any of this: 原版 renders neither the seat nor the
+ * panel, and the gate below keeps a stale stylesheet harmless if a mode switch
+ * races the unmount.
+ */
+
+html:not([data-dsh-ui='vanilla']) .dshSessionJobs__seat {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+html:not([data-dsh-ui='vanilla']) .dshSessionJobs__seat > * {
+  pointer-events: auto;
+}
+
+.dshSessionJobs__anchor {
+  display: none;
+}
+
+/* The trigger matches the neighbouring header utilities: a 28px ghost surface
+ * that only shows its fill on hover, so an idle conversation gains a button
+ * without gaining a visual weight it did not ask for. */
+.dshSessionJobs__trigger {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.dshSessionJobs__trigger:hover,
+.dshSessionJobs__trigger:focus-visible,
+.dshSessionJobs__trigger[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Work that is actually running is worth a colour, but the button must not
+ * read as an alarm: the colour is the dot's count badge, not the glyph. */
+.dshSessionJobs__trigger[data-running='true'] {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshSessionJobs__trigger:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, #5686fe);
+  outline-offset: -2px;
+}
+
+.dshSessionJobs__badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--dsw-alias-state-business-primary, #4176e6);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+  font-size: 10px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* The panel floats above the conversation; `position: fixed` keeps it out of
+ * the header's clipping and lets the scroll/resize observer place it from
+ * measured rects instead of from a CSS offset chain. */
+.dshSessionJobs__panel {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: min(420px, 100vh - 96px);
+  padding: 6px;
+  border: 1px solid var(--dsw-elevation-stroke-color, var(--dsw-alias-border-l1));
+  border-radius: var(--dsw-radius-lg, 12px);
+  background: var(--dsw-alias-bg-module-platform, #fff);
+  box-shadow: var(--dsw-elevation-prominent);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+}
+
+.dshSessionJobs__panel:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, #5686fe);
+  outline-offset: -1px;
+}
+
+.dshSessionJobs__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 6px 6px;
+}
+
+.dshSessionJobs__title {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshSessionJobs__summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dshSessionJobs__close {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.dshSessionJobs__close:hover,
+.dshSessionJobs__close:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshSessionJobs__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.dshSessionJobs__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 3px 6px 3px 8px;
+  border-radius: var(--dsw-radius-md, 8px);
+}
+
+.dshSessionJobs__row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshSessionJobs__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-idle-primary, #a6a6a6);
+}
+
+.dshSessionJobs__dot[data-status='running'] {
+  background: var(--dsw-alias-state-success-primary, #2f9e63);
+}
+
+.dshSessionJobs__dot[data-status='stopping'] {
+  background: var(--dsw-alias-state-warn-primary, #d69a2f);
+}
+
+.dshSessionJobs__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.dshSessionJobs__label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dshSessionJobs__error {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-state-error-primary, #d74d64);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Duration and stop share a grid cell, so hovering never shifts the label. */
+.dshSessionJobs__stop {
+  display: inline-grid;
+  grid-template-areas: 'action';
+  place-items: center;
+  flex: none;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm, 6px);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.dshSessionJobs__duration {
+  grid-area: action;
+  justify-self: end;
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dshSessionJobs__stopIcon {
+  grid-area: action;
+  justify-self: end;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--dsw-radius-sm, 6px);
+  opacity: 0;
+}
+
+.dshSessionJobs__row:is(:hover, :focus-within) .dshSessionJobs__duration,
+.dshSessionJobs__stop[data-state='stopping'] .dshSessionJobs__duration {
+  opacity: 0;
+}
+
+.dshSessionJobs__row:is(:hover, :focus-within) .dshSessionJobs__stopIcon,
+.dshSessionJobs__stop[data-state='stopping'] .dshSessionJobs__stopIcon {
+  opacity: 1;
+}
+
+.dshSessionJobs__row:hover .dshSessionJobs__stop,
+.dshSessionJobs__stop:focus-visible {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshSessionJobs__stop:hover:not(:disabled) .dshSessionJobs__stopIcon,
+.dshSessionJobs__stop:focus-visible .dshSessionJobs__stopIcon {
+  background: var(--dsw-alias-interactive-bg-hover-danger, rgba(215, 77, 100, .12));
+  color: var(--dsw-alias-state-error-primary, #d74d64);
+}
+
+.dshSessionJobs__stop:disabled {
+  cursor: default;
+  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary));
+}
+
+.dshSessionJobs__stop:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, #5686fe);
+  outline-offset: -1px;
+}
+
+.dshSessionJobs__busy {
+  animation: dshSessionJobsSpin 900ms linear infinite;
+}
+
+@keyframes dshSessionJobsSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Reduced motion and the app's own 关闭动效 preference both still the spinner:
+ * the row's 正在停止 text, not the animation, carries the state. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-dsh-desktop-animation='on']) .dshSessionJobs__busy { animation: none; }
+  html:not([data-dsh-desktop-animation='on']) .dshSessionJobs__trigger,
+  html:not([data-dsh-desktop-animation='on']) .dshSessionJobs__stop { transition: none; }
+}
+
+html[data-dsh-desktop-animation='off'] .dshSessionJobs__busy { animation: none; }
+html[data-dsh-desktop-animation='off'] :is(.dshSessionJobs__trigger, .dshSessionJobs__stop) { transition: none; }

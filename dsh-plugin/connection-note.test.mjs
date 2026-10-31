@@ -92,9 +92,10 @@ function documentStub() {
  * @param {Function} [WebSocket] - the page's socket constructor, if it has one.
  * @param {string[]} [engineGaps] - the APIs `browser-compat.js` had to shim.
  * @param {string[]} [engineAbsent] - the APIs it could not shim.
+ * @param {object} [uiState] - the native desktop transition state bridge.
  * @returns {object} the window/document handles and the exposed test seam.
  */
-function run({ fetchImpl = () => Promise.resolve({ status: 404 }), iframe = false, WebSocket, engineGaps, engineAbsent } = {}) {
+function run({ fetchImpl = () => Promise.resolve({ status: 404 }), iframe = false, WebSocket, engineGaps, engineAbsent, uiState } = {}) {
   const { doc, created } = documentStub()
   let poll = null
   let fetchNow = fetchImpl
@@ -108,6 +109,7 @@ function run({ fetchImpl = () => Promise.resolve({ status: 404 }), iframe = fals
   }
   window.top = iframe ? { window: 'parent' } : window
   window.document = doc
+  if (uiState !== undefined) window.__DSH_UI_STATE__ = uiState
   if (WebSocket !== undefined) window.WebSocket = WebSocket
   if (engineGaps !== undefined || engineAbsent !== undefined) {
     window.__DSH_ENGINE__ = { missing: engineGaps ?? [], absent: engineAbsent ?? [], userAgent: window.navigator.userAgent }
@@ -225,6 +227,83 @@ test('a hidden tab does not poll; becoming visible probes again', async () => {
   await flush()
   const shown = run1.doc.getElementById('dsh-connection-note')
   assert.equal(shown?.getAttribute('data-dsh-connection-note'), 'untrusted', 'visible again → the probe fires')
+})
+
+test('a document opened during update restoration neither probes nor shows connection errors', async () => {
+  let probes = 0
+  const f = run({
+    uiState: { isConnectionSuspended: () => true },
+    fetchImpl: () => { probes++; throw new Error('backend stopped for update') },
+  })
+  f.note.setClock(() => f.note.startedAt + 60000)
+  await f.tick()
+  f.window.listeners.online[0]()
+  f.doc.dispatch('visibilitychange')
+  f.note.evaluate('unreachable')
+  await flush()
+  assert.equal(probes, 0)
+  assert.equal(f.doc.getElementById('dsh-connection-note'), null)
+  assert.deepEqual(f.posted, [], 'planned downtime is not logged as a channel stall')
+})
+
+test('starting an update immediately clears an existing note and ending it resumes real failure detection', async () => {
+  let suspended = false, probes = 0
+  const f = run({
+    uiState: { isConnectionSuspended: () => suspended },
+    fetchImpl: () => { probes++; throw new Error('down') },
+  })
+  await flush()
+  assert.ok(f.doc.getElementById('dsh-connection-note'))
+  const beforeUpdate = probes
+  suspended = true
+  f.doc.dispatch('dsh-desktop:ui-state')
+  assert.equal(f.doc.getElementById('dsh-connection-note'), null, 'no polling delay before clearing the banner')
+  await f.tick()
+  assert.equal(probes, beforeUpdate)
+  suspended = false
+  f.doc.dispatch('dsh-desktop:ui-state')
+  await flush()
+  assert.equal(f.doc.getElementById('dsh-connection-note')?.getAttribute('data-dsh-connection-note'), 'unreachable')
+  assert.equal(probes, beforeUpdate + 1, 'completion or cancellation rechecks immediately')
+})
+
+test('a probe spanning an entire update cannot show a late error on the restored page', async () => {
+  let suspended = false, resolveProbe
+  const f = run({
+    uiState: { isConnectionSuspended: () => suspended },
+    fetchImpl: () => new Promise(resolve => { resolveProbe = resolve }),
+  })
+  suspended = true
+  f.doc.dispatch('dsh-desktop:ui-state')
+  f.setFetch(() => Promise.resolve({ status: 404 }))
+  suspended = false
+  f.doc.dispatch('dsh-desktop:ui-state')
+  await flush()
+  resolveProbe({ status: 503 })
+  await flush()
+  assert.equal(f.doc.getElementById('dsh-connection-note'), null, 'the old backend response is discarded even after suspension ends')
+  assert.deepEqual(f.posted, [])
+})
+
+test('update time does not count toward a restored page realtime-channel stall', async () => {
+  let suspended = false
+  const f = run({ uiState: { isConnectionSuspended: () => suspended } })
+  await flush()
+  suspended = true
+  f.doc.dispatch('dsh-desktop:ui-state')
+  let time = f.note.startedAt + 60000
+  f.note.setClock(() => time)
+  await f.tick()
+  suspended = false
+  f.doc.dispatch('dsh-desktop:ui-state')
+  await flush()
+  assert.equal(f.note.startedAt, time)
+  assert.equal(f.doc.getElementById('dsh-connection-note'), null)
+  assert.deepEqual(f.posted, [])
+  time += f.note.stallAfterMs + 1
+  await f.tick()
+  assert.equal(f.doc.getElementById('dsh-connection-note')?.getAttribute('data-dsh-connection-note'), 'stalled')
+  assert.equal(f.posted[0].kind, 'stall', 'a real stall after restoration is still diagnosed')
 })
 
 test('a nested frame mounts nothing', () => {

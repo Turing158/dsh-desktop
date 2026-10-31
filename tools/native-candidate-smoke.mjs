@@ -2,15 +2,17 @@
 // model calls, global installation, selection change, or real-data migration.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { spawn, execFileSync } from 'node:child_process'
-import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises'
+import { spawn, execFile, execFileSync } from 'node:child_process'
+import { mkdtemp, mkdir, readFile, writeFile, readdir, unlink, rm, lstat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
-import { join, resolve, dirname } from 'node:path'
+import { join, resolve, dirname, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { offlineModelPatch, handleOnboarding } from './dsh-ui-helpers.mjs'
 
 const require=createRequire(import.meta.url)
+const runFile=promisify(execFile)
 const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const root=process.env.DSH_CANDIDATE_RESUME ? resolve(process.env.DSH_CANDIDATE_RESUME) : await mkdtemp(resolve('src-tauri/target/native-candidate-'))
 const report=process.env.DSH_CANDIDATE_RESUME ? JSON.parse(await readFile(join(root,'report.json'),'utf8')) : {schema:1,root,checks:[]}
@@ -20,7 +22,8 @@ const home=join(root,'home'),pkg=join(root,'fixture')
 const source=process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
 const npm=join(dirname(process.execPath),'node_modules/npm/bin/npm-cli.js')
 const version='9.8.7-candidate.1'
-let child,browser,mode='success',pendingRequest
+let child,browser,mode='success',pendingRequest,registryRequests=0,tarballRequests=0
+let registryLatest=version,published=[version]
 await mkdir(home,{recursive:true});await mkdir(pkg,{recursive:true})
 const probe=join(root,'probe');await mkdir(probe,{recursive:true})
 await writeFile(join(probe,'package.json'),JSON.stringify({name:'@dsh-desktop/candidate-smoke',type:'module',main:'index.js',exports:{'.':'./index.js','./client':'./client.js'},dsh:{client:{platform:'web'}}}))
@@ -34,16 +37,18 @@ await writeFile(join(pkg,'lib/bin.js'),`#!/usr/bin/env node\nif (!process.env.DS
 const packed=JSON.parse(execFileSync(process.execPath,[npm,'pack','--json','--ignore-scripts','--cache',join(root,'pack-cache')],{cwd:pkg,windowsHide:true,encoding:'utf8'}))[0]
 const tarball=await readFile(join(pkg,packed.filename))
 const registry=createServer((req,res)=>{
+  registryRequests++
   if(mode==='fail') {res.writeHead(503);res.end('unavailable');return}
   if(mode==='hang') {pendingRequest=req;return}
-  if(req.url==='/fixture.tgz') {res.writeHead(200,{'content-type':'application/octet-stream'});res.end(tarball);return}
+  if(req.url==='/fixture.tgz') {tarballRequests++;res.writeHead(200,{'content-type':'application/octet-stream'});res.end(tarball);return}
   const manifest={name:'@deepseek-ai/dsh',version,bin:{dsh:'lib/bin.js'},scripts:{postinstall:'node install.cjs'},dist:{tarball:`http://127.0.0.1:${registry.address().port}/fixture.tgz`,
     shasum:createHash('sha1').update(tarball).digest('hex')}}
-  res.writeHead(200,{'content-type':'application/json'})
-  res.end(JSON.stringify(req.url.endsWith('/dist-tags') ? {latest:version} : req.url.endsWith('/versions') ? [version]
-    : {name:manifest.name,'dist-tags':{latest:version},versions:{[version]:manifest}}))
+  res.writeHead(200,{'content-type':'application/json','cache-control':'public, max-age=86400'})
+  res.end(JSON.stringify(req.url.endsWith('/dist-tags') ? {latest:registryLatest} : req.url.endsWith('/versions') ? published
+    : {name:manifest.name,'dist-tags':{latest:registryLatest},versions:Object.fromEntries(published.map(v=>[v,{...manifest,version:v}]))}))
 })
 await new Promise(resolve=>registry.listen(0,'127.0.0.1',resolve))
+const registryUrl=`http://127.0.0.1:${registry.address().port}/`
 const cdp=createServer();await new Promise(resolve=>cdp.listen(0,'127.0.0.1',resolve));const port=cdp.address().port;await new Promise(resolve=>cdp.close(resolve))
 async function wait(fn,label,timeout=90000) {
   const end=Date.now()+timeout
@@ -55,7 +60,8 @@ try {
   await writeFile(join(root,'command.json'),'{}');await writeFile(join(root,'state.json'),'{}')
   child=spawn(resolve('src-tauri/target/debug/deepseek-harness-desktop.exe'),[],{cwd:root,windowsHide:true,stdio:'ignore',env:{...process.env,
     DSH_HOME:home,DSH_DESKTOP_SMOKE_DIR:root,DSH_DESKTOP_DSH:source,DSH_DESKTOP_NODE:process.execPath,DSH_UI_SMOKE_KEY:'mock-key',
-    npm_config_registry:`http://127.0.0.1:${registry.address().port}/`,npm_config_cache:join(root,'npm-cache'),npm_config_userconfig:join(root,'npmrc'),
+    npm_config_registry:registryUrl,npm_config_cache:join(root,'npm-cache'),npm_config_userconfig:join(root,'npmrc'),
+    npm_config_offline:'true',npm_config_prefer_offline:'true',npm_config_prefer_online:'false',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port='+port}})
   await wait(async()=>{const s=await state();return s.backend==='running'&&s.loaded},'source backend')
   browser=await chromium.connectOverCDP('http://127.0.0.1:'+port)
@@ -71,6 +77,30 @@ try {
     assert.equal(s.runtime.dsh_bin,sourceState.runtime.dsh_bin);assert.equal(s.hasSnapshot,false)
     assert.equal(await readFile(join(root,'runtime/selection.json')).then(()=>true,()=>false),false)
     assert.equal(await readFile(join(root,'runtime/first-install.json')).then(()=>true,()=>false),false)
+  }
+  const clearFixtureCache=async()=>{
+    await unlink(join(root,'runtime/prepared-candidates',version+'.json')).catch(error=>{if(error.code!=='ENOENT')throw error})
+    const cache=resolve(root,'runtime/npm-cache')
+    assert.ok(cache.startsWith(resolve(root)+sep))
+    const info=await lstat(cache).catch(error=>{if(error.code!=='ENOENT')throw error})
+    assert.ok(!info?.isSymbolicLink(),'fixture cleanup cannot follow a junction')
+    await rm(cache,{recursive:true,force:true});await mkdir(cache,{recursive:true})
+  }
+  const freshChecks='native update checks fetch changed tags and versions despite offline settings and fail when the registry is unavailable'
+  if(!report.checks.includes(freshChecks)) {
+    const old='9.8.6',next='9.8.8-candidate.1'
+    registryLatest=old;published=[old,version]
+    const first=await invoke('check_dsh_update');assert.ok(!first.error,first.error)
+    assert.equal(first.value.latest,old);assert.equal(first.value.preview,version)
+    const requests=registryRequests
+    registryLatest=version;published=[old,version,next]
+    const second=await invoke('check_dsh_update');assert.ok(!second.error,second.error)
+    assert.equal(second.value.latest,version);assert.equal(second.value.preview,next)
+    assert.ok(registryRequests>requests,'repeated checks must reach the registry')
+    mode='fail'
+    const unavailable=await invoke('check_dsh_update');assert.ok(unavailable.error,'network failure must not return cached versions')
+    mode='success';registryLatest=version;published=[version]
+    await unchanged();await pass(freshChecks)
   }
   const failure='failed local registry installation keeps backend and selection unchanged'
   if(!report.checks.includes(failure)) {
@@ -90,14 +120,47 @@ try {
     const result=await page.evaluate(()=>window.candidatePending);assert.match(result.error,/runtime-candidate-cancelled/)
     registry.closeAllConnections();await unchanged();await pass(cancellation)
   }
-  const success='actual exact-version npm candidate freezes successfully without selection or first-install mutation'
+  const success='actual exact-version npm candidate refreshes a cache missing the target version and freezes without selection mutation'
   if(!report.checks.includes(success)) {
     mode='success'
+    const old='9.8.6',cache=join(root,'runtime/npm-cache')
+    registryLatest=old;published=[old]
+    const seed=[npm,'view','@deepseek-ai/dsh','dist-tags','--json','--registry',registryUrl,'--cache',cache,
+      '--userconfig',join(root,'npmrc'),'--prefer-online=false','--prefer-offline=false','--offline=false','--fetch-retries=0']
+    const seeded=await runFile(process.execPath,seed,{cwd:root,windowsHide:true})
+    assert.equal(JSON.parse(seeded.stdout).latest,old)
+    registryLatest=version;published=[version]
+    const stale=await runFile(process.execPath,[...seed,'--prefer-offline'],{cwd:root,windowsHide:true})
+    assert.equal(JSON.parse(stale.stdout).latest,old,'fixture must reproduce a stale installation cache')
+    const started=Date.now()
     const result=await invoke('prepare_dsh_candidate',{identity,requestId:randomUUID(),targetVersion:version})
-    assert.ok(!result.error,result.error);assert.equal(result.value.version,version);assert.equal(result.value.switchAvailable,false)
+    report.initialPreparationMs=Date.now()-started
+    assert.ok(!result.error,result.error);assert.equal(result.value.version,version);assert.equal(result.value.switchAvailable,true)
     const manifest=JSON.parse(await readFile(join(root,'runtime/versions',result.value.id,'manifest.json'),'utf8'))
     assert.equal(manifest.version,version);assert.equal(manifest.fingerprint,result.value.fingerprint)
     await unchanged();report.candidate=result.value;await pass(success)
+  }
+  const reuse='verified prepared candidate is reused without npm requests or a new runtime tree'
+  if(!report.checks.includes(reuse)) {
+    const requests=registryRequests,trees=await readdir(join(root,'runtime/versions'));mode='fail'
+    const started=Date.now(),result=await invoke('prepare_dsh_candidate',{identity,requestId:randomUUID(),targetVersion:version})
+    report.reusedPreparationMs=Date.now()-started
+    assert.ok(!result.error,result.error);assert.equal(result.value.id,report.candidate.id)
+    assert.equal(registryRequests,requests);assert.deepEqual(await readdir(join(root,'runtime/versions')),trees)
+    const journals=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
+    assert.ok(journals.some(j=>j.completedSteps.includes('candidate-reused')&&j.stepTimes['candidate-cache-check-started']))
+    await unchanged();await pass(reuse)
+  }
+  const changed='changed cached candidate is rebuilt from npm cache and never selected'
+  if(!report.checks.includes(changed)) {
+    mode='success'
+    const downloads=tarballRequests
+    const entry=join(root,'runtime/versions',report.candidate.id,'tree/node_modules/@deepseek-ai/dsh/lib/bin.js')
+    await writeFile(entry,'corrupted candidate')
+    const result=await invoke('prepare_dsh_candidate',{identity,requestId:randomUUID(),targetVersion:version})
+    assert.ok(!result.error,result.error);assert.notEqual(result.value.id,report.candidate.id)
+    assert.equal(tarballRequests,downloads,'fresh metadata must still reuse the verified tarball')
+    report.candidate=result.value;await unchanged();await pass(changed)
   }
   const stale='stale identity and moving version tags are refused before candidate installation'
   if(!report.checks.includes(stale)) {
@@ -113,36 +176,36 @@ try {
     const payload={schemaVersion:1,frontendVersion:sourceState.runtime.version,page:{kind:'dsh',route:'/',sessionId:null,workspaceId:null},
       drafts:[],assets:[],layout:{sidebar:240,narrowExpanded:false,rightbar:null,panel:null},scrolls:[],dialogs:[],capabilities:[],blocked:[],sessionStorage:{}}
     const result=await invoke('install_dsh_update',{identity,payload,channel:'preview',targetVersion:version})
-    assert.match(result.error,/安全数据检查点与迁移契约尚未完成/);await unchanged();await pass(legacy)
+    assert.match(result.error,/update-candidate-required/);await unchanged();await pass(legacy)
   }
-  const actualButtons='actual desktop update buttons show candidate-only status and cancel without capturing UI'
+  const actualButtons='actual desktop update buttons show installation stages and cancel without capturing UI'
   if(!report.checks.includes(actualButtons)) {
+    await clearFixtureCache()
     await page.waitForFunction(()=>!!window.__DSH_DSH_UPDATE__?.getSnapshot()?.versions && !!window.candidateSmokeContext)
     await page.evaluate(()=>window.candidateSmokeContext.locale.setLocale('zh'))
     await page.evaluate(()=>window.__DSH_DSH_UPDATE__.show())
-    await page.getByText('当前操作只准备独立候选版本。准备完成后继续使用当前版本，自动切换与回退尚未开放。',{exact:true}).waitFor()
     mode='hang';pendingRequest=undefined
     await page.getByRole('button',{name:'最新稳定版',exact:true}).click()
     await page.getByText('正在准备候选版本…',{exact:true}).waitFor()
-    await page.getByText('正在安装并校验独立候选版本，请稍候…',{exact:true}).waitFor()
+    await page.getByText('正在连接更新源并安装新版…',{exact:true}).waitFor()
     await wait(()=>pendingRequest,'button starts npm')
     await unchanged();await page.screenshot({path:join(root,'candidate-preparing-zh.png')})
     await page.getByRole('button',{name:'取消准备',exact:true}).click()
     await page.getByText('候选准备已取消，当前版本继续运行。',{exact:true}).waitFor();registry.closeAllConnections()
     mode='success';await unchanged()
     await page.evaluate(()=>window.candidateSmokeContext.locale.setLocale('en'))
-    await page.getByText('This prepares an independent candidate version. The current version keeps running; automatic switching and rollback are not yet available.',{exact:true}).waitFor()
     await page.getByText('Candidate preparation was cancelled. The current version keeps running.',{exact:true}).waitFor()
     await page.screenshot({path:join(root,'candidate-cancelled-en.png')})
     await pass(actualButtons)
   }
   const locale='preparation text and cancelled result follow the current locale after switching languages'
   if(!report.checks.includes(locale)) {
+    await clearFixtureCache()
     await page.waitForFunction(()=>!!window.__DSH_DSH_UPDATE__?.getSnapshot()?.versions && !!window.candidateSmokeContext)
     await page.evaluate(()=>window.candidateSmokeContext.locale.setLocale('zh'))
     await page.evaluate(()=>window.__DSH_DSH_UPDATE__.show());mode='hang';pendingRequest=undefined
     await page.getByRole('button',{name:'最新稳定版',exact:true}).click()
-    await page.getByText('正在安装并校验独立候选版本，请稍候…',{exact:true}).waitFor()
+    await page.getByText('正在连接更新源并安装新版…',{exact:true}).waitFor()
     await wait(()=>pendingRequest,'locale scenario npm')
     await page.screenshot({path:join(root,'candidate-preparing-zh.png')})
     await page.getByRole('button',{name:'取消准备',exact:true}).click()

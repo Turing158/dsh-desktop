@@ -39,7 +39,7 @@ test('snapshot provider permits version queries but keeps installation and exter
 // controlled native responses, including repeated clicks before a rerender.
 function fixture({ check = async () => ({ current: tags.latest, ...tags }), install,
   checkDesktop = async () => desktopRelease, openRelease, host = true, capture = async () => ({ page: { kind: 'dsh' } }),
-  prepare, cancelCandidate,
+  prepare, cancelCandidate, progress = async () => null,
   timers = { setTimeout, clearTimeout },
   nativeActivity = async () => false,
   sessions = { refresh: async () => {}, list: { getSnapshot: () => ({ phase: 'ready', ids: [], byId: {} }) } } } = {}) {
@@ -83,6 +83,7 @@ function fixture({ check = async () => ({ current: tags.latest, ...tags }), inst
       if (command === 'prepare_dsh_candidate') return prepare?.(args)
       if (command === 'cancel_dsh_candidate') return cancelCandidate?.(args)
       if (command === 'dsh_update_activity') return nativeActivity()
+      if (command === 'dsh_update_progress') return progress()
       if (command === 'remote_status') return { frontendVersion: '0.1.5-rc.2' }
       if (command === 'check_desktop_update') return checkDesktop()
       if (command === 'open_desktop_release') return openRelease?.(args.url)
@@ -130,6 +131,17 @@ function fixture({ check = async () => ({ current: tags.latest, ...tags }), inst
   const desktopCalls = () => calls.filter(call => call.command === 'check_desktop_update')
   return { render, menu, item, button, openMore, selectUpdate, openDialog, closeDialog, updateCalls, desktopCalls, calls, tab, selectTab, status, focused }
 }
+
+test('rolled back update displays its original failure alongside the restored version', async () => {
+  const f = fixture({
+    check: async () => ({ current: tags.latest, ...tags, stagedUpdate: true }),
+    progress: async () => ({ step: 'rolled-back', error: 'update-checkpoint-source-changed' }),
+  })
+  f.openDialog(); await flush(); f.selectTab('dsh')
+  const nodes = f.render()
+  assert.ok(nodes.some(node => node.props?.role === 'alert' && node.props.children.includes('update-checkpoint-source-changed')))
+  assert.ok(nodes.some(node => node.props?.role === 'status' && node.props.children.includes('更新未完成，已恢复旧版和数据。')))
+})
 
 test('one click opens the dialog and starts both checks without duplicate requests', async () => {
   const pending = deferred(), desktop = deferred()
@@ -275,6 +287,27 @@ test('candidate installation failure keeps the current version and can be retrie
   assert.equal(f.button('最新稳定版').props.disabled,false)
   assert.ok(f.render().some(node=>node.props.role==='alert' && String(node.props.children).includes('当前版本继续运行')))
   assert.equal(f.calls.some(call=>call.command==='capture'),false)
+})
+
+for (const channel of ['latest','preview']) {
+  test(`${channel} staged update prepares before capture and hands the exact candidate to native switching`, async () => {
+    const pending=deferred(),f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true,candidateOnly:false}),prepare:()=>pending.promise})
+    f.openDialog();await flush();f.selectTab('dsh');f.button(channel==='latest'?'最新稳定版':'最新预览版').props.onClick();await flush()
+    assert.equal(f.calls.some(c=>c.command==='capture'),false)
+    assert.equal(f.status(),'正在准备候选版本…')
+    pending.resolve({id:'verified-candidate',version:tags[channel],switchAvailable:true});await flush();await flush()
+    const install=f.calls.find(c=>c.command==='install_dsh_update')
+    assert.equal(install.args.candidateId,'verified-candidate');assert.equal(install.args.targetVersion,tags[channel])
+    assert.ok(f.calls.findIndex(c=>c.command==='prepare_dsh_candidate')<f.calls.findIndex(c=>c.command==='capture'))
+    assert.equal(f.calls.some(c=>c.command==='unfreeze'),false)
+  })
+}
+test('cancelled staged preparation cannot activate a late successful candidate',async()=>{
+  const pending=deferred(),f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true}),prepare:()=>pending.promise})
+  f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush()
+  f.button('取消准备').props.onClick();pending.resolve({id:'late',version:tags.preview,switchAvailable:true});await flush()
+  assert.equal(f.calls.some(c=>c.command==='install_dsh_update'||c.command==='capture'),false)
+  assert.equal(f.button('最新预览版').props.disabled,false)
 })
 
 test('preview display and installation ignore next and alpha tags', async () => {

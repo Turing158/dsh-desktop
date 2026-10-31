@@ -33,6 +33,8 @@
  *
  * It removes itself when the probe recovers, so a restart (during which every
  * request rejects) explains itself and clears without a reload.
+ * Desktop updates suspend this diagnosis through the native UI state bridge;
+ * a planned stop is already explained by the update progress overlay.
  *
  * The probe is a plain same-origin fetch: cookies ride along by default and
  * `no-store` keeps any cache from answering for the server. It creates no
@@ -167,7 +169,10 @@
   let now = () => Date.now()
 
   /** When this page's channel observation started; the stall clock runs from it. */
-  const startedAt = now()
+  let startedAt = now()
+
+  const isConnectionSuspended = () => window.__DSH_UI_STATE__?.isConnectionSuspended?.() === true
+  let probeGeneration = 0
 
   /** Whether ANY socket observed on this page has received a frame. */
   function delivering() { return channel.frames > 0 }
@@ -285,7 +290,7 @@
   })
 
   function evaluate(outcome) {
-    if (outcome === 'ok') { hide(); return }
+    if (isConnectionSuspended() || outcome === 'ok') { hide(); return }
     if (outcome === dismissed) return
     dismissed = null
     render(outcome)
@@ -319,7 +324,12 @@
   }
 
   async function refresh() {
+    const generation = ++probeGeneration
+    if (isConnectionSuspended()) { hide(); return }
     const kind = await probe()
+    // A response from before a restart cannot diagnose the restored backend.
+    if (generation !== probeGeneration) return
+    if (isConnectionSuspended()) { hide(); return }
     const elapsedMs = now() - startedAt
     const outcome = diagnose(kind, { delivered: delivering(), elapsedMs })
     if (outcome === 'stalled') reportStall(elapsedMs)
@@ -340,6 +350,13 @@
   }
 
   function start() {
+    document.addEventListener('dsh-desktop:ui-state', () => {
+      ++probeGeneration
+      if (isConnectionSuspended()) { hide(); return }
+      // Give a restored page a fresh realtime-channel observation window.
+      startedAt = now()
+      if (!document.hidden) refresh()
+    })
     reportEngine()
     refresh()
     setInterval(() => { if (!document.hidden) refresh() }, POLL_MS)
@@ -362,7 +379,7 @@
     engineFacts,
     reportDiag,
     channel,
-    startedAt,
+    get startedAt() { return startedAt },
     stallAfterMs: STALL_MS,
     /** Move the page's clock; a test seam, never read by the page. */
     setClock(fn) { now = fn },

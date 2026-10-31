@@ -11,6 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE
 const root = await mkdtemp(resolve('src-tauri/target/update-animation-'))
 const boot = await readFile('dsh-plugin/title-bar/boot.js', 'utf8')
 const bridge = await readFile('dsh-plugin/ui-state/bridge.js', 'utf8')
+const connectionNote = await readFile('dsh-plugin/ui-overlay/connection-note.js', 'utf8')
 const browser = await chromium.launch({ channel: 'msedge', headless: true })
 try {
   for (const dark of [true, false]) {
@@ -64,11 +65,29 @@ try {
     assert.ok(await loading.isVisible(), 'a ready title bar cannot remove pending restoration feedback')
     // Exercise the actual state bridge after the real title bar has mounted.
     await page.addScriptTag({ content: bridge })
+    let probeStatus = 503, probes = 0
+    await page.route('http://localhost/api/__dsh-desktop/connection-note', route => {
+      probes++
+      return route.fulfill({ status: probeStatus, body: '' })
+    })
+    await page.addScriptTag({ content: connectionNote })
+    const connectionBanner = page.locator('#dsh-connection-note')
+    await connectionBanner.waitFor({ state: 'visible' })
+    const probesBeforeUpdate = probes
     await page.evaluate(async () => {
       window.__DSH_UI_STATE__.registerRestartAdapter(() => ({ capture: async () => ({ page: { kind: 'dsh' } }) }))
       await window.__DSH_UI_STATE__.prepareRemoteApply('0.2.0', '正在保存界面并更新 dsh…')
     })
     assert.equal(await loading.count(), 0, 'the state overlay takes over without stacking two statuses')
+    assert.equal(await connectionBanner.count(), 0, 'the update immediately clears the connection banner')
+    await page.evaluate(() => {
+      window.__DSH_UI_STATE__.setRemoteApplyNotice('正在备份更新前的数据…')
+      window.dispatchEvent(new Event('online'))
+      document.dispatchEvent(new Event('visibilitychange'))
+      window.__DSH_CONNECTION_NOTE__.evaluate('unreachable')
+    })
+    assert.equal(probes, probesBeforeUpdate, 'planned update downtime does not issue connection probes')
+    assert.equal(await connectionBanner.count(), 0)
     assert.ok(await page.locator('[data-dsh-ui-status] .dshBoot__spinner').isVisible())
     assert.equal(await page.locator('[data-dsh-ui-status]').evaluate(node => getComputedStyle(node).backgroundColor), palette.contentBackground)
     const savingRotation = () => page.locator('[data-dsh-ui-status] .dshBoot__spinner').evaluate(node => getComputedStyle(node).transform)
@@ -78,6 +97,11 @@ try {
     await page.screenshot({ path: join(root, `saving-${dark ? 'dark' : 'light'}.png`) })
     await page.evaluate(() => window.__DSH_UI_STATE__.finishRemoteApply())
     assert.equal(await page.locator('[data-dsh-ui-status]').count(), 0)
+    await connectionBanner.waitFor({ state: 'visible' })
+    assert.equal(probes, probesBeforeUpdate + 1, 'ending the update resumes genuine failure detection')
+    probeStatus = 404
+    await page.evaluate(() => window.dispatchEvent(new Event('online')))
+    await connectionBanner.waitFor({ state: 'detached' })
     // The local installation page uses the same captured content and text colors.
     const local = await browser.newPage({ viewport: { width: 1280, height: 840 } })
     const localCss = await readFile('src-tauri/ui/style.css', 'utf8')
@@ -95,6 +119,6 @@ try {
     await local.close()
     await page.close()
   }
-  console.log('PASS: light/dark theme colors survive image canvases, installation and restoration; loading stays visible and animated')
+  console.log('PASS: light/dark update progress stays visible and animated without connection banners; real failure detection resumes afterward')
   console.log('Screenshots: ' + root)
 } finally { await browser.close() }

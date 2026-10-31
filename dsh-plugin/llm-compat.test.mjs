@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
+import { LlmRequestGate } from './llm-request-control.mjs'
 
 const bin = process.env.DSH_DESKTOP_DSH_BIN
   || (process.env.APPDATA && join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js'))
@@ -15,8 +16,9 @@ if (bin && existsSync(bin)) {
   const { runtimeImport } = await import('./runtime-import.mjs')
   const { Context } = await runtimeImport('@deepseek-ai/cordis')
   const upstream = await runtimeImport('@deepseek-ai/dsh-llm-pi-ai')
+  const llm = await runtimeImport('@deepseek-ai/dsh-llm')
   const desktop = await import('./llm-compat.mjs')
-  runtime = { Context, upstream, ...desktop }
+  runtime = { Context, upstream, llm, ...desktop }
 }
 
 function assertRefused(chunks) {
@@ -25,15 +27,17 @@ function assertRefused(chunks) {
   assert.match(finish.reason.failure.message, /Unsupported reasoning effort/)
 }
 
-async function fixture(t, overrides = {}) {
+async function fixture(t, overrides = {}, controls = {}) {
   if (!runtime) { t.skip('Requires an installed DSH runtime'); return }
   const requests = []
   let refuse = false
+  let respond
   const server = createServer(async (req, res) => {
     let text = ''
     for await (const chunk of req) text += chunk
     const body = JSON.parse(text)
-    requests.push({ url: req.url, body })
+    requests.push({ url: req.url, body, time: Date.now() })
+    if (respond) return respond(body, res)
     if (refuse || req.url !== '/v1/chat/completions') {
       res.writeHead(400, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: { message: 'Unsupported reasoning effort at mock endpoint', type: 'invalid_request_error' } }))
@@ -53,20 +57,22 @@ async function fixture(t, overrides = {}) {
   let providers = { 'private-gateway': profile }
   const ctx = new runtime.Context()
   ctx.provide('launchEnvironment', { get: () => ({ value: 'mock-key' }) })
-  new runtime.default(ctx)
+  new runtime.default(ctx, { requestGate: controls.requestGate
+    ?? new LlmRequestGate({ maxRequests: 0, windowMs: 80, marginMs: 0 }) })
   runtime.upstream.apply(ctx, { providers: { get: () => providers } })
   t.after(() => ctx.fiber.dispose())
   const config = effort => ({ provider: 'private-gateway', model: 'custom-alias',
     ...(effort === undefined ? {} : { reasoningEffort: effort }) })
-  const consume = async prepared => {
+  const consume = async (prepared, messages = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], signal) => {
     const chunks = []
     for await (const chunk of prepared.stream({ ...prepared.config,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      messages, signal,
     })) chunks.push(chunk)
     return chunks
   }
   return { ctx, profile, requests, config, consume,
     refuse: () => { refuse = true },
+    respond: handler => { respond = handler },
     update: next => { providers = next; ctx.emit('loader/volatile-update') },
     call: async effort => consume(await ctx.llm.prepareCall(config(effort))),
   }
@@ -159,4 +165,138 @@ test('built-in providers keep upstream capabilities and reject unsupported effor
   assert.equal(model.reasoning, undefined)
   await assert.rejects(h.ctx.llm.prepareCall({ provider: 'openai', model: 'gpt-4o', reasoningEffort: 'high' }), /reasoning/i)
   assert.equal(h.requests.length, 0)
+})
+
+const replay = () => [
+  runtime.llm.createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }),
+  runtime.llm.createAssistantMessage({ source: { provider: 'private-gateway', model: 'custom-alias' },
+    content: [{ type: 'text', text: 'hello' }] }),
+  runtime.llm.createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'again' }] }),
+]
+
+test('DeepSeek models behind a gateway replay reasoning_content on assistant turns', async t => {
+  const h = await fixture(t, { models: [{ id: 'deepseek-v4.1-flash' }] }); if (!h) return
+  const prepared = await h.ctx.llm.prepareCall({ provider: 'private-gateway', model: 'deepseek-v4.1-flash' })
+  for await (const _ of prepared.stream({ ...prepared.config, messages: replay() })) { /* drain */ }
+  const assistant = h.requests.at(-1).body.messages.find(message => message.role === 'assistant')
+  assert.equal(assistant?.reasoning_content, '',
+    'a gateway cannot be detected from its base URL, so the model id must enable the field')
+})
+
+test('a non-DeepSeek gateway alias keeps the transcript free of reasoning_content', async t => {
+  const h = await fixture(t); if (!h) return
+  const prepared = await h.ctx.llm.prepareCall(h.config('high'))
+  for await (const _ of prepared.stream({ ...prepared.config, messages: replay() })) { /* drain */ }
+  const assistant = h.requests.at(-1).body.messages.find(message => message.role === 'assistant')
+  assert.equal(assistant?.reasoning_content, undefined,
+    'other OpenAI-compatible endpoints must not receive an unknown field')
+})
+
+test('DeepSeek model and provider compatibility opt-outs survive automatic detection', async t => {
+  for (const declaration of [
+    { models: [{ id: 'deepseek-v4.1-flash', compat: { requiresReasoningContentOnAssistantMessages: false } }] },
+    { compat: { requiresReasoningContentOnAssistantMessages: false }, models: [{ id: 'deepseek-v4.1-flash' }] },
+  ]) {
+    const h = await fixture(t, declaration); if (!h) return
+    const prepared = await h.ctx.llm.prepareCall({ provider: 'private-gateway', model: 'deepseek-v4.1-flash' })
+    await h.consume(prepared, replay())
+    assert.equal(h.requests.at(-1).body.messages.find(message => message.role === 'assistant').reasoning_content, undefined)
+  }
+})
+
+test('gateway reasoning_details survive durable replay through a tool result', async t => {
+  // Use an alias: the actual response model identifies DeepSeek on later calls.
+  const h = await fixture(t); if (!h) return
+  const details = [{ type: 'reasoning.text', text: 'inspect the file first', format: 'unknown', index: 0 }]
+  h.respond((body, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    res.write('data: ' + JSON.stringify({ id: 'tool-round', model: 'deepseek/deepseek-v4.1-flash',
+      choices: [{ index: 0, delta: { role: 'assistant', reasoning_details: details,
+        tool_calls: [{ index: 0, id: 'read-1', type: 'function', function: { name: 'read', arguments: '{"path":"sample.txt"}' } }] }, finish_reason: null }] }) + '\n\n')
+    res.end('data: ' + JSON.stringify({ id: 'tool-round', model: 'deepseek/deepseek-v4.1-flash',
+      choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }) + '\n\ndata: [DONE]\n\n')
+  })
+  const user = runtime.llm.createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'inspect' }] })
+  const first = await h.ctx.llm.prepareCall(h.config('high'))
+  const assembler = new runtime.llm.BlockAssembler()
+  for (const chunk of await h.consume(first, [user])) assembler.push(chunk)
+  assert.equal(assembler.finish.kind, 'tool-calls')
+  const assistant = runtime.llm.createAssistantMessage({ content: assembler.blocks(),
+    source: { provider: 'private-gateway', model: 'custom-alias', replayState: assembler.replayState } })
+  // The actual session format is JSON, so exercise a persistence round trip.
+  const restored = runtime.llm.freezeMessage(JSON.parse(JSON.stringify(assistant)))
+  const messages = [user, restored, runtime.llm.createToolResultMessage({ callId: 'read-1', isError: false,
+    content: [{ type: 'text', text: 'file contents' }] })]
+  const before = JSON.stringify(messages)
+  h.respond(undefined)
+  const second = await h.ctx.llm.prepareCall(h.config('high'))
+  const chunks = await h.consume(second, messages)
+  assert.equal(chunks.find(chunk => chunk.type === 'finish').reason.kind, 'stop')
+  const wire = h.requests.at(-1).body.messages
+  const replayed = wire.find(message => message.role === 'assistant')
+  assert.equal(replayed.reasoning_content, 'inspect the file first')
+  assert.deepEqual(replayed.reasoning_details, details)
+  assert.equal(replayed.tool_calls[0].id, 'read-1')
+  assert.equal(wire.find(message => message.role === 'tool').tool_call_id, 'read-1')
+  assert.equal(JSON.stringify(messages), before, 'wire adaptation must not mutate the session log')
+})
+
+test('aliases and models sharing a gateway use one HTTP budget, including a failed call', async t => {
+  const h = await fixture(t, {}, { requestGate: new LlmRequestGate({ maxRequests: 2, windowMs: 80, marginMs: 0 }) }); if (!h) return
+  h.update({ 'private-gateway': h.profile, 'another-alias': { ...h.profile, api: 'anthropic-messages',
+    baseURL: h.profile.baseURL.replace(/\/v1$/, ''), models: [{ id: 'another-model' }] } })
+  h.refuse()
+  const configs = [h.config('high'), { provider: 'another-alias', model: 'another-model' }, h.config('low')]
+  const calls = await Promise.all(configs.map(config => h.ctx.llm.prepareCall(config)))
+  await Promise.all(calls.map(call => h.consume(call)))
+  assert.equal(h.requests.length, 3)
+  assert.ok(h.requests[1].time - h.requests[0].time >= 35)
+  assert.ok(h.requests[2].time - h.requests[0].time >= 75)
+})
+
+test('a gateway 429 cools down other calls and remains cancellable', async t => {
+  const h = await fixture(t); if (!h) return
+  h.respond((body, res) => {
+    res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '0.12' })
+    res.end(JSON.stringify({ error: { message: 'one minute request limit reached', type: 'new_api_error' } }))
+  })
+  const first = await h.call('high')
+  assert.equal(first.find(chunk => chunk.type === 'finish').reason.failure.code, 'RATE_LIMIT')
+  h.respond(undefined)
+  h.update({ 'private-gateway': { ...h.profile, reasoning: 'low' } })
+  const controller = new AbortController()
+  const cancelled = h.consume(await h.ctx.llm.prepareCall(h.config('high')), undefined, controller.signal)
+  controller.abort()
+  const cancelledChunks = await cancelled
+  assert.equal(cancelledChunks.find(chunk => chunk.type === 'finish').reason.kind, 'aborted')
+  assert.equal(h.requests.length, 1, 'cancellation during cooldown must not send HTTP')
+  const retry = await h.call('high')
+  assert.equal(retry.find(chunk => chunk.type === 'finish').reason.kind, 'stop')
+  assert.equal(h.requests.length, 2)
+  assert.ok(h.requests[1].time - h.requests[0].time >= 110, 'Retry-After outlasts the local test window')
+})
+
+test('local admission waits do not consume stream idle time or mutate shared profile snapshots', async t => {
+  const h = await fixture(t, { streamIdleTimeoutMs: 120 }, {
+    requestGate: new LlmRequestGate({ maxRequests: 2, windowMs: 800, marginMs: 0 }),
+  }); if (!h) return
+  const adapter = h.ctx.llm.registration('private-gateway').adapter
+  const snapshot = adapter.current()
+  for (const effort of ['high', 'low']) {
+    const chunks = await h.call(effort)
+    assert.equal(chunks.find(chunk => chunk.type === 'finish').reason.kind, 'stop')
+  }
+  assert.ok(h.requests[1].time - h.requests[0].time >= 350)
+  assert.equal(snapshot.profiles.get('private-gateway').streamIdleTimeoutMs, 120)
+  assert.equal(adapter.current(), snapshot)
+})
+
+test('a real provider stream stall still finishes as TIMEOUT rather than caller cancellation', async t => {
+  const h = await fixture(t, { streamIdleTimeoutMs: 120 }); if (!h) return
+  h.respond((body, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.flushHeaders() })
+  const chunks = await h.call('high')
+  const finish = chunks.find(chunk => chunk.type === 'finish')
+  assert.equal(finish.reason.kind, 'error')
+  assert.equal(finish.reason.failure.code, 'TIMEOUT')
+  assert.equal(h.requests.length, 1)
 })

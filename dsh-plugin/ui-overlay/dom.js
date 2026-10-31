@@ -2241,6 +2241,61 @@
     schedule()
   }
 
+  /** Show the workspace list's top fade only while rows are scrolled above it. */
+  function watchWorkspaceScrollFade() {
+    if (typeof MutationObserver !== 'function' || window.__dshWorkspaceScrollFade) return
+    window.__dshWorkspaceScrollFade = true
+    var selector = '[data-slot="sidebar.workspaces"] [class*="_treeBody"] > div[class*="_list"]'
+    var lists = new Map(), scheduled = false
+    var sizes = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null
+
+    function update(node, state) {
+      var scrolled = !isVanilla() && node.scrollTop > 0
+      if (state.body.hasAttribute('data-dsh-workspace-scrolled') !== scrolled) {
+        state.body.toggleAttribute('data-dsh-workspace-scrolled', scrolled)
+      }
+    }
+    function sync() {
+      scheduled = false
+      lists.forEach(function (state, node) {
+        if (node.isConnected && node.parentElement === state.body && !isVanilla()) return
+        node.removeEventListener('scroll', state.scroll)
+        if (sizes) sizes.unobserve(node)
+        state.body.removeAttribute('data-dsh-workspace-scrolled')
+        lists.delete(node)
+      })
+      if (isVanilla()) return
+      document.querySelectorAll(selector).forEach(function (node) {
+        if (node.closest('[data-dsh-ghost]')) return
+        var state = lists.get(node)
+        if (!state) {
+          state = { body: node.parentElement }
+          state.scroll = function () { update(node, state) }
+          lists.set(node, state)
+          node.addEventListener('scroll', state.scroll, { passive: true })
+          if (sizes) sizes.observe(node)
+        }
+        update(node, state)
+      })
+    }
+    function schedule() {
+      if (scheduled) return
+      scheduled = true
+      requestAnimationFrame(sync)
+    }
+    var observer = new MutationObserver(function (records) {
+      if (records.some(function (record) {
+        if (record.type === 'attributes') return true
+        return Array.from(record.addedNodes || []).concat(Array.from(record.removedNodes || [])).some(function (node) {
+          return node.nodeType === 1 && (node.matches('[class*="_treeBody"], [role="tree"]') || node.querySelector('[class*="_treeBody"], [role="tree"]'))
+        })
+      })) schedule()
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
+    schedule()
+  }
+
   // ── a surface that closes fades out instead of vanishing ──────────────────
   //
   // THE REPORTED BUG. With the animation preference on, a menu fades in — and
@@ -4874,6 +4929,7 @@
   installImagePreviewGestures()
   watchGoalDisclosure()
   watchPreviewPaths()
+  watchWorkspaceScrollFade()
   installContextMenu()
   installReportListener()
   installModeListener()

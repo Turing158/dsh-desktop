@@ -31,8 +31,10 @@ export function parseListeners(value, local = hosts) {
 export default class DesktopWebServer extends WebServer {
   static Config = z.object({ ...WebServer.Config.dict, host: z.union([...new Set(hosts)].map(host => z.const(host))).required() })
 
-  collectIndexInjections() {
-    return paintableBootInjections(super.collectIndexInjections())
+  collectIndexInjections(...args) {
+    // Newer DSH versions carry the authenticated peer through index rendering.
+    // Preserve that context while keeping compatibility with older signatures.
+    return paintableBootInjections(super.collectIndexInjections(...args))
   }
 
   async [Service.init]() {

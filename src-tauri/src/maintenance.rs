@@ -1,6 +1,6 @@
 //! Versioned maintenance records. Acquire coordinator before AppState; never
 //! hold AppState across disk IO or a child-process wait.
-use std::{io::{self, Read, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex}};
+use std::{collections::BTreeMap, io::{self, Read, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: u32 = 1;
@@ -31,13 +31,15 @@ pub struct OperationJournal {
     pub target_runtime: Option<String>,
     pub checkpoint_id: Option<uuid::Uuid>,
     pub completed_steps: Vec<String>,
+    #[serde(default)]
+    pub step_times: BTreeMap<String,u64>,
     pub error_code: Option<String>,
     pub recovery_actions: Vec<String>,
 }
 impl OperationJournal {
     pub fn new(kind: Kind) -> Self {
         let now = now_ms();
-        Self { schema: SCHEMA, operation_id: uuid::Uuid::new_v4(), kind, stage: Stage::Preparing, created_at: now, updated_at: now, source_runtime: None, target_runtime: None, checkpoint_id: None, completed_steps: vec![], error_code: None, recovery_actions: vec![] }
+        Self { schema: SCHEMA, operation_id: uuid::Uuid::new_v4(), kind, stage: Stage::Preparing, created_at: now, updated_at: now, source_runtime: None, target_runtime: None, checkpoint_id: None, completed_steps: vec![], step_times:BTreeMap::new(), error_code: None, recovery_actions: vec![] }
     }
     pub fn save(&self, directory: &Path) -> io::Result<()> {
         self.validate()?;
@@ -45,8 +47,8 @@ impl OperationJournal {
     }
     fn validate(&self) -> io::Result<()> {
         // Journal strings are identifiers, never raw stderr, tokens, or paths.
-        let ids = self.source_runtime.iter().chain(self.target_runtime.iter()).chain(self.completed_steps.iter()).chain(self.error_code.iter()).chain(self.recovery_actions.iter());
-        if self.schema != SCHEMA || self.completed_steps.len() > 128 || self.recovery_actions.len() > 16 || self.updated_at < self.created_at || ids.into_iter().any(|id| id.is_empty() || id.len() > 160 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.+".contains(&b))) {
+        let ids = self.source_runtime.iter().chain(self.target_runtime.iter()).chain(self.completed_steps.iter()).chain(self.error_code.iter()).chain(self.recovery_actions.iter()).chain(self.step_times.keys());
+        if self.schema != SCHEMA || self.completed_steps.len() > 128 || self.step_times.len()>128 || self.step_times.values().any(|time|*time<self.created_at || *time>self.updated_at) || self.recovery_actions.len() > 16 || self.updated_at < self.created_at || ids.into_iter().any(|id| id.is_empty() || id.len() > 160 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.+".contains(&b))) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "maintenance-journal-schema"));
         }
         Ok(())
@@ -129,7 +131,7 @@ impl Progress {
         Ok(())
     }
     pub fn update(&self, stage: Stage, step: &str) -> Result<(), String> {
-        self.edit(|j| { j.stage = stage; if !j.completed_steps.iter().any(|s| s == step) { j.completed_steps.push(step.into()); } })
+        self.edit(|j| { j.stage = stage; if !j.completed_steps.iter().any(|s| s == step) { j.completed_steps.push(step.into());j.step_times.insert(step.into(),now_ms().max(j.updated_at)); } })
     }
     pub fn checkpoint(&self, id: uuid::Uuid, source: &str) -> Result<(), String> {
         self.edit(|j| { j.checkpoint_id = Some(id); j.source_runtime = Some(source.into()); j.recovery_actions = vec!["restore-unsaved-content".into(), "open-diagnostics".into()]; })
@@ -139,13 +141,13 @@ impl Progress {
         self.edit(|j| { j.stage = Stage::RecoveryRequired; j.error_code = Some(code.into()); if j.recovery_actions.is_empty() { j.recovery_actions.push("open-diagnostics".into()); } })
     }
     pub fn complete(&self) -> Result<(), String> {
-        self.edit(|j| { if j.stage != Stage::RolledBack {j.stage = Stage::Complete;} j.completed_steps.push("ui-restored".into()); j.error_code = None; j.recovery_actions.clear(); })
+        self.edit(|j| { if j.stage != Stage::RolledBack {j.stage = Stage::Complete; j.error_code = None;} j.completed_steps.push("ui-restored".into());j.step_times.insert("ui-restored".into(),now_ms().max(j.updated_at)); j.recovery_actions.clear(); })
     }
     pub fn prepared(&self) -> Result<(),String> {
-        self.edit(|j| {j.stage=Stage::Complete;j.completed_steps.push("candidate-prepared-only".into());j.error_code=None;j.recovery_actions.clear();})
+        self.edit(|j| {j.stage=Stage::Complete;j.completed_steps.push("candidate-prepared-only".into());j.step_times.insert("candidate-prepared-only".into(),now_ms().max(j.updated_at));j.error_code=None;j.recovery_actions.clear();})
     }
     pub fn backend_ready(&self) -> Result<(), String> {
-        self.edit(|j| {if j.stage!=Stage::RolledBack {j.stage=Stage::Restoring;} if !j.completed_steps.iter().any(|s|s=="backend-ready") {j.completed_steps.push("backend-ready".into());}})
+        self.edit(|j| {if j.stage!=Stage::RolledBack {j.stage=Stage::Restoring;} if !j.completed_steps.iter().any(|s|s=="backend-ready") {j.completed_steps.push("backend-ready".into());j.step_times.insert("backend-ready".into(),now_ms().max(j.updated_at));}})
     }
 }
 pub fn directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -197,6 +199,22 @@ mod tests {
         lease.progress.directory = Some(directory.into());
         lease.progress.update(Stage::Preparing, "operation-started").unwrap();
         lease
+    }
+    #[test]
+    fn restoring_old_ui_after_rollback_preserves_the_update_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let coordinator = MaintenanceCoordinator::default();
+        let lease = durable_test_lease(&coordinator, directory.path());
+        let progress = lease.progress();
+        progress.failed("update-checkpoint-failed").unwrap();
+        progress.update(Stage::RolledBack, "checkpoint-failed-source-retained").unwrap();
+        progress.backend_ready().unwrap();
+        progress.complete().unwrap();
+        let status = coordinator.status().unwrap();
+        let saved = OperationJournal::load(&directory.path().join(format!("{}.json", status.operation_id))).unwrap();
+        assert_eq!(saved.stage, Stage::RolledBack);
+        assert_eq!(saved.error_code.as_deref(), Some("update-checkpoint-failed"));
+        assert!(saved.recovery_actions.is_empty());
     }
     #[test]
     fn durable_owner_survives_progress_handoff_and_interruption_is_not_success() {

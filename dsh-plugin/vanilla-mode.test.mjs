@@ -324,7 +324,15 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   assert.throws(() => rehydrated({ dialogMaterial: 'unknown' }), /dialogMaterial/)
   assert.equal(module.normalize({ dialogMaterial: 'unknown' }), undefined)
   assert.deepEqual(module.SettingsSchema['~standard'].validate({ dialogMaterial: 'unknown' }).issues[0].path, ['dialogMaterial'])
-  for (const field of ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity', 'dialogTransparency', 'dialogFrostedIntensity', 'dialogGlassIntensity']) {
+  for (const popupMaterial of ['glass', 'frosted', 'transparent', 'opaque']) {
+    const value = { popupMaterial, dialogMaterial: 'transparent', composerMaterial: 'opaque' }
+    assert.deepEqual(rehydrated(value), module.normalize(value))
+    assert.equal(module.SettingsSchema(value).popupMaterial, popupMaterial)
+  }
+  assert.throws(() => rehydrated({ popupMaterial: 'unknown' }), /popupMaterial/)
+  assert.equal(module.normalize({ popupMaterial: 'unknown' }), undefined)
+  assert.deepEqual(module.SettingsSchema['~standard'].validate({ popupMaterial: 'unknown' }).issues[0].path, ['popupMaterial'])
+  for (const field of ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity', 'dialogTransparency', 'dialogFrostedIntensity', 'dialogGlassIntensity', 'popupTransparency', 'popupFrostedIntensity', 'popupGlassIntensity']) {
     for (const level of [0, 25.5, 50, 100]) {
       const value = { [field]: level }
       assert.deepEqual(rehydrated(value), module.normalize(value))
@@ -351,6 +359,7 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
     'composerFrostedIntensity', 'composerGlassIntensity', 'composerMaterial', 'composerTransparency',
     'dialogFrostedIntensity', 'dialogGlassIntensity', 'dialogMaterial', 'dialogTransparency',
     'fontSizeOverride',
+    'popupFrostedIntensity', 'popupGlassIntensity', 'popupMaterial', 'popupTransparency',
     'reasoningControl',
     'titlebar',
     'titlebarHover',

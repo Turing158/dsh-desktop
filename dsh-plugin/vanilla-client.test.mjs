@@ -896,21 +896,23 @@ test('a refused material intensity write restores its saved value and reports fa
   assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert'))
 })
 
-test('Dialog previews and commits keep composer values independent', async () => {
+for (const [title, prefix] of [['Dialog 效果', 'dialog'], ['弹出层效果', 'popup']]) {
+test(title + ' previews and commits keep other surfaces independent', async () => {
   const document = createDocument()
-  let saved = { composerMaterial: 'glass', composerGlassIntensity: 35, dialogMaterial: 'transparent' }
+  const other = prefix === 'dialog' ? 'popup' : 'dialog'
+  let saved = { composerMaterial: 'glass', composerGlassIntensity: 35, [other + 'Material']: 'frosted', [other + 'FrostedIntensity']: 80, [prefix + 'Material']: 'transparent' }
   const { ctx, state } = createContext({ section: saved, write: async (field, value) => {
     saved = { ...saved, [field]: value }
     state.setSection(saved)
     return true
   } })
   loadBundle(document, recordingReact).apply(ctx)
-  const dialog = () => renderSection(state.sectionComponent, n => n.props?.title === 'Dialog 效果')
+  const dialog = () => renderSection(state.sectionComponent, n => n.props?.title === title)
   const slider = () => renderSection(() => dialog().props.control, n => n.type === 'input' && n.props.type === 'range')
   for (const [choice, field, level, variable, cssValue] of [
-    ['transparent', 'dialogTransparency', 65, '--dsh-dialog-transparent-tint', '35%'],
-    ['frosted', 'dialogFrostedIntensity', 75, '--dsh-dialog-frosted-strength', '0.75'],
-    ['glass', 'dialogGlassIntensity', 25, '--dsh-dialog-glass-strength', '0.25'],
+    ['transparent', prefix + 'Transparency', 65, '--dsh-' + prefix + '-transparent-tint', '35%'],
+    ['frosted', prefix + 'FrostedIntensity', 75, '--dsh-' + prefix + '-frosted-strength', '0.75'],
+    ['glass', prefix + 'GlassIntensity', 25, '--dsh-' + prefix + '-glass-strength', '0.25'],
   ]) {
     await dialog().props.onChange(choice)
     const event = { target: { value: String(level) } }
@@ -924,33 +926,36 @@ test('Dialog previews and commits keep composer values independent', async () =>
     assert.equal(saved.composerMaterial, 'glass')
     assert.equal(saved.composerGlassIntensity, 35)
     assert.equal(document.bodyStyle.get('--dsh-composer-glass-strength'), '0.35')
+    assert.equal(saved[other + 'Material'], 'frosted')
+    assert.equal(document.bodyStyle.get('--dsh-' + other + '-frosted-strength'), '0.8')
   }
   for (const [choice, level] of [['transparent', 65], ['frosted', 75], ['glass', 25]]) {
     await dialog().props.onChange(choice)
     assert.equal(slider().props.value, level)
   }
-  state.setSection({ ...saved, dialogMaterial: 'frosted', dialogFrostedIntensity: 45 })
-  assert.equal(document.documentElement.getAttribute('data-dsh-dialog-material'), 'frosted')
+  state.setSection({ ...saved, [prefix + 'Material']: 'frosted', [prefix + 'FrostedIntensity']: 45 })
+  assert.equal(document.documentElement.getAttribute('data-dsh-' + prefix + '-material'), 'frosted')
   assert.equal(slider().props.value, 45, 'changes from another window converge')
 })
 
-test('a refused Dialog write restores its own material and intensity', async () => {
+test('a refused ' + title + ' write restores its own material and intensity', async () => {
   const document = createDocument()
   const { ctx, state } = createContext({ writeResult: false,
-    section: { composerMaterial: 'transparent', dialogMaterial: 'frosted', dialogFrostedIntensity: 40 } })
+    section: { composerMaterial: 'transparent', [prefix + 'Material']: 'frosted', [prefix + 'FrostedIntensity']: 40 } })
   loadBundle(document, recordingReact).apply(ctx)
-  const dialog = () => renderSection(state.sectionComponent, n => n.props?.title === 'Dialog 效果')
+  const dialog = () => renderSection(state.sectionComponent, n => n.props?.title === title)
   const pending = dialog().props.onChange('glass')
-  assert.equal(document.documentElement.getAttribute('data-dsh-dialog-material'), 'glass')
+  assert.equal(document.documentElement.getAttribute('data-dsh-' + prefix + '-material'), 'glass')
   await pending
   assert.equal(dialog().props.value, 'frosted')
   const slider = () => renderSection(() => dialog().props.control, n => n.type === 'input' && n.props.type === 'range')
   await slider().props.onKeyUp({ target: { value: '80' } })
   assert.equal(slider().props.value, 40)
-  assert.equal(document.bodyStyle.get('--dsh-dialog-frosted-strength'), '0.4')
+  assert.equal(document.bodyStyle.get('--dsh-' + prefix + '-frosted-strength'), '0.4')
   assert.equal(document.documentElement.getAttribute('data-dsh-composer-material'), 'transparent')
-  assert.match(renderSection(state.sectionComponent, n => n.props?.role === 'alert').children[0], /Dialog/)
+  assert.ok(renderSection(state.sectionComponent, n => n.props?.role === 'alert').children[0].includes(title))
 })
+}
 
 test('navigation transparency migrates separate settings and saves one shared value', async () => {
   const document = createDocument()

@@ -1,6 +1,41 @@
 // Recovery navigation is independent of the optional desktop appearance.
 export const name = 'desktop-maintenance'
+export async function flushUpdateSessions(child) {
+  const idle = () => {
+    const agents = child.agents.list()
+    return Array.isArray(agents) && agents.every(agent => agent.status === 'idle')
+  }
+  if (!idle()) throw Error('update-flush-busy')
+  for (const session of child.sessions.list()) {
+    if (await child.sessions.flush(session) === false) throw Error('update-flush-unavailable')
+  }
+  await child.sessionPersistence.flush()
+  if (!idle()) throw Error('update-flush-busy')
+}
 export function apply(ctx) {
+  ctx.inject?.(['sessionPersistence','sessions','agents'], child => {
+    const directory = process.env.DSH_DESKTOP_UPDATE_CONTROL
+    if (!directory) return
+    let working = false, last
+    const timer = setInterval(async () => {
+      if (working) return
+      let request
+      try { request = JSON.parse(readFileSync(join(directory,'request.json'),'utf8')) } catch { return }
+      if (typeof request.id !== 'string' || request.id === last) return
+      working = true; last = request.id
+      try {
+        await flushUpdateSessions(child)
+        // Recheck after every asynchronous drain. No new event can run between
+        // this final check and process.exit; the host retains the process tree.
+        if (JSON.parse(readFileSync(join(directory,'request.json'),'utf8')).id !== request.id) return
+        writeFileSync(join(directory,'reply.json'),JSON.stringify({id:request.id,flushed:true}))
+        process.exit(0)
+      } catch {
+        try { writeFileSync(join(directory,'reply.json'),JSON.stringify({id:request.id,flushed:false})) } catch {}
+      } finally { working = false }
+    },100)
+    child.effect(() => () => clearInterval(timer))
+  })
   ctx.inject?.(['sessionPersistence','profileContext','settings'], child => {
     const emit = async () => {
       const persistence = child.sessionPersistence, profile = child.profileContext, attachments = child.get('attachments'), settings = child.settings
@@ -26,7 +61,7 @@ export function apply(ctx) {
     table.push({kind:'script',placement:'head',text:bridge})
   }))
 }
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PROFILE_SWITCH_FILE } from '../plugin-control/profile-model.mjs'
 import { runtimeImport } from '../runtime-import.mjs'

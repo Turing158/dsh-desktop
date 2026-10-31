@@ -23,6 +23,10 @@ mod dsh;
 mod runtime_store;
 mod builtin_plugins;
 mod dsh_update;
+mod dsh_upgrade;
+mod update_checkpoint;
+mod update_io;
+mod startup_cache;
 mod diagnostics;
 mod data_inventory;
 mod compatibility;
@@ -102,6 +106,7 @@ fn main() {
         .manage(terminal::TerminalManager::default())
         .manage(dsh_update::UpdateManager::new(maintenance_coordinator.clone()))
         .manage(dsh_update::CandidateManager::default())
+        .manage(dsh_upgrade::ManagerState::default())
         .manage(diagnostics::Diagnostics::default())
         .manage(backup::RestoreManager::default())
         .manage(recovery_store::BackgroundCheckpoints::default())
@@ -122,6 +127,7 @@ fn main() {
                 install_node,
                 open_external,
                 dsh_update::check_dsh_update,
+                dsh_upgrade::dsh_update_progress,
                 diagnostics::desktop_diagnostics,
                 diagnostics::desktop_diagnostics_dialog,
                 diagnostics::desktop_diagnostics_check,
@@ -655,6 +661,11 @@ fn boot(app: AppHandle) {
     // The version is still reported to the UI through `probe_state`, which
     // re-reads it; boot itself only needs the executable.
 
+    match dsh_upgrade::recover_interrupted(&app) {
+        Ok(Some(runtime))=>{launch(&app,&state,runtime);return},
+        Ok(None)=>{},
+        Err(error)=>{fail(&app,&state,format!("更新恢复未完成：{error}"),"旧数据与更新材料均已保留，请查看故障诊断。");return},
+    }
     match runtime_store::resolve(&app,&node_exe) {
         Ok(Some(runtime)) => launch(&app,&state,runtime),
         Ok(None) => auto_install(&app,&state,node_exe),
@@ -899,7 +910,8 @@ fn restart_backend(
         if exiting(state) {
             return;
         }
-        if backup::rollback_pending(app) {return;}
+        if app.state::<dsh_upgrade::ManagerState>().is_updating() { dsh_upgrade::failure(app, &error); }
+        if dsh_upgrade::rollback_pending(app) || backup::rollback_pending(app) {return;}
         if let Ok(mut s) = state.lock() {
             s.remote.active = None;
             s.remote.error = Some(remote_control::Error::new("start-failed", "", &error));
@@ -947,6 +959,7 @@ fn restart_backend(
         s.remote.applying = false;
     }
     navigate_current(app);
+    if app.state::<dsh_upgrade::ManagerState>().is_updating() {dsh_upgrade::progress(app,"restoring");}
     let restore_operation = state.lock().ok().filter(|s| s.ui.snapshot.is_some()).map(|s| s.ui.operation_id);
     if let Some(operation) = restore_operation { minimal::watch_recovery(app, operation); }
     // Publish Running only once the navigation is in flight. The boot page is
@@ -1159,6 +1172,8 @@ fn backend_exited(app: &AppHandle, state: &Shared, instance: u64, code: i32) {
         };
         (s.ui.identity(), s.ui.phase)
     };
+    if app.state::<dsh_upgrade::ManagerState>().is_updating() { dsh_upgrade::failure(app, &format!("新版后台提前退出：{code}")); }
+    if dsh_upgrade::rollback_pending(app) {return;}
     debug_log(&format!("[backend] ended instance={instance} code={code}"));
     terminal::suspend(app);
     publish(app, state);

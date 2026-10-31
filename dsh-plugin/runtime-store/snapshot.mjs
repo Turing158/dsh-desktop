@@ -2,8 +2,9 @@
 // Selection and update/data transactions are owned by the native host.
 import { createRequire } from 'node:module'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { lstat, readdir, readFile, mkdir, realpath, stat, access } from 'node:fs/promises'
+import { lstat, readdir, readFile, mkdir, realpath, access } from 'node:fs/promises'
 import { pipeline } from 'node:stream/promises'
+import { Transform } from 'node:stream'
 import { createHash } from 'node:crypto'
 import { dirname, join, relative, resolve, sep, isAbsolute } from 'node:path'
 
@@ -15,9 +16,14 @@ export async function inspectRuntimeTree(root, limits = {}) {
   let totalBytes = 0
   async function walk(dir,depth) {
     if(depth > 80)throw Error('runtime-depth-budget')
-    for(const item of await readdir(dir,{withFileTypes:true})) {
-      const path = join(dir,item.name), info = await lstat(path)
-      if(info.isSymbolicLink() || !inside(root,await realpath(path)))throw Error('runtime-linked-path')
+    const entries = await readdir(dir,{withFileTypes:true})
+    for(let offset=0;offset<entries.length;offset+=24) {
+      const batch=await Promise.all(entries.slice(offset,offset+24).map(async item=>{
+        const path=join(dir,item.name),info=await lstat(path)
+        if(info.isSymbolicLink() || !inside(root,await realpath(path)))throw Error('runtime-linked-path')
+        return {item,path,info}
+      }))
+      for(const {item,path,info} of batch) {
       if(info.isDirectory())await walk(path,depth+1)
       else if(info.isFile()) {
         totalBytes += info.size
@@ -28,6 +34,7 @@ export async function inspectRuntimeTree(root, limits = {}) {
           packages.push({path,manifest})
         }
       } else throw Error('runtime-special-file')
+      }
     }
   }
   await walk(root,0)
@@ -37,16 +44,21 @@ export async function inspectRuntimeTree(root, limits = {}) {
     const require = createRequire(path)
     for(const name of names) {
       if(!/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+$/i.test(name))throw Error('runtime-dependency-name')
+      // An optional dependency may be absent, and the Node resolver can still
+      // reach a copy installed above this tree. Both mean "not part of this
+      // installation", so they are omitted instead of failing the freeze.
+      const omittable = name in optional || Boolean(manifest.peerDependenciesMeta?.[name]?.optional)
       let target
       for(const search of require.resolve.paths(name) ?? []) {
         const candidate = join(search,name,'package.json')
         if(await access(candidate).then(()=>true,()=>false)) {target = await realpath(candidate);break}
       }
       if(!target) {
-        if(name in optional || manifest.peerDependenciesMeta?.[name]?.optional) {missingOptional.push({from:relative(root,path),name});continue}
+        if(omittable) {missingOptional.push({from:relative(root,path),name});continue}
         throw Error('runtime-dependency-missing: '+manifest.name+' -> '+name)
       }
       if(!inside(root,target)) {
+        if(omittable) {missingOptional.push({from:relative(root,path),name});continue}
         if(!limits.collectExternal)throw Error('runtime-dependency-external: '+manifest.name+' -> '+name)
         externalDependencies.push({from:path,name,target:dirname(target)})
       }
@@ -60,23 +72,46 @@ async function hash(path) {
   for await(const chunk of createReadStream(path))digest.update(chunk)
   return digest.digest('hex')
 }
+async function copyHashed(from, to, size) {
+  const digest = createHash('sha256')
+  let copied = 0
+  const tee = new Transform({transform(chunk, encoding, callback) {
+    copied += chunk.length
+    if (copied > size) { callback(Error('runtime-source-changed')); return }
+    digest.update(chunk)
+    callback(null, chunk)
+  }})
+  await pipeline(createReadStream(from), tee, createWriteStream(to,{flags:'wx'}))
+  if (copied !== size) throw Error('runtime-source-changed')
+  const sourceDigest = digest.digest('hex')
+  if (await hash(to) !== sourceDigest) throw Error('runtime-source-changed')
+  return sourceDigest
+}
+function directoryMaker() {
+  const pending = new Map()
+  return dir => {
+    if (!pending.has(dir)) pending.set(dir,mkdir(dir,{recursive:true}))
+    return pending.get(dir)
+  }
+}
 export async function freezeRuntimeTree(source,destination,limits) {
   source = await realpath(source); destination = resolve(destination)
   if(inside(source,destination) || inside(destination,source))throw Error('runtime-overlapping-roots')
   if(await access(destination).then(()=>true,()=>false))throw Error('runtime-destination-exists')
   const inventory = await inspectRuntimeTree(source,limits)
   await mkdir(destination,{recursive:true})
+  const ensureDirectory=directoryMaker()
   const files = []
   // Limited concurrency keeps the file descriptor count bounded on Windows.
   for(let offset=0;offset<inventory.files.length;offset+=24) {
     files.push(...await Promise.all(inventory.files.slice(offset,offset+24).map(async file=>{
       const from = join(source,file.path), to = join(destination,file.path)
-      await mkdir(dirname(to),{recursive:true})
-      const before = await lstat(from)
-      if(!before.isFile() || before.isSymbolicLink() || before.size !== file.size)throw Error('runtime-source-changed')
-      await pipeline(createReadStream(from),createWriteStream(to,{flags:'wx'}))
-      const digest = await hash(to), sourceDigest = await hash(from), after = await stat(from)
-      if(digest !== sourceDigest || before.size !== after.size || before.mtimeMs !== after.mtimeMs)throw Error('runtime-source-changed')
+      await ensureDirectory(dirname(to))
+      const before = await lstat(from,{bigint:true})
+      if(!before.isFile() || before.isSymbolicLink() || before.size !== BigInt(file.size))throw Error('runtime-source-changed')
+      const digest = await copyHashed(from,to,file.size), after = await lstat(from,{bigint:true})
+      if(!after.isFile() || after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino
+        || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs)throw Error('runtime-source-changed')
       return {...file,sha256:digest}
     })))
   }
@@ -116,15 +151,16 @@ export async function freezeRuntimeClosure(source,destination,limits = {}) {
   }
   files.sort((a,b)=>a.path.localeCompare(b.path))
   await mkdir(destination,{recursive:true})
+  const ensureDirectory=directoryMaker()
   const copied=[]
   for(let offset=0;offset<files.length;offset+=24) {
     copied.push(...await Promise.all(files.slice(offset,offset+24).map(async file=>{
-      const to=join(destination,file.path),from=file.source,before=await lstat(from)
-      if(!before.isFile()||before.isSymbolicLink()||before.size!==file.size)throw Error('runtime-source-changed')
-      await mkdir(dirname(to),{recursive:true})
-      await pipeline(createReadStream(from),createWriteStream(to,{flags:'wx'}))
-      const sha256=await hash(to),sourceDigest=await hash(from),after=await stat(from)
-      if(sha256!==sourceDigest||before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw Error('runtime-source-changed')
+      const to=join(destination,file.path),from=file.source,before=await lstat(from,{bigint:true})
+      if(!before.isFile()||before.isSymbolicLink()||before.size!==BigInt(file.size))throw Error('runtime-source-changed')
+      await ensureDirectory(dirname(to))
+      const sha256=await copyHashed(from,to,file.size),after=await lstat(from,{bigint:true})
+      if(!after.isFile()||after.isSymbolicLink()||before.dev!==after.dev||before.ino!==after.ino
+        ||before.size!==after.size||before.mtimeNs!==after.mtimeNs||before.ctimeNs!==after.ctimeNs)throw Error('runtime-source-changed')
       return {path:file.path,size:file.size,sha256}
     })))
   }

@@ -20,6 +20,8 @@ await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/sidebar-changes/cli
 console.log('Built changes sidebar client.')
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/sidebar-archive/client-entry.mjs'], outfile: root + 'dsh-plugin/sidebar-archive/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline', loader: { '.css': 'text' } })
 console.log('Built archive sidebar client.')
+await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/session-jobs/client-entry.mjs'], outfile: root + 'dsh-plugin/session-jobs/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline', loader: { '.css': 'text' } })
+console.log('Built session jobs header client.')
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/session-links/client-entry.mjs'], outfile: root + 'dsh-plugin/session-links/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline' })
 console.log('Built session link client.')
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/plugin-control/client-entry.mjs'], outfile: root + 'dsh-plugin/plugin-control/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline' })

@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -307,17 +307,26 @@ pub fn resolve_node() -> Option<PathBuf> {
 
 /// Read `node --version` and extract the major number.
 pub fn node_major(node_exe: &Path) -> Option<u32> {
-    let output = Command::new(node_exe)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    static CACHE:OnceLock<Mutex<std::collections::HashMap<PathBuf,(crate::update_io::Stamp,u32)>>> = OnceLock::new();
+    // The boot worker and boot-page heartbeats share this positive result.
+    // Resolution still follows the current PATH; missing/failed probes are not
+    // cached, and executable identity/ChangeTime invalidates a changed Node.
+    let inspected=crate::update_io::Stamp::inspect(node_exe,false).ok();
+    let stamp=inspected.as_ref().and_then(|(_,stamp)|stamp.clone());
+    let mut cache=CACHE.get_or_init(Mutex::default).lock().ok()?;
+    if let Some(stamp)=&stamp {
+        if let Some((_,major))=cache.get(node_exe).filter(|(known,_)|known==stamp) {
+            return Some(*major);
+        }
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text=crate::dsh_update::output(&mut Command::new(node_exe).arg("--version"),"node-version",VERSION_PROBE_TIMEOUT).ok()?;
     let major = text.trim().trim_start_matches('v').split('.').next()?;
-    major.parse().ok()
+    let major=major.parse().ok()?;
+    if let Some(stamp)=stamp {
+        if cache.len()>=4 && !cache.contains_key(node_exe) {if let Some(old)=cache.keys().next().cloned(){cache.remove(&old);}}
+        cache.insert(node_exe.into(),(stamp,major));
+    }
+    Some(major)
 }
 
 /// Locate the DSH entry script.
@@ -469,6 +478,7 @@ fn web_args(patch_file: &Path, config: &crate::remote_control::Config) -> Vec<st
 /// A running `dsh web` child, its job object, and its output stream.
 pub struct DshProcess {
     child: Child,
+    update_control: tempfile::TempDir,
     /// Exact local sockets requested from this backend, published only after readiness.
     pub listeners: Vec<crate::remote_control::ListenerAddress>,
     _plugin_boot: tempfile::NamedTempFile,
@@ -509,12 +519,14 @@ impl DshProcess {
             vec![]
         };
 
+        let update_control = tempfile::Builder::new().prefix("dsh-update-control-").tempdir()?;
         let mut child = Command::new(&runtime.node_exe)
             .arg(&runtime.dsh_bin)
             .args(args)
             .env("DSH_DESKTOP_DSH_BIN", &runtime.dsh_bin)
             .env("DSH_DESKTOP_PLUGINS_FILE", &plugin_file)
             .env("DSH_DESKTOP_CHANGES_DIR", changes_dir)
+            .env("DSH_DESKTOP_UPDATE_CONTROL", update_control.path())
             .env("DSH_DESKTOP_LISTENERS", serde_json::to_string(&listeners)?)
             // Node's default request-header budget is 16 KiB, and WebView2 spends
             // a surprising amount of it on a single script request. DSH loads its
@@ -570,6 +582,7 @@ impl DshProcess {
         }
 
         Ok(Self {
+            update_control,
             _plugin_boot: plugin_boot,
             child,
             listeners,
@@ -608,6 +621,36 @@ impl DshProcess {
     pub fn stop_and_wait(&mut self) -> std::io::Result<()> {
         self.shutdown();
         self._job.wait_empty(std::time::Duration::from_secs(10))
+    }
+
+    /// The private child handshake flushes sessions before exiting. A timeout
+    /// cancels the request; a late flush cannot shut down a resumed backend.
+    pub fn stop_for_update(&mut self) -> Result<(),String> {
+        let id=uuid::Uuid::new_v4().to_string();
+        let request=self.update_control.path().join("request.json");
+        crate::maintenance::atomic_json(&request,&serde_json::json!({"id":id})).map_err(|_|"update-flush-request")?;
+        let deadline=std::time::Instant::now()+Duration::from_secs(30);
+        loop {
+            if let Some(status)=self.child.try_wait().map_err(|_|"update-flush-wait")? {
+                let reply=std::fs::read(self.update_control.path().join("reply.json")).ok()
+                    .and_then(|b|serde_json::from_slice::<serde_json::Value>(&b).ok());
+                self._job.terminate();self._job.wait_empty(Duration::from_secs(10)).map_err(|_|"update-backend-stop")?;
+                return if status.success() && reply.is_some_and(|v|v["id"]==id && v["flushed"]==true) {Ok(())} else {Err("update-flush-failed".into())};
+            }
+            if std::time::Instant::now()>=deadline {
+                let _=std::fs::remove_file(&request);return Err("update-flush-timeout".into());
+            }
+            if let Ok(bytes)=std::fs::read(self.update_control.path().join("reply.json")) {
+                if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|v|v["id"]==id && v["flushed"]==false) {
+                    let _=std::fs::remove_file(&request);return Err("update-flush-busy".into());
+                }
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        self.child.try_wait().is_ok_and(|status| status.is_none())
     }
 }
 
@@ -784,6 +827,19 @@ pub fn read_to_string(mut reader: impl Read) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[cfg(windows)]
+    fn cached_node_probe_detects_changed_executable_with_restored_time() {
+        let source=resolve_node().expect("Node required for executable probe");
+        let root=tempfile::tempdir().unwrap();let copy=root.path().join("node.exe");
+        std::fs::copy(&source,&copy).unwrap();
+        let major=node_major(&copy).unwrap();assert_eq!(node_major(&copy),Some(major));
+        let modified=std::fs::metadata(&copy).unwrap().modified().unwrap();
+        {use std::io::Write;let mut file=std::fs::OpenOptions::new().write(true).open(&copy).unwrap();
+            file.write_all(b"XX").unwrap();file.set_times(std::fs::FileTimes::new().set_modified(modified)).unwrap();}
+        assert_eq!(node_major(&copy),None);
+        std::fs::copy(source,&copy).unwrap();assert_eq!(node_major(&copy),Some(major));
+    }
 
     #[test]
     fn external_dsh_lookup_also_works_with_bundled_node() {

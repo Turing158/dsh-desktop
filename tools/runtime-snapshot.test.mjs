@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { freezeRuntimeTree,freezeRuntimeClosure,inspectRuntimeTree } from './runtime-snapshot.mjs'
@@ -40,4 +41,35 @@ test('closure preserves an external peer at its original installation level',asy
   assert.equal(manifest.packagePath,'node_modules/@fixture/app')
   assert.ok(manifest.edges.some(edge=>edge.to==='node_modules/peer/package.json'))
   assert.equal((await inspectRuntimeTree(frozen)).externalDependencies.length,0)
+})
+test('closure omits an optional peer that only resolves outside the installation',async()=>{
+  const base=await mkdtemp(join(tmpdir(),'dsh-closure-')),install=join(base,'install')
+  const source=join(install,'node_modules/@fixture/app')
+  await mkdir(source,{recursive:true}); await mkdir(join(base,'node_modules/optional-peer'),{recursive:true})
+  await writeFile(join(source,'package.json'),JSON.stringify({name:'@fixture/app',
+    peerDependencies:{'optional-peer':'1'},peerDependenciesMeta:{'optional-peer':{optional:true}}}))
+  await writeFile(join(base,'node_modules/optional-peer/package.json'),'{"name":"optional-peer","version":"1"}')
+  // A required peer is still refused when only an outer copy exists.
+  await writeFile(join(source,'package.json'),'{"name":"@fixture/app","peerDependencies":{"optional-peer":"1"}}')
+  await assert.rejects(freezeRuntimeClosure(source,join(base,'refused')),/outside-installation/)
+  await writeFile(join(source,'package.json'),JSON.stringify({name:'@fixture/app',
+    peerDependencies:{'optional-peer':'1'},peerDependenciesMeta:{'optional-peer':{optional:true}}}))
+  const frozen=join(base,'frozen'),manifest=await freezeRuntimeClosure(source,frozen)
+  assert.equal(manifest.externalPackages,0)
+  assert.deepEqual(manifest.missingOptional.map(edge=>edge.name),['optional-peer'])
+  assert.equal(manifest.edges.length,0)
+  assert.equal((await inspectRuntimeTree(frozen)).externalDependencies.length,0)
+})
+test('bounded traversal and streaming copies preserve all files across batches',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'dsh-stream-copy-')),source=join(root,'source')
+  await mkdir(source)
+  await writeFile(join(source,'package.json'),'{"name":"fixture"}')
+  const data=Buffer.alloc(2*1024*1024+17,37)
+  await writeFile(join(source,'large.bin'),data)
+  for(let index=0;index<80;index++) await writeFile(join(source,'file-'+index),String(index))
+  const frozen=join(root,'frozen'),manifest=await freezeRuntimeTree(source,frozen)
+  assert.equal(manifest.files.length,82)
+  assert.equal(manifest.files.find(file=>file.path==='large.bin').sha256,createHash('sha256').update(data).digest('hex'))
+  assert.deepEqual(await readFile(join(frozen,'large.bin')),data)
+  for(let index=0;index<80;index++) assert.equal(await readFile(join(frozen,'file-'+index),'utf8'),String(index))
 })

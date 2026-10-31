@@ -46,6 +46,8 @@ const COMPOSER_MATERIALS = ['glass', 'frosted', 'transparent', 'opaque']
 const COMPOSER_TUNING_FIELDS = ['composerTransparency', 'composerFrostedIntensity', 'composerGlassIntensity']
 const DIALOG_MATERIAL_FIELD = 'dialogMaterial'
 const DIALOG_TUNING_FIELDS = ['dialogTransparency', 'dialogFrostedIntensity', 'dialogGlassIntensity']
+const POPUP_MATERIAL_FIELD = 'popupMaterial'
+const POPUP_TUNING_FIELDS = ['popupTransparency', 'popupFrostedIntensity', 'popupGlassIntensity']
 const REASONING_CONTROL_FIELD = 'reasoningControl'
 const REASONING_CONTROLS = ['select', 'slider']
 const COLOR_SCHEME_FIELD = 'colorScheme'
@@ -210,13 +212,13 @@ function normalize(value) {
   // differently from an absent key.
   if (fontSizeOverride !== undefined) section[FONT_SIZE_OVERRIDE_FIELD] = fontSizeOverride
   // Optional so existing documents keep their shape; the client defaults to opaque.
-  for (const field of [COMPOSER_MATERIAL_FIELD, DIALOG_MATERIAL_FIELD]) {
+  for (const field of [COMPOSER_MATERIAL_FIELD, DIALOG_MATERIAL_FIELD, POPUP_MATERIAL_FIELD]) {
     const material = value[field]
     if (material === undefined || material === null) continue
     if (!COMPOSER_MATERIALS.includes(material)) return undefined
     section[field] = material
   }
-  for (const field of [...COMPOSER_TUNING_FIELDS, ...DIALOG_TUNING_FIELDS]) {
+  for (const field of [...COMPOSER_TUNING_FIELDS, ...DIALOG_TUNING_FIELDS, ...POPUP_TUNING_FIELDS]) {
     const raw = value[field]
     if (raw === undefined) continue
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || raw > 100) return undefined
@@ -317,7 +319,7 @@ const SCHEMA_ENVELOPE = {
     14: {
       type: 'object',
       meta: { default: {} },
-      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, dialogMaterial: 64, reasoningControl: 70, colorScheme: 77 },
+      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, dialogMaterial: 64, popupMaterial: 64, reasoningControl: 70, colorScheme: 77 },
     },
   },
 }
@@ -335,6 +337,11 @@ COMPOSER_TUNING_FIELDS.forEach((field, index) => {
 })
 DIALOG_TUNING_FIELDS.forEach((field, index) => {
   const uid = 79 + index
+  SCHEMA_ENVELOPE.refs[uid] = { type: 'number', meta: { min: 0, max: 100 } }
+  SCHEMA_ENVELOPE.refs[14].dict[field] = uid
+})
+POPUP_TUNING_FIELDS.forEach((field, index) => {
+  const uid = 82 + index
   SCHEMA_ENVELOPE.refs[uid] = { type: 'number', meta: { min: 0, max: 100 } }
   SCHEMA_ENVELOPE.refs[14].dict[field] = uid
 })
@@ -417,7 +424,7 @@ SettingsSchema['~standard'] = {
       // Name the field that actually failed rather than listing all five, so
       // the message stays as specific as a compiled schema's.
       const raw = input !== null && typeof input === 'object' ? input : {}
-      const badComposer = [...COMPOSER_TUNING_FIELDS, ...DIALOG_TUNING_FIELDS].find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
+      const badComposer = [...COMPOSER_TUNING_FIELDS, ...DIALOG_TUNING_FIELDS, ...POPUP_TUNING_FIELDS].find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
       if (badComposer) return { issues: [{ message: badComposer + ' must be a number between 0 and 100', path: [badComposer] }] }
       const badBackground = Object.keys(BACKGROUND_FIELDS).find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
       if (badBackground) return { issues: [{ message: badBackground + ' contains an invalid background setting', path: [badBackground] }] }
@@ -429,6 +436,7 @@ SettingsSchema['~standard'] = {
         [TITLEBAR_HOVER_FIELD, TITLEBAR_HOVER_PREFERENCES],
         [COMPOSER_MATERIAL_FIELD, COMPOSER_MATERIALS],
         [DIALOG_MATERIAL_FIELD, COMPOSER_MATERIALS],
+        [POPUP_MATERIAL_FIELD, COMPOSER_MATERIALS],
         [REASONING_CONTROL_FIELD, REASONING_CONTROLS],
         [ANIMATION_FIELD, ANIMATION_PREFERENCES],
       ]

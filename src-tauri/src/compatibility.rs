@@ -149,8 +149,10 @@ pub fn host(state: &crate::state::AppState) -> Vec<Capability> {
             row.reason_codes = if partial {vec!["partial-config-backup-available".into(),"storage-consistency-unverified".into()]} else {vec!["storage-adapter-unverified".into(), "storage-consistency-unverified".into()]};
             row.implementation = Some("desktop");
         } else if row.feature_id == "runtime-rollback" {
-            row.availability = "unavailable";
-            row.reason_codes = if state.runtime.as_ref().is_some_and(|r| r.source == crate::dsh::DshSource::Configured) { vec!["runtime-explicitly-pinned".into()] } else { vec!["runtime-snapshot-unverified".into(), "runtime-migration-scope-unverified".into()] };
+            let supported = state.storage.as_ref().is_some_and(|storage| storage.backend_instance == instance
+                && storage.roots.session_schema == Some(4) && storage.roots.session_flush);
+            row.availability = if supported {"limited"} else {"unavailable"};
+            row.reason_codes = if supported {vec!["automatic-update-rollback-only".into()]} else {vec!["runtime-snapshot-unverified".into(), "runtime-migration-scope-unverified".into()]};
             row.implementation = Some("desktop");
         }
     }

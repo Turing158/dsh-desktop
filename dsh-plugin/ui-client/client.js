@@ -565,12 +565,6 @@ var React = require('react')
       { id: 'transparent', get label() { return t('透明') } },
       { id: 'opaque', get label() { return t('不透明') } },
     ]
-    var COMPOSER_MATERIAL_NOTES = {
-      get glass() { return t('模糊背景，搭配柔和高光与阴影，呈现玻璃质感。') },
-      get frosted() { return t('只模糊背景，保留平面磨砂质感，没有立体高光或阴影。') },
-      get transparent() { return t('调节底色透明度，不添加模糊效果；文字和按钮保持清晰。') },
-      get opaque() { return t('使用主题纯色底板，完整遮住后方的背景。') },
-    }
     function composerMaterial(value) {
       return COMPOSER_MATERIAL_OPTIONS.some(function (option) { return option.id === value }) ? value : 'opaque'
     }
@@ -584,11 +578,18 @@ var React = require('react')
       frosted: { field: 'dialogFrostedIntensity', get label() { return t('纯磨砂效果程度') }, defaultValue: 50, variable: '--dsh-dialog-frosted-strength' },
       glass: { field: 'dialogGlassIntensity', get label() { return t('毛玻璃效果程度') }, defaultValue: 50, variable: '--dsh-dialog-glass-strength' },
     }
+    var POPUP_TUNING = {
+      transparent: { field: 'popupTransparency', get label() { return t('底色透明度') }, defaultValue: 20, variable: '--dsh-popup-transparent-tint' },
+      frosted: { field: 'popupFrostedIntensity', get label() { return t('纯磨砂效果程度') }, defaultValue: 50, variable: '--dsh-popup-frosted-strength' },
+      glass: { field: 'popupGlassIntensity', get label() { return t('毛玻璃效果程度') }, defaultValue: 50, variable: '--dsh-popup-glass-strength' },
+    }
     var MATERIAL_SURFACES = [
       { field: 'composerMaterial', attribute: COMPOSER_MATERIAL_ATTRIBUTE, tuning: COMPOSER_TUNING,
         get error() { return t('输入框/面板效果设置保存失败，请重试。') } },
       { field: 'dialogMaterial', attribute: 'data-dsh-dialog-material', tuning: DIALOG_TUNING,
         get error() { return t('Dialog 效果设置保存失败，请重试。') } },
+      { field: 'popupMaterial', attribute: 'data-dsh-popup-material', tuning: POPUP_TUNING,
+        get error() { return t('弹出层效果设置保存失败，请重试。') } },
     ]
     function materialSurface(field) {
       return MATERIAL_SURFACES.find(function (surface) {
@@ -626,10 +627,7 @@ var React = require('react')
             'aria-label': control.label, 'aria-valuetext': value + '%',
             onChange: function (event) { props.preview(control.field, Number(event.target.value)) },
             onPointerUp: save, onPointerCancel: save, onKeyUp: save, onBlur: save }),
-          h('output', { 'aria-live': 'off' }, value + '%')),
-        h('p', null, material === 'transparent'
-          ? t('数值越高，底色越透明；100% 完全透出背景。')
-          : t('程度越高，背景越模糊，底色透明度同步降低；0% 完全透出背景。')))
+          h('output', { 'aria-live': 'off' }, value + '%')))
     }
 
     /**
@@ -1188,7 +1186,6 @@ var React = require('react')
       }
       return h('section', { className: 'dshAppearance__background', 'aria-label': t('背景图片') },
         h('h3', null, t('背景图片')),
-        h('p', null, t('从下到上依次为纯黑（深色）／纯白（浅色）、背景图片、界面底色。底色透明度越高，图片越清晰：0% 遮住图片，100% 完全透出图片。')),
         h('input', { ref: input, type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onChange: choose }),
         h('div', { className: 'dshAppearance__backgroundActions' },
           h('button', { type: 'button', disabled: busy, onClick: function () { input.current.click() } }, busy ? t('正在读取…') : state.backgroundImage ? t('更换图片') : t('选择图片')),
@@ -1198,7 +1195,6 @@ var React = require('react')
         state.backgroundError ? h('p', { role: 'alert' }, state.backgroundError) : null,
         slider(t('图片总透明度'), 'backgroundTransparency', !state.backgroundImage),
         slider(t('图片模糊程度'), 'backgroundBlur', !state.backgroundImage),
-        h('p', null, t('0% 保持原图清晰，100% 模糊最强。')),
         BACKGROUND_REGIONS.map(function (region) {
           var field = 'background' + region[0]
           var navigation = region[0] === 'Navigation'
@@ -1252,7 +1248,6 @@ var React = require('react')
           }),
           h(OptionGroup, {
             title: t('配色方案'),
-            note: t('默认保留原有配色；其他方案以主题色区分侧边栏和标题栏，内容区域保持柔和的中性色，并随浅色或深色主题切换。'),
             options: COLOR_SCHEME_OPTIONS,
             value: state.colorScheme,
             onChange: deps.setColorScheme,
@@ -1262,7 +1257,6 @@ var React = require('react')
           state.colorSchemeError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.colorSchemeError) : null,
           h(OptionGroup, {
             title: t('输入框/面板效果'),
-            note: t('应用于输入框和账号面板。') + COMPOSER_MATERIAL_NOTES[state.composerMaterial],
             options: COMPOSER_MATERIAL_OPTIONS,
             value: state.composerMaterial,
             onChange: deps.setComposerMaterial,
@@ -1273,7 +1267,6 @@ var React = require('react')
           state.composerMaterialError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.composerMaterialError) : null,
           h(OptionGroup, {
             title: t('Dialog 效果'),
-            note: t('独立应用于设置、确认等对话框。') + COMPOSER_MATERIAL_NOTES[state.dialogMaterial],
             options: COMPOSER_MATERIAL_OPTIONS,
             value: state.dialogMaterial,
             onChange: deps.setDialogMaterial,
@@ -1283,8 +1276,17 @@ var React = require('react')
           }),
           state.dialogMaterialError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.dialogMaterialError) : null,
           h(OptionGroup, {
+            title: t('弹出层效果'),
+            options: COMPOSER_MATERIAL_OPTIONS,
+            value: state.popupMaterial,
+            onChange: deps.setPopupMaterial,
+            compact: true,
+            control: h(ComposerMaterialSlider, { key: state.popupMaterial, state: state, surface: MATERIAL_SURFACES[2],
+              preview: deps.previewComposerSetting, save: deps.saveComposerSetting }),
+          }),
+          state.popupMaterialError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.popupMaterialError) : null,
+          h(OptionGroup, {
             title: t('推理等级控件'),
-            note: t('选择列表保留二级菜单；滑块直接在模型菜单中调整，档位和配色跟随当前模型与主题。'),
             options: REASONING_CONTROL_OPTIONS, value: state.reasoningControl, onChange: deps.setReasoningControl, compact: true,
           }),
           state.reasoningControlError ? h('p', { role: 'alert', style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: '12px' } }, state.reasoningControlError) : null,
@@ -1558,6 +1560,7 @@ var React = require('react')
         ...composerSettings(loadedSection()),
         composerMaterialError: '',
         dialogMaterialError: '',
+        popupMaterialError: '',
         ...backgroundSettings(loadedSection()),
         backgroundError: '',
         // The host half publishes the mode before first paint, so the attribute
@@ -1720,6 +1723,7 @@ var React = require('react')
       }
       function setComposerMaterial(next) { return saveComposerSetting('composerMaterial', next) }
       function setDialogMaterial(next) { return saveComposerSetting('dialogMaterial', next) }
+      function setPopupMaterial(next) { return saveComposerSetting('popupMaterial', next) }
       applyComposerSettings()
       ctx.effect(function () {
         var dispose = scope.subscribe(function () {
@@ -2004,6 +2008,7 @@ var React = require('react')
         setColorScheme: setColorScheme,
         setComposerMaterial: setComposerMaterial,
         setDialogMaterial: setDialogMaterial,
+        setPopupMaterial: setPopupMaterial,
         previewComposerSetting: previewComposerSetting,
         saveComposerSetting: saveComposerSetting,
         previewBackground: previewBackground,

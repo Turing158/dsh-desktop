@@ -1,4 +1,4 @@
-/** Verify composer and Dialog materials, coupled effects, and restart persistence.
+/** Verify composer, Dialog and popup materials, coupled effects, and restart persistence.
  * Run: node tools/composer-material-smoke.mjs (isolated DSH profile + headless Edge).
  */
 import assert from 'node:assert/strict'
@@ -8,6 +8,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { openDshSettings, handleOnboarding, dismissInitialWelcome, offlineModelPatch } from './dsh-ui-helpers.mjs'
+import { checkPopupMaterials } from './popup-material-check.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -31,7 +32,11 @@ await writeFile(join(probe, 'package.json'), JSON.stringify({
 await writeFile(join(probe, 'index.js'), 'export function apply() {}\n')
 await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({
   id: '@dsh-desktop/settings-smoke',
-  factory: () => ({ inject: ['configForms', 'slots', 'sessions', 'uiWorkspace'], apply(ctx) { window.__SETTINGS_SMOKE__ = ctx } }),
+  factory: require => ({ inject: ['configForms', 'slots', 'sessions', 'uiWorkspace'], apply(ctx) {
+    window.__SETTINGS_SMOKE__ = ctx
+    window.__POPUP_SMOKE__ = { React: require('react'), createRoot: require('react-dom/client').createRoot,
+      ui: require('@deepseek-ai/dsh-client-ui-primitives') }
+  } }),
 })\n`)
 const originalPatch = await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')
 const patch = originalPatch.replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
@@ -362,6 +367,7 @@ try {
   await readableNarrowSlider(dialogSlider)
   await page.screenshot({ path: join(root, 'mobile-dialog-settings.png') })
   await page.setViewportSize({ width: 1280, height: 840 })
+  await checkPopupMaterials(page, { appearance, section, root, pass })
   expected = await section()
   await page.keyboard.press('Escape')
   pass('Dialog sliders support pointer, keyboard and narrow layouts and remember all three values')
@@ -380,7 +386,11 @@ try {
       document.documentElement.getAttribute('data-dsh-dialog-material')==='glass' &&
       style.getPropertyValue('--dsh-dialog-transparent-tint')==='30%' &&
       style.getPropertyValue('--dsh-dialog-frosted-strength')==='0.75' &&
-      style.getPropertyValue('--dsh-dialog-glass-strength')==='0.25'
+      style.getPropertyValue('--dsh-dialog-glass-strength')==='0.25' &&
+      document.documentElement.getAttribute('data-dsh-popup-material')==='glass' &&
+      style.getPropertyValue('--dsh-popup-transparent-tint')==='30%' &&
+      style.getPropertyValue('--dsh-popup-frosted-strength')==='0.75' &&
+      style.getPropertyValue('--dsh-popup-glass-strength')==='0.25'
   })
   assert.deepEqual(errors,[])
   pass('all three values survive page reload and backend restart without browser errors')

@@ -52,6 +52,18 @@ pub fn install(app: &tauri::AppHandle) {
                                 let json=match result {Ok(verification)=>serde_json::json!({"verification":verification}),Err(error)=>serde_json::json!({"error":error})};
                                 let _=crate::maintenance::atomic_json(&dir.join("runtime-profile-verified.json"),&json);
                             }
+                            Some("upgrade-reuse-candidate") => {
+                                let result=(|| {
+                                    let target:crate::dsh::Runtime=serde_json::from_value(value["target"].clone()).map_err(|_|"runtime-candidate-binding")?;
+                                    let lease=app.state::<crate::dsh_update::UpdateManager>().begin()?;
+                                    let (identity,source)={let shared=app.state::<crate::state::Shared>();let s=shared.lock().map_err(|_|"runtime-state")?;
+                                        (crate::remote_control::identity(&s),s.runtime.clone().ok_or("runtime-unavailable")?)};
+                                    crate::runtime_store::verify_candidate(&app,&target)?;
+                                    crate::dsh_upgrade::prepared(&app,identity,source,target)?;drop(lease);Ok::<_,String>(())
+                                })();
+                                let json=match result {Ok(())=>serde_json::json!({"ready":true}),Err(error)=>serde_json::json!({"error":error})};
+                                let _=crate::maintenance::atomic_json(&dir.join("upgrade-reused.json"),&json);
+                            }
                             Some("close") => {
                                 if let Some(window) = app.get_webview_window("main") {
                                     let _ = window.close();

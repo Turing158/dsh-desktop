@@ -29,6 +29,16 @@
     window.__DSH_CAPABILITIES__?.refresh()
   }
   let frozen = false, overlay
+  // Intentional backend restarts must not look like a failed LAN connection.
+  // Include restoration before an adapter registers or the first packet arrives.
+  const isConnectionSuspended = () => frozen || packet?.phase === 'restoring' || (!packet && Boolean(boot?.restoring))
+  let connectionSuspended = isConnectionSuspended()
+  function notifyConnectionState() {
+    const next = isConnectionSuspended()
+    if (next === connectionSuspended) return
+    connectionSuspended = next
+    document.dispatchEvent(new Event('dsh-desktop:ui-state'))
+  }
   let checkpoints,checkpointStatus={savedAt:0,error:null}
   const invoke = (command, args) => window.__TAURI__.core.invoke(command, args)
   const same = (a, b) => a && b && ['operationId', 'windowGeneration', 'documentGeneration', 'backendInstance'].every(k => a[k] === b[k])
@@ -78,6 +88,7 @@
     // Capture-phase input guards preserve programmatic editor focus/selection
     // and native window controls. Making #root inert would disable both.
     frozen = value
+    notifyConnectionState()
   }
   function display(text, retry = false, blocking = false) {
     if (!document.body) { document.addEventListener('DOMContentLoaded', () => display(text, retry, blocking), { once: true }); return }
@@ -261,6 +272,7 @@
       else if (next.phase === 'restoring') { window.__DSH_DESKTOP_BOOT__?.markRestoring(); maybeRestore() }
       if(next.phase==='active') {startCheckpoints();checkpoints?.changed()}
       confirmRuntime()
+      notifyConnectionState()
     },
     capture,
     // Settings restarts use the audited adapter even while optional WebView
@@ -279,6 +291,8 @@
       } catch (error) { setFrozen(false); throw new Error(message(error.message), { cause: error }) }
     },
     finishRemoteApply() { setFrozen(false); display('') },
+    setRemoteApplyNotice(notice) { if (frozen && typeof notice === 'string') display(notice, false, true) },
+    isConnectionSuspended,
     // Explicit restarts can protect drafts without enabling WebView disposal.
     // The draft scheduler starts only when its separately loaded factory exists.
     registerRestartAdapter(factory) {

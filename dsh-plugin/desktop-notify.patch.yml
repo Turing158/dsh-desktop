@@ -150,6 +150,14 @@
     - id: desktop-sidebar-archive
       name: ./sidebar-archive/index.js
 
+    # Background work in the conversation header: one control that lists the
+    # session's still-interruptible jobs (background commands, dev servers,
+    # resident processes) and stops them from the row. It reads the upstream
+    # `ctx.jobs` roster, so the job controller must stay composed.
+    - id: desktop-session-jobs
+      name: ./session-jobs/index.js
+      config: {}
+
     - id: desktop-file-editor
       name: ./file-editor/index.js
       inject: [fs, sessions, typert]

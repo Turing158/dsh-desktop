@@ -65,15 +65,44 @@ pub struct CandidateSummary {
     id:String,version:String,fingerprint:String,switch_available:bool,
 }
 
-fn candidate_install(node:&Path,prefix:&Path,target_version:&str,guard:&CandidateGuard)->Result<(),String> {
-    let mut installer=npm::Installer::start_candidate(node,prefix,target_version)?;
-    guard.installer(Some(installer.handle()))?;
-    let events=installer.take_events().ok_or("runtime-candidate-install-failed")?;
-    // Never publish arbitrary npm output as a structured maintenance error.
-    let drain=std::thread::spawn(move || {for _ in events {}});
-    let result=installer.wait_timeout(Duration::from_secs(600));
-    drop(installer);let _=drain.join();guard.installer(None)?;guard.check()?;
-    if !result? {return Err("runtime-candidate-install-failed".into());}Ok(())
+fn candidate_install(app:&AppHandle,node:&Path,prefix:&Path,target_version:&str,guard:&CandidateGuard)->Result<(),String> {
+    // Refresh dependency metadata without downloading tarballs, then install
+    // from that metadata and the shared tarball cache. Both phases stay
+    // cancellable and owned by the preparation's process job.
+    let deadline=Instant::now()+Duration::from_secs(600);
+    for metadata in [true, false] {
+        guard.check()?;
+        let mut installer=if metadata {
+            npm::Installer::start_candidate_metadata(node,prefix,target_version)?
+        } else {
+            npm::Installer::start_candidate(node,prefix,target_version)?
+        };
+        guard.installer(Some(installer.handle()))?;
+        let events=installer.take_events().ok_or("runtime-candidate-install-failed")?;
+        // Never publish arbitrary npm output as a structured maintenance error.
+        let app=app.clone();
+        let drain=std::thread::spawn(move || {for event in events {
+            let step=if event.line.contains("http fetch") {Some("downloading")} else if event.line.contains("info run") {Some("installing-dependencies")} else {None};
+            if let Some(step)=step {crate::dsh_upgrade::progress(&app,step);}
+        }});
+        let result=installer.wait_timeout(deadline.saturating_duration_since(Instant::now()));
+        drop(installer);let _=drain.join();guard.installer(None)?;guard.check()?;
+        if !result? {return Err("runtime-candidate-install-failed".into());}
+    }
+    Ok(())
+}
+
+/// npm and the native helper report their cause as a `runtime-…` code, but it
+/// arrives wrapped in a sentence ("runtime-freeze 失败：runtime-…"). The journal
+/// and the diagnostics panel must show that cause, so keep the trailing code
+/// and ignore the wrapper labels instead of flattening everything into one code.
+fn diagnostic_code(error: &str) -> &str {
+    const WRAPPERS: [&str; 2] = ["runtime-freeze", "runtime-profile-check"];
+    error
+        .split(|c: char| !(c.is_ascii_lowercase() || c == '-'))
+        .filter(|token| token.len() > "runtime-".len() && token.starts_with("runtime-") && !WRAPPERS.contains(token))
+        .last()
+        .unwrap_or("runtime-candidate-preparation-failed")
 }
 
 /// Candidate preparation never stops the backend, captures the UI, or changes
@@ -98,24 +127,38 @@ pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_c
             "sourceVersion":source.version,"targetVersion":target_version,"stage":"installing"})).map_err(|_|"runtime-candidate-record-failed")?;
         let result:Result<CandidateSummary,String>=(|| {
             guard.check()?;
-            progress.update(crate::maintenance::Stage::Preparing,"candidate-install-started")?;
-            candidate_install(&source.node_exe,&prefix,&target_version,&guard)?;
-            guard.check()?;
-            progress.update(crate::maintenance::Stage::Preparing,"candidate-freezing")?;
-            let candidate=crate::runtime_store::freeze_candidate(&app,&source.node_exe,&prefix,&target_version)?;
+            crate::dsh_upgrade::progress(&app,"installing");
+            progress.update(crate::maintenance::Stage::Preparing,"candidate-cache-check-started")?;
+            crate::dsh_upgrade::progress(&app,"verifying");
+            let candidate=if let Some(candidate)=crate::runtime_store::reusable_candidate(&app,&source.node_exe,&target_version)? {
+                progress.update(crate::maintenance::Stage::Preparing,"candidate-reused")?;
+                candidate
+            } else {
+                guard.check()?;
+                progress.update(crate::maintenance::Stage::Preparing,"candidate-install-started")?;
+                crate::dsh_upgrade::progress(&app,"installing");
+                candidate_install(&app,&source.node_exe,&prefix,&target_version,&guard)?;
+                guard.check()?;
+                progress.update(crate::maintenance::Stage::Preparing,"candidate-freezing")?;
+                crate::dsh_upgrade::progress(&app,"verifying");
+                crate::runtime_store::freeze_candidate(&app,&source.node_exe,&prefix,&target_version)?
+            };
             guard.check()?;
             crate::remote_control::caller(&window,identity).map_err(|_|"runtime-candidate-stale")?;
             let current=shared.lock().map_err(|_|"runtime-state")?.runtime.clone().ok_or("runtime-candidate-stale")?;
             if current.dsh_bin!=source.dsh_bin || current.node_exe!=source.node_exe {return Err("runtime-candidate-stale".into());}
+            crate::dsh_upgrade::prepared(&app,identity,source.clone(),candidate.clone())?;
             let managed=candidate.managed.ok_or("runtime-candidate-binding")?;
-            let summary=CandidateSummary {id:managed.id,version:target_version.clone(),fingerprint:managed.fingerprint,switch_available:false};
+            let summary=CandidateSummary {id:managed.id,version:target_version.clone(),fingerprint:managed.fingerprint,switch_available:true};
             crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
                 "sourceVersion":source.version,"targetVersion":target_version,"stage":"prepared","candidate":summary})).map_err(|_|"runtime-candidate-record-failed")?;
             progress.prepared()?;
+            crate::dsh_upgrade::progress(&app,"prepared");
             Ok(summary)
         })();
         if let Err(error)=&result {
-            let code=if error.starts_with("runtime-") && error.bytes().all(|b|b.is_ascii_lowercase() || b==b'-') {error.as_str()} else {"runtime-candidate-preparation-failed"};
+            crate::dsh_upgrade::progress(&app,if error=="runtime-candidate-cancelled" {"cancelled"} else {"failed"});
+            let code=diagnostic_code(error);
             let _=crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
                 "targetVersion":target_version,"stage":"failed","errorCode":code}));
             let _=progress.failed(code);
@@ -197,6 +240,7 @@ pub struct Versions {
     pub stable_update_available: bool,
     #[serde(rename = "candidateOnly")]
     pub candidate_only: bool,
+    #[serde(rename="stagedUpdate",default)] pub staged_update:bool,
 }
 
 fn stable_update_available(current: &str, latest: &str) -> Result<bool, String> {
@@ -324,11 +368,25 @@ pub(crate) fn output(command: &mut Command, label: &str, timeout: Duration) -> R
     Ok(out)
 }
 
-fn npm_command(node: &Path) -> Result<Command, String> {
+fn npm_command(node: &Path, cache: &Path) -> Result<Command, String> {
     let cli = npm::npm_cli_for(node).ok_or("未找到 npm")?;
     let mut command = Command::new(node);
-    command.arg(cli);
+    // Override npmrc/environment settings that allow stale or offline metadata.
+    // Each view owns an empty cache, so network errors cannot reuse old results.
+    command.arg(cli).args([
+        "--prefer-online", "--prefer-offline=false", "--offline=false", "--fetch-retries=0",
+    ]).arg("--cache").arg(cache);
     Ok(command)
+}
+
+fn registry_view(node: &Path, field: &str) -> Result<String, String> {
+    let cache = tempfile::Builder::new().prefix("dsh-update-check-").tempdir()
+        .map_err(|e| format!("无法创建版本检测临时目录：{e}"))?;
+    output(
+        npm_command(node, cache.path())?.args(["view", "@deepseek-ai/dsh", field, "--json"]),
+        &format!("npm view @deepseek-ai/dsh {field}"),
+        Duration::from_secs(60),
+    )
 }
 
 fn current_version(runtime: &crate::dsh::Runtime) -> Result<String, String> {
@@ -344,19 +402,12 @@ fn current_version(runtime: &crate::dsh::Runtime) -> Result<String, String> {
 fn check(runtime: &crate::dsh::Runtime) -> Result<Versions, String> {
     let node = &runtime.node_exe;
     let current = current_version(runtime)?;
-    let text = output(
-        npm_command(node)?.args(["view", "@deepseek-ai/dsh", "dist-tags", "--json"]),
-        "npm view @deepseek-ai/dsh dist-tags",
-        Duration::from_secs(60),
-    )?;
+    let text = registry_view(node, "dist-tags")?;
     let tags = parse_tags(&text)?;
-    let published = output(
-        npm_command(node)?.args(["view", "@deepseek-ai/dsh", "versions", "--json"]),
-        "npm view @deepseek-ai/dsh versions",
-        Duration::from_secs(60),
-    )?;
+    let published = registry_view(node, "versions")?;
     Ok(Versions {
-        candidate_only:true,
+        candidate_only:false,
+        staged_update:true,
         stable_update_available: stable_update_available(&current, &tags.latest)?,
         current,
         latest: tags.latest,
@@ -396,7 +447,7 @@ pub fn authorize_backend(app: &AppHandle, instance: u64, url: &str) -> Result<()
     app.add_capability(serde_json::json!({
         "identifier": format!("dsh-update-backend-{instance}"), "windows": ["main"], "local": false,
         "remote": { "urls": [format!("{}/*", url.origin().ascii_serialization())] },
-        "permissions": ["allow-dsh-update", "allow-runtime-ready"]
+        "permissions": ["allow-dsh-update", "allow-runtime-ready", "allow-dsh-update-progress"]
     }).to_string()).map_err(|e| e.to_string())
 }
 
@@ -430,7 +481,7 @@ fn activity_for_backend(activity: Option<(u64, bool)>, instance: u64) -> Result<
     }
 }
 
-fn require_idle(state: &crate::state::AppState) -> Result<(), String> {
+pub(crate) fn require_idle(state: &crate::state::AppState) -> Result<(), String> {
     if activity_for_backend(state.update_activity, state.ui.backend_instance)? {
         return Err("dsh-update-sessions-running".into());
     }
@@ -447,6 +498,7 @@ pub async fn install_dsh_update(
     palette: Option<crate::boot_bar::Palette>,
     channel: Channel,
     target_version: Option<String>,
+    candidate_id: Option<String>,
 ) -> Result<(), String> {
     caller(&window)?;
     crate::remote_control::caller(&window, identity).map_err(|e|e.message)?;
@@ -454,8 +506,9 @@ pub async fn install_dsh_update(
         let shared=window.state::<Shared>();let state=shared.lock().map_err(|_|"runtime-state")?;
         require_idle(&state)?;
     }
-    let _=(payload,palette.and_then(crate::boot_bar::Palette::bounded),channel.args(target_version.as_deref())?);
-    Err("安全数据检查点与迁移契约尚未完成，当前版本继续运行。请重新打开更新页面准备独立候选版本。".into())
+    let _=channel.args(target_version.as_deref())?;
+    crate::dsh_upgrade::install(window,identity,payload,palette.and_then(crate::boot_bar::Palette::bounded),
+        target_version.ok_or("update-candidate-required")?,candidate_id.ok_or("update-candidate-required")?).await
 }
 
 #[cfg(test)]
@@ -473,6 +526,20 @@ mod tests {
         manager.cancel(id,identity).unwrap();assert_eq!(guard.check().unwrap_err(),"runtime-candidate-cancelled");
         assert!(manager.begin(uuid::Uuid::new_v4(),identity).is_err());drop(guard);
         assert!(manager.begin(uuid::Uuid::new_v4(),identity).is_ok());
+    }
+
+    #[test]
+    fn helper_failures_keep_their_real_code_instead_of_the_blanket_code() {
+        for (message, code) in [
+            ("runtime-freeze 失败：runtime-dependency-outside-installation", "runtime-dependency-outside-installation"),
+            ("runtime-candidate-install-timeout", "runtime-candidate-install-timeout"),
+            ("runtime-profile-check 失败：runtime-profile-binding", "runtime-profile-binding"),
+            ("runtime-freeze 失败：boom", "runtime-candidate-preparation-failed"),
+            ("无法启动 npm：spawn failed", "runtime-candidate-preparation-failed"),
+            ("runtime-", "runtime-candidate-preparation-failed"),
+        ] {
+            assert_eq!(diagnostic_code(message), code, "{message}");
+        }
     }
 
     #[test]

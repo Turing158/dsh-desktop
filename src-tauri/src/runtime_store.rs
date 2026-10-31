@@ -1,6 +1,6 @@
 //! Immutable dependency trees and atomic startup selection. Data migration and
 //! automatic version rollback remain separate, unavailable operations.
-use std::{collections::HashSet, fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf}, process::Command, time::Duration};
+use std::{collections::HashMap, fs::{self, File}, io::{self, Read, Write}, path::{Path, PathBuf}, process::Command, sync::{Arc, Mutex, OnceLock}, time::{Duration, Instant}};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Manager;
@@ -30,12 +30,28 @@ struct Manifest {
 struct Selection {
     schema: u32, active: String, previous: Option<String>,
     fingerprint: String, verified_at: u64, backend_ready: bool, ui_ready: bool,
+    #[serde(default)] configured_source: Option<PathBuf>,
 }
 #[derive(Serialize, Deserialize)]
 struct Inventory { schema: u32, fingerprint: String, files: Vec<InventoryFile>, #[serde(rename="totalBytes")] total_bytes: u64 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InventoryFile { path: String, size: u64, sha256: String }
+#[derive(Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryStamp {path:String,stamp:crate::update_io::Stamp}
+#[derive(Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerifiedTree {
+    schema:u32,directory:PathBuf,manifest_hash:String,inventory_hash:String,
+    stamps:Vec<Option<crate::update_io::Stamp>>,directories:Vec<DirectoryStamp>,layout_complete:bool,
+    #[serde(skip)] hashed_files:usize,
+    #[serde(skip)] reused_layout:bool,
+}
+fn verification_cache() -> &'static Mutex<HashMap<PathBuf, Arc<VerifiedTree>>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Arc<VerifiedTree>>>> = OnceLock::new();
+    CACHE.get_or_init(Mutex::default)
+}
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 struct Prepared { version: String, entry: String, fingerprint: String, file_count: usize, total_bytes: u64 }
@@ -111,6 +127,7 @@ fn manifest(root: &Path, id: &str) -> io::Result<Manifest> {
     Ok(m)
 }
 fn verify(root: &Path, m: &Manifest) -> io::Result<PathBuf> {
+    let started=Instant::now();
     let directory=root.join("versions").join(&m.id);
     let raw=read(&directory.join("inventory.json"),MAX_INVENTORY)?;
     if digest(&raw)!=m.inventory_hash {return Err(invalid("runtime-inventory-changed"));}
@@ -118,35 +135,121 @@ fn verify(root: &Path, m: &Manifest) -> io::Result<PathBuf> {
     if inventory.schema!=1 || inventory.fingerprint!=m.fingerprint || inventory.files.len()!=m.file_count || inventory.total_bytes!=m.total_bytes
         || digest(&serde_json::to_vec(&inventory.files)?)!=m.fingerprint {return Err(invalid("runtime-inventory-invalid"));}
     let tree=directory.join("tree"); plain_ancestors(&tree)?;
-    let mut expected=HashSet::new(); let mut total=0u64;
-    for item in &inventory.files {
-        if !relative_valid(&item.path) || !is_digest(&item.sha256) || !expected.insert(item.path.to_ascii_lowercase()) {return Err(invalid("runtime-inventory-invalid"));}
+    let manifest_hash=digest(&serde_json::to_vec(m)?);
+    let receipt_path=root.join("verified").join(format!("{}.bin",m.id));
+    let cached=verification_cache().lock().ok().and_then(|cache|cache.get(&directory).cloned())
+        .or_else(|| {
+            plain_ancestors(receipt_path.parent()?).ok()?;
+            crate::startup_cache::load::<VerifiedTree>(&receipt_path).ok().map(Arc::new)
+        }).filter(|value|value.schema==1 && value.directory==directory && value.manifest_hash==manifest_hash
+            && value.inventory_hash==m.inventory_hash && value.stamps.len()==inventory.files.len()
+            && value.directories.len()<=MAX_FILES && value.directories.first().is_some_and(|dir|dir.path.is_empty()));
+    let mut expected=HashMap::new(); let mut total=0u64;
+    for (index,item) in inventory.files.iter().enumerate() {
+        if !relative_valid(&item.path) || !is_digest(&item.sha256) || expected.insert(item.path.to_ascii_lowercase(),index).is_some() {return Err(invalid("runtime-inventory-invalid"));}
         total=total.checked_add(item.size).filter(|n|*n<=MAX_BYTES).ok_or_else(||invalid("runtime-size-budget"))?;
     }
-    if total!=m.total_bytes || !expected.contains(&m.entry.to_ascii_lowercase()) {return Err(invalid("runtime-inventory-invalid"));}
-    fn walk(root: &Path, path: &Path, depth: usize, expected: &mut HashSet<String>) -> io::Result<()> {
+    if total!=m.total_bytes || !expected.contains_key(&m.entry.to_ascii_lowercase()) {return Err(invalid("runtime-inventory-invalid"));}
+    fn walk(root: &Path, path: &Path, depth: usize, expected: &mut HashMap<String,usize>, jobs: &mut Vec<(usize,PathBuf)>, directories:&mut Vec<DirectoryStamp>) -> io::Result<bool> {
         if depth>80 {return Err(invalid("runtime-depth-budget"));}
-        plain(path,true)?;
+        let (_handle,stamp)=crate::update_io::Stamp::inspect(path,true)?;
+        let mut complete=stamp.is_some();
+        if let Some(stamp)=stamp {
+            directories.push(DirectoryStamp {path:path.strip_prefix(root).map_err(|_|invalid("runtime-linked-path"))?.to_string_lossy().replace('\\',"/"),stamp});
+        }
         for row in fs::read_dir(path)? {
             let path=row?.path(); let info=fs::symlink_metadata(&path)?;
-            if info.is_dir() {walk(root,&path,depth+1,expected)?;} else {
+            if info.is_dir() {complete &= walk(root,&path,depth+1,expected,jobs,directories)?;} else {
                 plain(&path,false)?;
                 let name=path.strip_prefix(root).map_err(|_|invalid("runtime-linked-path"))?.to_string_lossy().replace('\\',"/").to_ascii_lowercase();
-                if !expected.remove(&name) {return Err(invalid("runtime-tree-changed"));}
+                let index=expected.remove(&name).ok_or_else(||invalid("runtime-tree-changed"))?;
+                jobs.push((index,path));
             }
         }
-        Ok(())
+        Ok(complete)
     }
-    walk(&tree,&tree,0,&mut expected)?;
-    if !expected.is_empty() {return Err(invalid("runtime-tree-changed"));}
-    for item in &inventory.files {
-        let path=tree.join(&item.path); plain(&path,false)?;
-        let mut file=File::open(path)?; if file.metadata()?.len()!=item.size {return Err(invalid("runtime-tree-changed"));}
-        let mut hash=Sha256::new(); let mut buffer=[0u8;64*1024]; let mut size=0u64;
-        loop {let n=file.read(&mut buffer)?;if n==0 {break;} size+=n as u64; if size>item.size {return Err(invalid("runtime-tree-changed"));} hash.update(&buffer[..n]);}
-        if size!=item.size || format!("{:x}",hash.finalize())!=item.sha256 {return Err(invalid("runtime-tree-changed"));}
+    let mut jobs=Vec::with_capacity(inventory.files.len());
+    let mut directories=Vec::new();
+    let reuse_layout=cached.as_ref().is_some_and(|value|value.layout_complete && directory_stamps_match(&tree,&value.directories));
+    let layout_complete;
+    if reuse_layout {
+        layout_complete=true;
+        for (index,file) in inventory.files.iter().enumerate() {jobs.push((index,tree.join(&file.path)));}
+    } else {
+        layout_complete=walk(&tree,&tree,0,&mut expected,&mut jobs,&mut directories)?;
+        if !expected.is_empty() {return Err(invalid("runtime-tree-changed"));}
     }
+    // A DPAPI-authenticated receipt can survive process exit. Every file is
+    // still opened with write/delete sharing denied and its identity, size and
+    // ChangeTime checked. Directory proofs detect additions, removals and moves.
+    // Unsupported filesystems and changed files always get a full content hash.
+    let results=std::thread::scope(|scope| {
+        let mut handles=Vec::new();
+        let chunk=jobs.len().div_ceil(crate::update_io::workers()).max(1);
+        for jobs in jobs.chunks(chunk) {
+            let files=&inventory.files;let cached=&cached;
+            handles.push(scope.spawn(move || {
+                let mut verified=Vec::with_capacity(jobs.len());
+                for (index,path) in jobs {
+                    let item=&files[*index];let (mut file,before)=crate::update_io::Stamp::inspect(path,false)?;
+                    let size=if let Some(stamp)=&before {stamp.size()} else {file.metadata()?.len()};
+                    if size!=item.size {return Err(invalid("runtime-tree-changed"));}
+                    let unchanged=before.is_some() && cached.as_ref().is_some_and(|value|value.stamps[*index]==before);
+                    if !unchanged {
+                        let (size,hash)=crate::update_io::hash_reader(&mut file)?;
+                        if size!=item.size || hash!=item.sha256 {return Err(invalid("runtime-tree-changed"));}
+                    }
+                    // Windows denies writers and replacement for this handle's
+                    // lifetime, so another metadata round trip adds no evidence.
+                    #[cfg(not(windows))]
+                    if crate::update_io::Stamp::read(&file)!=before {return Err(invalid("runtime-tree-changed"));}
+                    verified.push((*index,before,!unchanged));
+                }
+                Ok::<_,io::Error>(verified)
+            }));
+        }
+        let mut results=Vec::new();
+        // Join every worker before returning, including after the first failure.
+        let mut error=None;
+        for handle in handles {match handle.join() {
+            Ok(Ok(values))=>results.extend(values),
+            Ok(Err(e))=>{if error.is_none(){error=Some(e);}},
+            Err(_)=>{if error.is_none(){error=Some(invalid("runtime-verify-worker"));}},
+        }}
+        if let Some(error)=error {Err(error)} else {Ok(results)}
+    })?;
+    let mut stamps=vec![None;inventory.files.len()];let mut hashed=0;
+    for (index,stamp,did_hash) in results {stamps[index]=stamp;hashed+=usize::from(did_hash);}
+    if reuse_layout && !directory_stamps_match(&tree,&cached.as_ref().unwrap().directories) {
+        let _=verification_cache().lock().ok().map(|mut cache|cache.remove(&directory));
+        return Err(invalid("runtime-tree-changed"));
+    }
+    let verified=if reuse_layout {
+        Arc::new(VerifiedTree {schema:1,directory:directory.clone(),manifest_hash,inventory_hash:m.inventory_hash.clone(),stamps,
+            directories:cached.as_ref().unwrap().directories.iter().map(|dir|DirectoryStamp {path:dir.path.clone(),stamp:dir.stamp.clone()}).collect(),layout_complete,hashed_files:hashed,reused_layout:reuse_layout})
+    } else {
+        Arc::new(VerifiedTree {schema:1,directory:directory.clone(),manifest_hash,inventory_hash:m.inventory_hash.clone(),stamps,directories,layout_complete,hashed_files:hashed,reused_layout:reuse_layout})
+    };
+    // Publication is optional. A missing/invalid receipt remains a cold full
+    // verification, including on FAT/unsupported file identities.
+    if (!reuse_layout || hashed>0) && layout_complete && verified.stamps.iter().all(Option::is_some) && directory_stamps_match(&tree,&verified.directories) {
+        if let Err(error)=crate::startup_cache::save(&receipt_path,verified.as_ref()) {
+            crate::debug_log(&format!("[startup-perf] receipt-unavailable {error}"));
+        }
+    }
+    if let Ok(mut cache)=verification_cache().lock() {
+        if cache.len()>=4 && !cache.contains_key(&directory) {if let Some(old)=cache.keys().next().cloned(){cache.remove(&old);}}
+        cache.insert(directory,verified.clone());
+    }
+    crate::debug_log(&format!("[update-perf] verify files={} hashed={} cached_layout={} elapsed_ms={}",inventory.files.len(),verified.hashed_files,verified.reused_layout,started.elapsed().as_millis()));
     Ok(tree.join(&m.entry))
+}
+fn directory_stamps_match(tree:&Path,proofs:&[DirectoryStamp])->bool {
+    if proofs.is_empty() || proofs.first().map_or(true,|dir|!dir.path.is_empty()) {return false;}
+    proofs.iter().all(|dir| {
+        if !dir.path.is_empty() && !relative_valid(&dir.path) {return false;}
+        crate::update_io::Stamp::inspect(&tree.join(&dir.path),true).is_ok_and(|(_,current)|current.as_ref()==Some(&dir.stamp))
+    })
 }
 fn load_selection(root: &Path) -> io::Result<Option<Selection>> {
     let path=root.join("selection.json");
@@ -175,6 +278,9 @@ pub fn resolve(app: &tauri::AppHandle, node: &Path) -> Result<Option<Runtime>,St
 fn resolve_at(root: &Path, node: &Path, rejected: impl FnOnce()) -> Result<Option<Runtime>,String> {
     // Invalid overrides retain legacy discovery behavior; valid pins always win.
     if let Some(path)=std::env::var_os(crate::dsh::ENV_DSH).map(PathBuf::from).filter(|p|p.is_file()) {
+        if load_selection(root).ok().flatten().is_some_and(|s|s.configured_source.as_ref()==Some(&path)) {
+            if let Ok(Some(runtime))=selected(root,node) {return Ok(Some(runtime))}
+        }
         return Ok(Some(Runtime {node_exe:node.into(),dsh_bin:path,source:DshSource::Configured,version:None,managed:None}));
     }
     match selected(root,node) {
@@ -213,7 +319,37 @@ fn candidate_directory_at(root: &Path) -> Result<PathBuf,String> {
     }
     fs::create_dir_all(&directory).map_err(|_|"runtime-candidate-stage-unavailable")?;
     plain_ancestors(&directory).map_err(|_|"runtime-linked-path")?;
+    let cache=root.join("npm-cache");
+    fs::create_dir_all(&cache).map_err(|_|"runtime-store-unavailable")?;
+    plain_ancestors(&cache).map_err(|_|"runtime-linked-path")?;
     Ok(directory)
+}
+
+#[derive(Serialize,Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct PreparedCandidate {schema:u32,id:String,version:String,fingerprint:String}
+pub fn reusable_candidate(app:&tauri::AppHandle,node:&Path,version:&str)->Result<Option<Runtime>,String> {
+    reusable_candidate_at(&directory(app)?,node,version)
+}
+fn reusable_candidate_at(root:&Path,node:&Path,version:&str)->Result<Option<Runtime>,String> {
+    crate::npm::candidate_argv(Path::new("candidate"),version)?;
+    let record=root.join("prepared-candidates").join(format!("{version}.json"));
+    if !record.try_exists().map_err(|_|"runtime-candidate-record-unavailable")? {return Ok(None)}
+    let result=(|| {
+        plain_ancestors(record.parent().ok_or("runtime-candidate-binding")?).map_err(|_|"runtime-linked-path")?;
+        let prepared:PreparedCandidate=serde_json::from_slice(&read(&record,16*1024).map_err(|_|"runtime-candidate-record-invalid")?).map_err(|_|"runtime-candidate-record-invalid")?;
+        let m=manifest(root,&prepared.id).map_err(|_|"runtime-manifest-invalid")?;
+        if prepared.schema!=1 || prepared.version!=version || m.version!=version || prepared.fingerprint!=m.fingerprint
+            || file_hash(node).map_err(|_|"runtime-node-changed")?!=m.node_hash {return Err("runtime-candidate-binding")}
+        let entry=verify(root,&m).map_err(|_|"runtime-tree-changed")?;
+        let reported=candidate_version(node,&entry,&root.join("versions").join(&m.id)).map_err(|_|"runtime-candidate-version-unavailable")?;
+        if reported.trim_start_matches('v')!=version {return Err("runtime-candidate-version-mismatch")}
+        Ok(runtime(node,entry,&m,false))
+    })();
+    match result {
+        Ok(candidate)=>Ok(Some(candidate)),
+        Err(code)=>{crate::debug_log(&format!("[update-perf] cached-candidate-rejected {code}"));Ok(None)},
+    }
 }
 
 /// Publish a verified tree without changing selection or first-install intent.
@@ -231,6 +367,13 @@ fn freeze_candidate_at(root: &Path,node: &Path,prefix: &Path,version: &str,helpe
     if found.trim_start_matches('v')!=version {return Err("runtime-candidate-version-mismatch".into());}
     let result=freeze_at_context(root,node,entry.parent().and_then(Path::parent).ok_or("runtime-candidate-binding")?,helper,Some(prefix))?;
     if result.version.as_deref()!=Some(version) {return Err("runtime-candidate-version-mismatch".into());}
+    let managed=result.managed.as_ref().ok_or("runtime-candidate-binding")?;
+    let records=root.join("prepared-candidates");
+    fs::create_dir_all(&records).map_err(|_|"runtime-candidate-record-failed")?;
+    plain_ancestors(&records).map_err(|_|"runtime-linked-path")?;
+    crate::maintenance::atomic_json(&records.join(format!("{version}.json")),&PreparedCandidate {
+        schema:1,id:managed.id.clone(),version:version.into(),fingerprint:managed.fingerprint.clone(),
+    }).map_err(|_|"runtime-candidate-record-failed")?;
     Ok(result)
 }
 fn candidate_version(node:&Path,entry:&Path,prefix:&Path)->Result<String,String> {
@@ -333,11 +476,28 @@ fn commit_first(root: &Path, runtime: &Runtime) -> io::Result<()> {
     let m=manifest(root,&id)?;
     if id!=managed.id || m.fingerprint!=managed.fingerprint || root.join("versions").join(&id).join("tree").join(&m.entry)!=runtime.dsh_bin || runtime.version.as_deref()!=Some(&m.version) {return Err(invalid("runtime-pending-changed"));}
     if load_selection(root)?.is_some() {return Err(invalid("runtime-selection-already-exists"));}
-    let selection=Selection {schema:1,active:managed.id.clone(),previous:None,fingerprint:managed.fingerprint.clone(),verified_at:crate::maintenance::now_ms(),backend_ready:true,ui_ready:true};
+    let selection=Selection {schema:1,active:managed.id.clone(),previous:None,fingerprint:managed.fingerprint.clone(),verified_at:crate::maintenance::now_ms(),backend_ready:true,ui_ready:true,configured_source:None};
     crate::maintenance::atomic_json(&root.join("selection.json"),&selection)?;
     // A stale pending reference is harmless after selection committed.
     let _=fs::remove_file(root.join("first-install.json"));
     Ok(())
+}
+
+pub fn verify_candidate(app:&tauri::AppHandle,target:&Runtime)->Result<(),String> {
+    let root=directory(app)?;let managed=target.managed.as_ref().ok_or("runtime-unmanaged")?;
+    let m=manifest(&root,&managed.id).map_err(|_|"runtime-manifest-invalid")?;
+    if m.fingerprint!=managed.fingerprint || Some(m.version.as_str())!=target.version.as_deref()
+        || file_hash(&target.node_exe).map_err(|_|"runtime-node-changed")?!=m.node_hash
+        || verify(&root,&m).map_err(|_|"runtime-tree-changed")?!=target.dsh_bin {return Err("runtime-candidate-binding".into())} Ok(())
+}
+pub fn commit_update(app:&tauri::AppHandle,target:&Runtime,source:&Runtime)->Result<(),String> {
+    verify_candidate(app,target)?;
+    let root=directory(app)?;let m=target.managed.as_ref().ok_or("runtime-unmanaged")?;
+    let old=load_selection(&root).map_err(|_|"runtime-selection-invalid")?;
+    let configured_source=if source.source==DshSource::Configured {Some(source.dsh_bin.clone())} else {old.as_ref().and_then(|s|s.configured_source.clone())};
+    let selection=Selection {schema:1,active:m.id.clone(),previous:source.managed.as_ref().map(|s|s.id.clone()).filter(|id|id!=&m.id),fingerprint:m.fingerprint.clone(),
+        verified_at:crate::maintenance::now_ms(),backend_ready:true,ui_ready:true,configured_source};
+    crate::maintenance::atomic_json(&root.join("selection.json"),&selection).map_err(|_|"runtime-selection-save-failed".into())
 }
 
 /// The native backend readiness check alone cannot commit a first install.
@@ -406,7 +566,7 @@ mod tests {
     }
     fn select(root: &Path, r: &Runtime) {
         let m=r.managed.as_ref().unwrap();
-        crate::maintenance::atomic_json(&root.join("selection.json"),&Selection {schema:1,active:m.id.clone(),previous:None,fingerprint:m.fingerprint.clone(),verified_at:1,backend_ready:true,ui_ready:true}).unwrap();
+        crate::maintenance::atomic_json(&root.join("selection.json"),&Selection {schema:1,active:m.id.clone(),previous:None,fingerprint:m.fingerprint.clone(),verified_at:1,backend_ready:true,ui_ready:true,configured_source:None}).unwrap();
     }
     #[test]
     fn pending_first_install_requires_commit_and_preserves_other_versions() {
@@ -435,6 +595,57 @@ mod tests {
         let mut s=load_selection(&root).unwrap().unwrap();s.ui_ready=false;crate::maintenance::atomic_json(&root.join("selection.json"),&s).unwrap();assert!(selected(&root,&node).is_err());
         select(&root,&a);
         fs::write(root.join("versions/fixture-a/inventory.json"),b"{}").unwrap();assert!(selected(&root,&node).is_err());
+    }
+    #[test]
+    fn cached_hashes_reject_same_size_edits_with_restored_modified_time() {
+        let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
+        let a=fixture(&root,"fixture-cache",&node);select(&root,&a);
+        assert!(selected(&root,&node).unwrap().is_some());
+        assert!(selected(&root,&node).unwrap().is_some());
+        let modified=fs::metadata(&a.dsh_bin).unwrap().modified().unwrap();
+        fs::write(&a.dsh_bin,b"changed").unwrap();
+        File::options().write(true).open(&a.dsh_bin).unwrap().set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
+        assert_eq!(fs::metadata(&a.dsh_bin).unwrap().len(),7);
+        assert!(selected(&root,&node).is_err());
+        fs::write(&a.dsh_bin,b"fixture").unwrap();
+        assert!(selected(&root,&node).unwrap().is_some());
+        let replaced=a.dsh_bin.with_extension("replaced");fs::write(&replaced,b"changed").unwrap();
+        fs::remove_file(&a.dsh_bin).unwrap();fs::rename(replaced,&a.dsh_bin).unwrap();
+        File::options().write(true).open(&a.dsh_bin).unwrap().set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
+        assert!(selected(&root,&node).is_err());
+    }
+    #[test]
+    #[cfg(windows)]
+    fn durable_receipt_survives_a_new_process_and_detects_added_files() {
+        const CHILD:&str="DSH_STARTUP_RECEIPT_TEST";
+        if let Some(root)=std::env::var_os(CHILD) {
+            let root=PathBuf::from(root);let node=std::env::current_exe().unwrap();
+            let runtime=selected(&root,&node).unwrap().unwrap();
+            let directory=root.join("versions/fixture-durable");
+            let verified=verification_cache().lock().unwrap().get(&directory).cloned().unwrap();
+            assert!(verified.reused_layout);assert_eq!(verified.hashed_files,0);
+            let parent=runtime.dsh_bin.parent().unwrap();let modified=fs::metadata(parent).unwrap().modified().unwrap();
+            fs::write(parent.join("unexpected.js"),b"unexpected").unwrap();
+            use std::os::windows::fs::OpenOptionsExt;
+            let handle=fs::OpenOptions::new().access_mode(0x100).custom_flags(0x02000000).open(parent).unwrap();
+            handle.set_times(fs::FileTimes::new().set_modified(modified)).unwrap();drop(handle);
+            assert!(selected(&root,&node).is_err());
+            fs::remove_file(parent.join("unexpected.js")).unwrap();
+            assert!(selected(&root,&node).is_ok());
+            return;
+        }
+        let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
+        let runtime=fixture(&root,"fixture-durable",&node);select(&root,&runtime);
+        selected(&root,&node).unwrap();
+        assert!(root.join("verified/fixture-durable.bin").is_file());
+        let output=Command::new(node).args(["--exact","runtime_store::tests::durable_receipt_survives_a_new_process_and_detects_added_files","--nocapture"])
+            .env(CHILD,&root).output().unwrap();
+        assert!(output.status.success(),"{}\n{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+        // An invalid authenticated-cache file falls back to actual content.
+        verification_cache().lock().unwrap().remove(&root.join("versions/fixture-durable"));
+        fs::write(root.join("verified/fixture-durable.bin"),b"invalid receipt").unwrap();
+        selected(&root,&std::env::current_exe().unwrap()).unwrap();
+        assert!(verification_cache().lock().unwrap().get(&root.join("versions/fixture-durable")).unwrap().hashed_files>0);
     }
     #[test]
     fn invalid_ids_cannot_escape_the_store() {
@@ -478,6 +689,26 @@ mod tests {
         assert_eq!(fs::read(root.join("selection.json")).unwrap(),selection);assert!(!root.join("first-install.json").exists());
         assert_eq!(selected(&root,&node).unwrap().unwrap().dsh_bin,previous.dsh_bin);
         assert!(package.join("lib/bin.js").is_file());
+        let count=fs::read_dir(root.join("versions")).unwrap().count();
+        let reused=reusable_candidate_at(&root,&node,"0.2.2-test.1").unwrap().unwrap();
+        assert_eq!(reused.dsh_bin,candidate.dsh_bin);assert_eq!(fs::read_dir(root.join("versions")).unwrap().count(),count);
+        assert_eq!(fs::read(root.join("selection.json")).unwrap(),selection);
+        fs::write(&candidate.dsh_bin,b"corrupt").unwrap();
+        assert!(reusable_candidate_at(&root,&node,"0.2.2-test.1").unwrap().is_none());
+        assert!(reusable_candidate_at(&root,&node,"0.2.2-test.2").unwrap().is_none());
+    }
+    #[test]
+    #[ignore = "read-only timing of a locally installed runtime"]
+    fn measure_runtime_verification() {
+        let root=PathBuf::from(std::env::var_os("DSH_PERF_RUNTIME_ROOT").expect("runtime root"));
+        let id=std::env::var("DSH_PERF_RUNTIME_ID").expect("runtime id");
+        let m=manifest(&root,&id).unwrap();
+        let first=Instant::now();verify(&root,&m).unwrap();let full_ms=first.elapsed().as_millis();
+        let second=Instant::now();verify(&root,&m).unwrap();let reused_ms=second.elapsed().as_millis();
+        verification_cache().lock().unwrap().remove(&root.join("versions").join(&id));
+        let third=Instant::now();verify(&root,&m).unwrap();let persisted_ms=third.elapsed().as_millis();
+        let verified=verification_cache().lock().unwrap().get(&root.join("versions").join(&id)).cloned().unwrap();
+        println!("UPDATE_VERIFY_BENCH files={} bytes={} first_ms={} reused_ms={} persisted_ms={} persisted_hashed={} persisted_layout={}",m.file_count,m.total_bytes,full_ms,reused_ms,persisted_ms,verified.hashed_files,verified.reused_layout);
     }
     #[test]
     fn profile_preflight_reads_private_request_and_rejects_changed_bindings() {

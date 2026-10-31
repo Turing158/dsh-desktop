@@ -71,6 +71,7 @@ async function launch(round) {
     WEBVIEW2_USER_DATA_FOLDER: join(root, 'webview'),
     NODE_OPTIONS: '--require=' + JSON.stringify(preload), npm_config_offline: 'true',
   })
+  const started = Date.now()
   const child = spawn(exe, [], { cwd: app, env, windowsHide: true, stdio: 'ignore' })
   let timer
   try {
@@ -78,6 +79,7 @@ async function launch(round) {
       new Promise((_, reject) => { timer = setTimeout(() => reject(Error('No WebView probe response')), 90000) }),
       new Promise((_, reject) => { child.once('error', reject); child.once('exit', code => reject(Error('Desktop exited: ' + code))) }),
     ])
+    const startupMs = Date.now() - started
     assert.ok(page.ok, page.error)
     assert.ok(page.profiles.some(p => p.profileId === 'cmd'))
     const runtime = JSON.parse(await readFile(runtimeInfo, 'utf8'))
@@ -89,7 +91,14 @@ async function launch(round) {
       assert.deepEqual(await readFile(join(cache, destination)), await readFile(resolve('src-tauri', source)), destination)
     }
     assert.deepEqual(await readdir(app), ['deepseek-harness-desktop.exe'])
-    report['round' + round] = { page, runtime }
+    const log = await readFile(join(root, `host-${round}.log`), 'utf8')
+    const timing = log.match(/verify files=(\d+) hashed=(\d+)(?: cached_layout=(true|false))? elapsed_ms=(\d+)/)
+    const verification = timing ? {
+      files: Number(timing[1]), hashed: Number(timing[2]),
+      cachedLayout: timing[3] === undefined ? null : timing[3] === 'true', elapsedMs: Number(timing[4]),
+    } : null
+    report['round' + round] = { page, runtime, startupMs, verification }
+    console.log(JSON.stringify({ round, startupMs, verification }))
     return runtime.patch
   } finally {
     clearTimeout(timer)

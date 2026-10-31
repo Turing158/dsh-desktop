@@ -38,7 +38,13 @@ test('server listener plans reject nonlocal addresses and invalid ports before b
   const previous = process.env.DSH_DESKTOP_DSH_BIN
   process.env.DSH_DESKTOP_DSH_BIN = bin
   try {
-    const { parseListeners } = await import('./lan-webserver.mjs')
+    const { parseListeners, default: DesktopWebServer } = await import('./lan-webserver.mjs')
+    const parent = Object.getPrototypeOf(DesktopWebServer.prototype), original = parent.collectIndexInjections
+    const peer = { id: 'authenticated-page' }
+    try {
+      parent.collectIndexInjections = function (actual) { assert.equal(actual, peer); return [] }
+      assert.deepEqual(DesktopWebServer.prototype.collectIndexInjections.call({}, peer), [])
+    } finally { parent.collectIndexInjections = original }
     const local = { address: '127.0.0.1', port: 3080 }
     assert.deepEqual(parseListeners(JSON.stringify([local, local])), [local])
     for (const entry of [
