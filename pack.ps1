@@ -17,22 +17,21 @@
          strip=true (symbols removed). This script does not restate them.
       3. The installer uses solid LZMA compression for the app and desktop
          plugins. It detects Node.js/npm and WebView2, then downloads only
-         missing components selected on its checkbox page. Portable retains
-         its complete runtime. Both distributions exclude DSH.
+         missing components selected on its checkbox page. All distributions
+         exclude DSH.
 
     After a successful build the artifacts are COPIED flat into .\pack - no
     per-type subfolders - named dsh-desktop-v<version>-<type>-win-<arch>
     (single omits the <type> segment and its dash):
 
-      pack\dsh-desktop-vX.Y.Z-portable-win-x64.zip    portable ZIP with Node.js/npm and WebView2
       pack\dsh-desktop-vX.Y.Z-installer-win-x64.exe   compact installer with optional online runtimes
       pack\dsh-desktop-vX.Y.Z-win-x64.exe             single-file distribution
 
     The <arch> segment follows -Arch (default All builds both x64 and x86 in
     one run; Host builds only the rustc host architecture), and the version
-    from tauri.conf.json. Every portable architecture gets Node.js/npm and WebView2,
-    pinned by tools\offline-runtime.json (x64) and tools\offline-runtime-x86.json
-    (x86). Installers download these verified assets only when needed and selected.
+    from tauri.conf.json. Installer runtime downloads are pinned by
+    tools\offline-runtime.json (x64) and tools\offline-runtime-x86.json (x86).
+    Installers download these verified assets only when needed and selected.
     DSH and its dependencies are not bundled; startup reuses an existing
     installation or installs DSH through npm. Old artifacts of the
     same type are replaced on every run - across architectures - so the folder
@@ -50,8 +49,8 @@
     incremental. Use -Clean for a from-scratch measure of the final size.
 
 .PARAMETER Target
-    All (default): build portable, single, and the NSIS installer.
-    Portable: build portable and the NSIS installer, without single.
+    All (default): build single and the NSIS installer.
+    Installer: build only the NSIS installer.
     Single: build only the single exe, without downloading offline runtimes.
     Single embeds desktop plugins and writes them to the user's app cache at
     startup. WebView2 and Node.js/npm must be installed by the user; Git uses
@@ -73,8 +72,8 @@
     Process priority for the build tree: Idle, BelowNormal (default), Normal.
 
 .PARAMETER SkipBundle
-    Skip the generated installer. Portable includes Node.js/npm and WebView2;
-    single uses the system runtime. Neither includes DSH.
+    Skip the generated installer and build only single, which uses the system
+    runtime and does not include DSH. Cannot be combined with -Target Installer.
 
 .PARAMETER Clean
     Run `cargo clean --release` first, so the reported sizes come from a full
@@ -86,12 +85,16 @@
 
 .EXAMPLE
     .\pack.ps1
-    Build x64 and x86, then collect portable ZIPs, installers, and singles
+    Build x64 and x86, then collect installers and singles
     for both architectures into .\pack.
 
 .EXAMPLE
     .\pack.ps1 -SkipBundle
-    Build portable and single, without an installer.
+    Build only single, without an installer or offline runtime downloads.
+
+.EXAMPLE
+    .\pack.ps1 -Target Installer
+    Build only the installers for x64 and x86.
 
 .EXAMPLE
     .\pack.ps1 -Arch x86
@@ -133,7 +136,7 @@ param(
     [switch]$SkipBundle,
     [switch]$Clean,
 
-    [ValidateSet('All', 'Portable', 'Single')]
+    [ValidateSet('All', 'Installer', 'Single')]
     [string]$Target = 'All',
 
     [ValidateNotNullOrEmpty()]
@@ -141,6 +144,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($Target -eq 'Installer' -and $SkipBundle) {
+    throw '-Target Installer 不能与 -SkipBundle 同时使用。'
+}
+$buildInstaller = $Target -ne 'Single' -and -not $SkipBundle
+$buildSingle = $Target -ne 'Installer'
 
 # ── locate the project ──────────────────────────────────────────────────────
 $root = $PSScriptRoot
@@ -239,14 +248,12 @@ if ($Clean) {
     if ($LASTEXITCODE -ne 0) { Write-Error 'cargo clean 失败。'; exit 1 }
 }
 
-# Every architecture needs its own runtime: the payload carries native
-# binaries (node.exe, the fixed WebView2 runtime), so an x64 payload cannot
-# serve an x86 build. Each recipe is pinned separately and cached by digest, so
-# a rebuilt architecture never re-downloads the other one's assets.
+# Prepare verified runtime manifests only for installers. Each architecture's
+# recipe is cached separately; its archive checksums pin the optional downloads.
 $runtimeRoots = @{}
 $runtimeTool = Join-Path $root 'tools\prepare-offline-runtime.mjs'
-if ($Target -ne 'Single') {
-    Write-Host '准备 Node.js/npm 与 WebView2（首次在构建机下载，以后复用校验后的缓存）……' -ForegroundColor Cyan
+if ($buildInstaller) {
+    Write-Host '准备安装器组件校验信息（首次在构建机下载 Node.js/npm 与 WebView2，以后复用缓存）……' -ForegroundColor Cyan
     New-Item -ItemType Directory -Path (Join-Path $root 'src-tauri\target') -Force | Out-Null
     foreach ($runtimeArch in $archList) {
         Write-Host "  准备 $runtimeArch 离线环境……" -ForegroundColor DarkGray
@@ -261,14 +268,13 @@ Write-Host ''
 Write-Host '  dsh desktop 打包' -ForegroundColor Cyan
 Write-Host "  项目        $root"
 Write-Host "  输出类型    $Target"
-if ($Target -ne 'Single') { Write-Host '  便携模式    内置 Node.js、npm 与固定版 WebView2；不包含 DSH' }
 Write-Host "  目标架构    $($archList -join '、')（本机 $hostArch）"
 Write-Host "  构建配置    release（体积优化：opt-level=z）"
 Write-Host "  编译并发    $Jobs 个 rustc（共 $([Environment]::ProcessorCount) 逻辑核心）"
 if ($Target -eq 'Single') { Write-Host '  打包        仅 single 单文件 exe' }
 elseif ($SkipBundle) { Write-Host '  打包        跳过安装包' -ForegroundColor Yellow }
 else { Write-Host '  打包        含精简安装包（LZMA 压缩，运行环境按需联网安装）' }
-Write-Host "  产物收集    $OutDir（文件名区分类型：portable / installer / single）"
+Write-Host "  产物收集    $OutDir（文件名区分类型：installer / single）"
 Write-Host '  提示：RUSTFLAGS 变化后的第一次构建会全量重编依赖，之后为增量。' -ForegroundColor DarkGray
 Write-Host ''
 
@@ -320,18 +326,9 @@ function Resolve-OutputPath([string]$path) {
     return $full
 }
 
-# Deleting a staging tree is the one job PowerShell's own file provider cannot
-# do here: the offline runtime ships node_modules paths longer than MAX_PATH
-# (270 characters in this repository), robocopy and tar create and read them
-# happily, but Remove-Item cannot even resolve them - and with
-# $ErrorActionPreference = 'Stop' a single such file turned an ALREADY
-# SUCCESSFUL build into a failed run: the artifact had been published, then the
-# cleanup threw, so everything after it - the installer and the single exe
-# - was never collected, while the staging folder stayed in the output folder.
-# Remove-StagingTree deletes through the \\?\ long-path prefix, falls back to
-# robocopy /MIR when even that is refused, and only ever WARNS: leftover
-# temporary litter must never cost a finished build. Only paths inside the
-# output folder are accepted.
+# Cleanup supports long paths through the \\?\ prefix and robocopy /MIR.
+# Leftover staging files only warn, so cleanup cannot abort artifact collection.
+# Only paths inside the output folder are accepted.
 function Remove-StagingTree([string]$path) {
     try { $full = Resolve-OutputPath $path }
     catch {
@@ -404,23 +401,22 @@ $collected = @()
 
 foreach ($arch in $archList) {
     $targetTriple = if ($arch -eq $hostArch) { $null } elseif ($arch -eq 'x64') { 'x86_64-pc-windows-msvc' } else { 'i686-pc-windows-msvc' }
-    # This architecture's own offline runtime; every architecture has one.
+    # This architecture's verified runtime manifest, needed only by the installer.
     $archRuntimeRoot = $runtimeRoots[$arch]
     # Cross builds keep their tree under target\<triple>\release.
     $releaseDir = if ($targetTriple) { Join-Path $root "src-tauri\target\$targetTriple\release" } else { Join-Path $root 'src-tauri\target\release' }
     $exePath = Join-Path $releaseDir 'deepseek-harness-desktop.exe'
     $exeName = Split-Path $exePath -Leaf
-    $portableZipName = "dsh-desktop-v$version-portable-win-$arch.zip"
     $singleName = "dsh-desktop-v$version-win-$arch.exe"
 
-    # This binary supports both the strict portable runtime and the installer's
-    # persisted selection of system/downloaded components. DSH is installed separately.
+    # The installer binary uses its persisted selection of system/downloaded
+    # components. DSH is installed separately.
     $bundleArgs = @('--no-bundle', '--features', 'offline')
     if ($targetTriple) { $bundleArgs += @('--target', $targetTriple) }
 
-    # ── run this architecture's portable build ──────────────────────────────
-    if ($Target -ne 'Single') {
-        Write-Host "构建 $arch portable（含 Node.js/npm 与 WebView2，不含 DSH）……" -ForegroundColor Cyan
+    # ── build this architecture's installer application ─────────────────────
+    if ($buildInstaller) {
+        Write-Host "构建 $arch 安装版（运行环境在安装时按需下载，不含 DSH）……" -ForegroundColor Cyan
         $exitCode = 0
         try {
             Push-Location $root
@@ -440,69 +436,18 @@ foreach ($arch in $archList) {
         }
     }
 
-    # ── collect this architecture's portable ZIP ────────────────────────────
-    if ($Target -ne 'Single') {
-        if (-not (Test-Path $exePath)) { throw "未找到构建产物：$exePath" }
-        $portableStage = Join-Path $packRoot ('.portable-' + [guid]::NewGuid().ToString('N'))
-        $archiveStage = Join-Path $packRoot ('.archive-' + [guid]::NewGuid().ToString('N') + '.zip')
-        try {
-            # Assemble and verify first; a failed run leaves the previous artifacts intact.
-            New-Item -ItemType Directory -Path $portableStage -Force | Out-Null
-            Copy-Item -Path $exePath -Destination $portableStage -Force
-            # The exe loads plugins relative to its resource directory. Copy exactly the
-            # installer resource map, so a portable folder works outside this checkout.
-            $portableBase = [IO.Path]::GetFullPath($portableStage) + [IO.Path]::DirectorySeparatorChar
-            $resourceMap = $conf.bundle.resources
-            foreach ($resource in $resourceMap.PSObject.Properties) {
-                $resourceSource = [IO.Path]::GetFullPath((Join-Path (Join-Path $root 'src-tauri') $resource.Name))
-                $resourceTarget = [IO.Path]::GetFullPath((Join-Path $portableStage $resource.Value))
-                if (-not $resourceTarget.StartsWith($portableBase, [StringComparison]::OrdinalIgnoreCase)) {
-                    throw "Portable resource escapes output directory: $($resource.Value)"
-                }
-                New-Item -ItemType Directory -Path (Split-Path $resourceTarget -Parent) -Force | Out-Null
-                Copy-Item -LiteralPath $resourceSource -Destination $resourceTarget -Force
-            }
-            # 两种产物都必须包含 Node.js/npm 与 WebView2，缺少时停止打包。
-            if ([string]::IsNullOrEmpty($archRuntimeRoot)) {
-                throw "$arch 的离线运行环境路径为空，拒绝生成不完整的 portable 包。"
-            }
-            if (-not (Test-Path -LiteralPath (Join-Path $archRuntimeRoot 'runtime.json'))) {
-                throw "离线运行环境不完整（缺少 runtime.json）：$archRuntimeRoot"
-            }
-            $runtimeDestination = Join-Path $portableStage 'runtime'
-            & robocopy.exe $archRuntimeRoot $runtimeDestination /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
-            if ($LASTEXITCODE -ge 8) { throw "复制内置环境失败（robocopy $LASTEXITCODE）。" }
-            & node $runtimeTool --verify $runtimeDestination
-            if ($LASTEXITCODE -ne 0) { throw '复制后的运行环境校验失败，未替换现有产物。' }
-            # 压缩前最后一道自检：载荷真的在暂存目录里。
-            if (-not (Test-Path -LiteralPath (Join-Path $runtimeDestination 'runtime.json'))) {
-                throw '暂存目录里没有 runtime\runtime.json，未替换现有产物。'
-            }
-            Write-Host "压缩 $arch portable 包……"
-            & (Join-Path $env:SystemRoot 'System32\tar.exe') -a -cf $archiveStage -C $portableStage .
-            if ($LASTEXITCODE -ne 0) { throw 'portable ZIP 压缩失败，未替换现有产物。' }
-            # The unpacked folder is only a staging area now; the ZIP is the artifact.
-            $archivePath = Publish-OutputFile $archiveStage $portableZipName '^dsh-desktop-v.+?-portable(-thin)?-win-(x64|x86)\.zip$'
-            $collected += @{ Kind = '便携版 ZIP'; Path = $archivePath; Size = (Get-ArtifactSize $archivePath) }
-        } finally {
-            # A failed run must not leave GUID-named staging litter in the output;
-            # a failing cleanup must not cost the run its remaining artifacts.
-            Remove-StagingTree $portableStage
-            Remove-StagingTree $archiveStage
-        }
-    }
-
     # ── generate this architecture's compact online installer ────────────────
-    if (-not $SkipBundle -and $Target -ne 'Single') {
+    if ($buildInstaller) {
+        if (-not (Test-Path -LiteralPath $exePath)) { throw "未找到安装版构建产物：$exePath" }
         # Only the application and plugins are embedded; the runtime manifest
         # provides pinned checksums for optional downloads on the user's machine.
-        $installerPath = New-PortableInstaller -Arch $arch -Version $version -ProductName $productName `
+        $installerPath = New-DesktopInstaller -Arch $arch -Version $version -ProductName $productName `
             -Publisher $publisher -ExeName $exeName -AppExe $exePath -RuntimeManifest (Join-Path $archRuntimeRoot 'runtime.json')
         $collected += @{ Kind = '安装包    '; Path = $installerPath; Size = (Get-ArtifactSize $installerPath) }
     }
 
     # ── build and collect this architecture's single exe ────────────────────
-    if ($Target -ne 'Portable') {
+    if ($buildSingle) {
         Write-Host "构建 $arch single 单文件版（内置桌面插件，使用系统运行环境）……"
         $singleArgs = @('--no-bundle', '--features', 'single')
         if ($targetTriple) { $singleArgs += @('--target', $targetTriple) }
@@ -528,18 +473,16 @@ foreach ($arch in $archList) {
 # ── report ──────────────────────────────────────────────────────────────────
 Write-Host ''
 Write-Host '  打包完成，产物已收集：' -ForegroundColor Green
-if ($Target -ne 'Single') {
-    Write-Host '  portable ZIP 包含 Node.js、npm、固定版 WebView2；所有分发包均不包含 DSH 及其依赖。'
+if ($buildInstaller) {
+    Write-Host '  安装包仅包含应用和桌面插件，Node.js/npm 与 WebView2 在安装时按需下载。'
     Write-Host '  启动时检测已有 DSH，缺少时通过 npm 联网安装；支持在应用内更新 DSH。'
     if ($archList -contains 'x86') {
         Write-Host '  x86 用 Node.js 22 与 x86 版 WebView2。' -ForegroundColor DarkGray
     }
     Write-Host '  PowerShell 7 和 Git 按目标电脑已有安装提供，不随包携带。'
-    if (-not $SkipBundle) {
-        Write-Host '  安装包使用 LZMA 压缩；检测到已有组件时取消勾选并禁用，缺失组件默认勾选、联网安装。'
-    }
+    Write-Host '  安装包使用 LZMA 压缩；检测到已有组件时取消勾选并禁用，缺失组件默认勾选、联网安装。'
 }
-if ($Target -ne 'Portable') {
+if ($buildSingle) {
     Write-Host '  single 只需分发一个 exe；桌面插件在启动时写入应用缓存。'
     Write-Host '  用户需安装 WebView2、Node.js/npm；Git 使用已有安装，缺少 DSH 时自动联网安装。'
 }

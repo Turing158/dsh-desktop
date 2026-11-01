@@ -123,19 +123,18 @@ HTML / HTM 文件支持在右侧栏切换编辑与预览：编辑时点击 **预
 
 | 分发形式 | 适合谁 | 运行环境 |
 | --- | --- | --- |
-| **便携包** `dsh-desktop-v<版本>-portable-win-<架构>.zip` | 希望解压后启动，不单独准备 Node.js / WebView2 的用户 | 自带 Node.js、npm 和固定版 WebView2；不包含 dsh 及其依赖，缺少 dsh 时联网安装。必须完整保留解压目录中的 `runtime` 和 `dsh-plugin`。 |
 | **Windows 安装包** `dsh-desktop-v<版本>-installer-win-<架构>.exe` | 希望使用更小安装包、复用已有环境的用户 | 仅包含应用和桌面插件；安装时检测 Node.js 22+ / npm 与 WebView2。缺失组件默认勾选、联网下载；已检测到的组件取消勾选且无法勾选。不包含 dsh，缺少 dsh 时在首次启动中联网安装。 |
 | **单文件版** `dsh-desktop-v<版本>-win-<架构>.exe` | 已有运行环境，希望只携带一个 EXE 的用户 | 桌面插件内嵌，启动时释放到应用缓存；仍需要系统 Node.js 22+ / npm 和 WebView2。 |
 
 当前目标平台是 **Windows 10 / 11 x64**，终端需要系统支持 ConPTY。Git 和 PowerShell 7 不随包提供；使用对应能力时请自行安装。
 
-**便携包和安装包均不内置 dsh，也不包含 AI 模型。** 启动时优先使用已安装的 dsh，未找到时通过 npm 联网安装。调用在线模型、安装社区插件等操作也可能需要网络和对应配置。
+**安装包和单文件版均不内置 dsh，也不包含 AI 模型。** 启动时优先使用已安装的 dsh，未找到时通过 npm 联网安装。调用在线模型、安装社区插件等操作也可能需要网络和对应配置。
 
 安装器的运行环境页允许取消勾选缺失的组件；跳过后需自行准备相应环境才能运行应用。勾选的 Node.js/npm 与固定版 WebView2 会下载到应用目录供本应用使用，不修改系统安装。下载文件须通过 SHA-256 校验；已有且可用的系统环境会被直接复用。仅有 Node.js 旧版本、缺少 npm 或只有普通 Edge 浏览器，不会被误判为环境齐全。
 
 ### 2. 启动并配置 dsh
 
-解压便携包后运行其中的 EXE，或安装后启动应用。启动页会显示环境检测与服务启动状态；所有版本若未找到 dsh，都会显示自动安装进度。
+运行单文件版 EXE，或安装后启动应用。启动页会显示环境检测与服务启动状态；所有版本若未找到 dsh，都会显示自动安装进度。
 
 进入界面后，按 dsh 的正常流程配置模型服务、API 信息和工作目录，创建或打开会话即可使用。桌面增强会随本应用加载，无需另外安装通知 Hook。
 
@@ -251,18 +250,18 @@ cargo test --manifest-path src-tauri/Cargo.toml --features single live_windows_n
 ### 生成分发包
 
 ```powershell
-.\pack.ps1                         # x64 + x86：便携包 + 单文件版 + 安装包（均不包含 dsh）
+.\pack.ps1                         # x64 + x86：单文件版 + 安装包（均不包含 dsh）
 .\pack.ps1 -Target Single          # 只构建单文件版
-.\pack.ps1 -Target Portable        # 构建便携包与安装包，不构建单文件版
-.\pack.ps1 -SkipBundle             # 跳过安装包
+.\pack.ps1 -Target Installer       # 只构建安装包
+.\pack.ps1 -SkipBundle             # 只构建单文件版，跳过安装包与构建机运行时下载
 .\pack.ps1 -Arch x86               # 只构建 x86（需先 rustup target add i686-pc-windows-msvc）
 ```
 
-产物平铺收集到 `pack/`，靠文件名区分类型与架构：`dsh-desktop-v<版本>-portable-win-<架构>.zip`、`dsh-desktop-v<版本>-installer-win-<架构>.exe`、`dsh-desktop-v<版本>-win-<架构>.exe`。安装包将应用和桌面插件打成 TAR 后使用 NSIS 的 solid LZMA 压缩，不内嵌 portable ZIP 或运行时归档。安装时用系统 `tar.exe` 解压到 `%LOCALAPPDATA%\dsh-desktop`，按复选框选择下载缺失的 Node.js/npm、WebView2，并登记开始菜单快捷方式与卸载项。编译安装包需要 NSIS 3.x，优先复用 tauri 已下载的 `%LOCALAPPDATA%\tauri\NSIS`。
+产物平铺收集到 `pack/`，靠文件名区分类型与架构：`dsh-desktop-v<版本>-installer-win-<架构>.exe`、`dsh-desktop-v<版本>-win-<架构>.exe`。安装包将应用和桌面插件打成 TAR 后使用 NSIS 的 solid LZMA 压缩，不内嵌运行时归档。安装时用系统 `tar.exe` 解压到 `%LOCALAPPDATA%\dsh-desktop`，按复选框选择下载缺失的 Node.js/npm、WebView2，并登记开始菜单快捷方式与卸载项。编译安装包需要 NSIS 3.x，优先复用 tauri 已下载的 `%LOCALAPPDATA%\tauri\NSIS`。`-Target Installer` 不能与 `-SkipBundle` 同时使用。
 
-安装器逐文件校验应用内容，并校验下载归档及组件解压结果；失败时以非 0 退出码结束，详细输出中保留原因。静默安装 `/S` 采用相同检测规则：复用已有组件，自动下载缺失组件。安装选择写入 `runtime/installed.json`，使应用支持全部使用系统环境、全部使用应用目录内环境，或两者混合。便携包仍要求自身运行时完整。
+安装器逐文件校验应用内容，并校验下载归档及组件解压结果；失败时以非 0 退出码结束，详细输出中保留原因。静默安装 `/S` 采用相同检测规则：复用已有组件，自动下载缺失组件。安装选择写入 `runtime/installed.json`，使应用支持全部使用系统环境、全部使用应用目录内环境，或两者混合。
 
-x64 与 x86 的便携包携带各自的 Node.js/npm 和固定版 WebView2；安装包按需下载相同的组件（x86 用 Node.js 22，因为 Node.js 24 起不再发布 32 位 Windows 版本）。所有版本都不打包 dsh 及其依赖。dsh 原生依赖的架构支持取决于上游发布。构建机首次准备运行时需要联网，后续构建会校验并复用缓存。
+安装包按架构下载对应的 Node.js/npm 和固定版 WebView2（x86 用 Node.js 22，因为 Node.js 24 起不再发布 32 位 Windows 版本）。所有版本都不打包 dsh 及其依赖。dsh 原生依赖的架构支持取决于上游发布。构建安装包时，构建机首次准备运行时校验信息需要联网，后续构建会校验并复用缓存；只构建单文件版则跳过此步骤。
 
 ## 上游项目
 

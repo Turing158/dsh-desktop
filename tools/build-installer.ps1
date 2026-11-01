@@ -11,7 +11,7 @@ function Resolve-Makensis {
     throw '找不到 makensis（NSIS 3.x），请安装 NSIS 或先执行一次 tauri 构建。'
 }
 
-function New-PortableInstaller {
+function New-DesktopInstaller {
     param(
         [Parameter(Mandatory)][string]$Arch,
         [Parameter(Mandatory)][string]$Version,
