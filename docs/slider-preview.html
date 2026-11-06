@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>设置 Slider · 四种轻量方案</title>
+<style>
+:root {
+  color-scheme:dark;
+  --page:#141619; --surface:#1c1f24; --panel:#24282f; --raised:#2b3039;
+  --text:#eef0f4; --muted:#a5abb6; --subtle:#8c95a3; --divider:#333841;
+  --rail:#59616e; --accent:#82a2ff; --tint:#293751; --handle:#f2f4f8; --focus:#b2c6ff;
+}
+:root[data-theme="light"] {
+  color-scheme:light;
+  --page:#f3f5f7; --surface:#fff; --panel:#f7f8fa; --raised:#fff;
+  --text:#202630; --muted:#606a79; --subtle:#6f7988; --divider:#e1e5eb;
+  --rail:#b7bfcc; --accent:#3969d6; --tint:#e8efff; --handle:#303846; --focus:#315dc6;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--page); color:var(--text); font:14px/1.55 "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+button,input { font:inherit; }
+button { cursor:pointer; -webkit-tap-highlight-color:transparent; }
+button:focus-visible { outline:2px solid var(--focus); outline-offset:4px; }
+h1,h2,h3,p { margin:0; }
+svg { display:block; width:16px; height:16px; flex:none; }
+.page { max-width:1240px; margin:auto; padding:30px 32px 24px; }
+.masthead { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:30px; }
+.wordmark { font-weight:650; letter-spacing:-.02em; }
+.wordmark span { color:var(--muted); font-weight:400; margin-left:6px; }
+.edition { color:var(--subtle); font-size:10px; letter-spacing:.12em; }
+.headline { display:flex; justify-content:space-between; align-items:end; gap:24px; margin-bottom:24px; }
+.eyebrow { color:var(--accent); font-size:10px; font-weight:650; letter-spacing:.16em; margin-bottom:9px; }
+h1 { font-size:clamp(25px,3vw,35px); line-height:1.3; letter-spacing:-.045em; font-weight:600; }
+.intro { color:var(--muted); margin-top:10px; font-size:13px; }
+.count { color:var(--subtle); font-size:11px; white-space:nowrap; padding-bottom:3px; }
+.toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-bottom:20px; }
+.tool { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:0 13px; border:1px solid var(--divider); border-radius:9px; background:transparent; color:var(--muted); font-size:12px; transition:background 160ms ease,color 160ms ease; }
+.tool:hover { color:var(--text); background:var(--surface); }
+.tool[aria-pressed="true"] { color:var(--accent); background:var(--tint); border-color:transparent; }
+.reset { margin-left:auto; border-color:transparent; }
+.grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.card { min-width:0; padding:20px 24px 15px; border:1px solid var(--divider); border-radius:14px; background:var(--surface); }
+.card-heading,.card-title { display:flex; align-items:center; }
+.card-heading { justify-content:space-between; gap:10px; }
+.card-title { gap:11px; }
+.letter { color:var(--subtle); font:12px/1.4 Consolas,monospace; }
+h2 { font-size:15px; font-weight:600; }
+.tag { color:var(--accent); background:var(--tint); padding:2px 8px; border-radius:5px; font-size:10px; }
+.description { color:var(--muted); font-size:12px; margin-top:7px; }
+.stage { padding:20px 0; }
+.settings-panel { background:var(--panel); border-radius:10px; padding:13px 18px 12px; container-type:inline-size; }
+.panel-heading { display:flex; align-items:center; gap:8px; padding-bottom:10px; color:var(--muted); border-bottom:1px solid var(--divider); }
+.panel-heading h3 { color:var(--text); font-size:12px; font-weight:550; }
+.panel-heading small { margin-left:auto; color:var(--subtle); font-size:10px; }
+.setting { display:grid; grid-template-columns:122px minmax(0,1fr) 39px; column-gap:12px; align-items:center; min-height:62px; --position:.5; }
+.setting label { font-size:12px; }
+.setting + .setting { border-top:1px solid var(--divider); }
+output { color:var(--text); text-align:right; font-size:12px; font-variant-numeric:tabular-nums; }
+.setting:focus-within output { color:var(--accent); }
+/* All rails are borderless; the 44px native input supplies a generous hit area. */
+.slider { position:relative; height:44px; min-width:0; }
+.track-space { position:absolute; inset:0 12px; pointer-events:none; }
+.rail,.fill { position:absolute; top:50%; height:var(--track-height,3px); transform:translateY(-50%); border:0; box-shadow:none; border-radius:99px; }
+.rail { left:0; right:0; background:var(--rail); }
+.fill { left:0; width:calc(var(--position) * 100%); background:var(--accent); }
+.thumb { position:absolute; left:calc(var(--position) * 100%); top:50%; width:var(--thumb-width,13px); height:var(--thumb-height,13px); transform:translate(-50%,-50%); border-radius:var(--thumb-radius,50%); background:var(--accent); }
+.thumb::after { content:""; position:absolute; inset:-5px; border-radius:inherit; background:var(--accent); opacity:0; transition:opacity 160ms ease; }
+.slider:hover .thumb::after { opacity:.13; }
+.slider:active .thumb::after { opacity:.23; }
+input[type="range"] { position:absolute; inset:0; appearance:none; -webkit-appearance:none; width:100%; height:44px; margin:0; padding:0; background:transparent; border:0; cursor:pointer; touch-action:pan-y; }
+input[type="range"]::-webkit-slider-runnable-track { height:44px; background:transparent; border:0; }
+input[type="range"]::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:24px; height:44px; margin:0; background:transparent; border:0; }
+input[type="range"]::-moz-range-track { height:44px; background:transparent; border:0; }
+input[type="range"]::-moz-range-progress { background:transparent; }
+input[type="range"]::-moz-range-thumb { width:24px; height:44px; background:transparent; border:0; border-radius:0; }
+input[type="range"]:focus-visible { outline:none; }
+.slider:has(input:focus-visible) .thumb { outline:2px solid var(--focus); outline-offset:4px; }
+/* A: a quiet dot, no bevel or permanent halo. */
+.option-a { --track-height:3px; --thumb-width:13px; --thumb-height:13px; }
+/* B: a tiny vertical handle and a gap around it. */
+.option-b { --track-height:2px; --thumb-width:4px; --thumb-height:18px; --thumb-radius:2px; }
+.option-b .thumb { background:var(--handle); box-shadow:0 0 0 4px var(--panel); }
+.option-b .thumb::after { inset:-5px -7px; border-radius:7px; }
+/* C: a horizontal capsule keeps a low silhouette. */
+.option-c { --track-height:3px; --thumb-width:22px; --thumb-height:10px; --thumb-radius:4px; }
+.option-c .thumb { background:var(--handle); box-shadow:0 0 0 3px var(--panel); }
+.option-c .thumb::before { content:""; position:absolute; width:2px; height:4px; top:3px; left:10px; background:var(--panel); border-radius:1px; }
+.option-c .thumb::after { border-radius:8px; }
+/* D: continuous 1% movement, with quarter-scale reference marks below a hairline. */
+.option-d { --track-height:2px; --thumb-width:10px; --thumb-height:10px; --thumb-radius:3px; }
+.option-d .thumb { box-shadow:0 0 0 3px var(--panel); }
+.ticks { position:absolute; left:0; right:0; top:calc(50% + 7px); height:5px; }
+.ticks i { position:absolute; left:calc(var(--tick) * 25%); width:1px; height:3px; background:var(--subtle); transform:translateX(-50%); }
+.ticks i:first-child,.ticks i:last-child { height:5px; }
+.setting:has(input:disabled) { opacity:.42; }
+input:disabled { cursor:not-allowed; }
+.slider:has(input:disabled) .thumb::after { opacity:0; }
+.card-footer { display:flex; justify-content:space-between; gap:12px; padding-top:12px; border-top:1px solid var(--divider); color:var(--muted); font-size:11px; }
+.card-footer span:last-child { text-align:right; }
+.recommendation { display:flex; justify-content:space-between; align-items:baseline; gap:24px; margin-top:22px; padding-bottom:16px; border-bottom:1px solid var(--divider); color:var(--muted); font-size:12px; }
+.recommendation strong { color:var(--text); font-weight:550; }
+.key-hint { white-space:nowrap; font-size:11px; }
+.page-footer { display:flex; justify-content:space-between; gap:16px; padding-top:14px; color:var(--subtle); font-size:10px; }
+/* Match the existing settings layout: label and value move above the slider on narrow panels. */
+@container (max-width:380px) {
+  .setting { grid-template-columns:minmax(0,1fr) 39px; padding-top:12px; min-height:76px; column-gap:8px; }
+  .slider { grid-column:1 / -1; grid-row:2; margin-inline:-6px; }
+  output { grid-column:2; grid-row:1; }
+}
+:root[data-layout="stacked"] .setting { grid-template-columns:minmax(0,1fr) 39px; padding-top:12px; min-height:76px; column-gap:8px; }
+:root[data-layout="stacked"] .slider { grid-column:1 / -1; grid-row:2; margin-inline:-6px; }
+:root[data-layout="stacked"] output { grid-column:2; grid-row:1; }
+@media (max-width:880px) { .grid { grid-template-columns:1fr; } .count { display:none; } .recommendation { flex-direction:column; gap:9px; } }
+@media (max-width:600px) { .page { padding:22px 16px; } .masthead { margin-bottom:26px; } .card { padding:19px 18px 15px; } .reset { margin-left:0; } .headline { margin-bottom:20px; } .page-footer { flex-direction:column; gap:5px; } }
+@media (max-width:390px) { .page { padding-inline:12px; } .card { padding-inline:16px; } .tool { padding-inline:10px; } .edition { font-size:9px; } .settings-panel { padding-inline:14px; } }
+@media (prefers-reduced-motion:reduce) { *,*::after { transition:none !important; } }
+@media (forced-colors:active) { .track-space { forced-color-adjust:none; --accent:Highlight; --rail:GrayText; --subtle:GrayText; --panel:Canvas; --handle:CanvasText; --focus:Highlight; } }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="masthead"><div class="wordmark">dsh<span>desktop</span></div><span class="edition">SETTINGS / COMPONENT STUDY 02</span></div>
+  <header class="headline">
+    <div><p class="eyebrow">SETTINGS SLIDER EXPLORATIONS</p><h1>让设置里的滑块，轻下来。</h1><p class="intro">透明度、模糊程度、材质效果。四种连续调节方案，全部采用无边框细轨道。</p></div>
+    <span class="count">04 个方案 / 0–100% 连续调节</span>
+  </header>
+  <div class="toolbar" role="group" aria-label="预览设置">
+    <button class="tool" id="theme-toggle" type="button" aria-label="切换浅色主题" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg><span>浅色预览</span></button>
+    <button class="tool" id="layout-toggle" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v14"/></svg><span>上下布局</span></button>
+    <button class="tool" id="sync-toggle" type="button" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m9 15 6-6M10 7l2-2a5 5 0 0 1 7 7l-2 2M14 17l-2 2a5 5 0 0 1-7-7l2-2"/></svg><span>联动调节 · 开</span></button>
+    <button class="tool" id="disabled-toggle" type="button" aria-pressed="false">禁用态预览</button>
+    <button class="tool reset" id="reset" type="button">重置数值</button>
+  </div>
+  <section class="grid" aria-label="四种设置滑块方案">
+    <article class="card option-a" data-option="a" aria-labelledby="title-a">
+      <div class="card-heading"><div class="card-title"><span class="letter">A</span><h2 id="title-a">细线圆点</h2></div><span class="tag">通用推荐</span></div>
+      <p class="description">细线搭配小实心圆点，轻巧、安静，适合整页统一使用。</p>
+      <div class="stage"><div class="settings-panel"></div></div>
+      <div class="card-footer"><span>3px 轨道 · 13px 圆点</span><span>简洁 / 通用</span></div>
+    </article>
+    <article class="card option-b" data-option="b" aria-labelledby="title-b">
+      <div class="card-heading"><div class="card-title"><span class="letter">B</span><h2 id="title-b">短竖柄</h2></div><span class="tag">差异最明显</span></div>
+      <p class="description">极细横线配短竖柄，利落的几何形态，落点一眼可见。</p>
+      <div class="stage"><div class="settings-panel"></div></div>
+      <div class="card-footer"><span>2px 轨道 · 4 × 18px 竖柄</span><span>清爽 / 利落</span></div>
+    </article>
+    <article class="card option-c" data-option="c" aria-labelledby="title-c">
+      <div class="card-heading"><div class="card-title"><span class="letter">C</span><h2 id="title-c">扁平胶囊</h2></div></div>
+      <p class="description">横向小胶囊降低视觉高度，中央细标记保留精确位置。</p>
+      <div class="stage"><div class="settings-panel"></div></div>
+      <div class="card-footer"><span>3px 轨道 · 22 × 10px 胶囊</span><span>柔和 / 紧凑</span></div>
+    </article>
+    <article class="card option-d" data-option="d" aria-labelledby="title-d">
+      <div class="card-heading"><div class="card-title"><span class="letter">D</span><h2 id="title-d">精密刻度</h2></div></div>
+      <p class="description">小方点与四分位刻度，连续调节时更容易判断相对位置。</p>
+      <div class="stage"><div class="settings-panel"></div></div>
+      <div class="card-footer"><span>2px 轨道 · 10px 圆角方柄</span><span>准确 / 有秩序</span></div>
+    </article>
+  </section>
+  <div class="recommendation"><p><strong>想要更有变化，选 B；想要统一耐看，选 A。</strong> 四个方案使用相同数值，可联动拖动比较。</p><span class="key-hint">拖动 · Tab 聚焦 · ← → 微调</span></div>
+  <footer class="page-footer"><span>设置中的连续百分比滑块 · 示例值仅用于预览</span><span>轨道无边框 / 无内阴影 / 44px 操作高度</span></footer>
+</main>
+<script>
+const root = document.documentElement;
+const cards = [...document.querySelectorAll('.card')];
+const settings = [
+  { key:'transparency', label:'图片总透明度', initial:72 },
+  { key:'blur', label:'图片模糊程度', initial:28 },
+  { key:'glass', label:'毛玻璃效果程度', initial:54 }
+];
+let sync = true;
+let disabled = false;
+let lastChanged = cards[0];
+
+function update(card, index, value) {
+  const setting = card.querySelectorAll('.setting')[index];
+  const input = setting.querySelector('input');
+  input.value = String(value);
+  input.setAttribute('aria-valuetext', value + '%');
+  setting.querySelector('output').value = value + '%';
+  setting.style.setProperty('--position', value / 100);
+}
+for (const card of cards) {
+  const option = card.dataset.option;
+  const ticks = option === 'd' ? '<div class="ticks">' + Array.from({length:5}, (_, i) => '<i style="--tick:' + i + '"></i>').join('') + '</div>' : '';
+  card.querySelector('.settings-panel').innerHTML =
+    '<div class="panel-heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2" fill="var(--panel)"/><circle cx="15" cy="12" r="2" fill="var(--panel)"/><circle cx="11" cy="18" r="2" fill="var(--panel)"/></svg><h3>外观设置</h3><small>背景与材质</small></div>' +
+    settings.map((item, index) => {
+      const id = 'slider-' + option + '-' + item.key;
+      return '<div class="setting" data-index="' + index + '">' +
+        '<label for="' + id + '">' + item.label + '</label>' +
+        '<div class="slider"><div class="track-space" aria-hidden="true"><div class="rail"></div><div class="fill"></div>' + ticks + '<span class="thumb"></span></div>' +
+        '<input id="' + id + '" type="range" min="0" max="100" step="1" value="' + item.initial + '"></div>' +
+        '<output for="' + id + '" aria-live="off">' + item.initial + '%</output></div>';
+    }).join('');
+  card.querySelectorAll('input').forEach((input, index) => {
+    input.addEventListener('input', () => {
+      lastChanged = card;
+      const value = Number(input.value);
+      (sync ? cards : [card]).forEach(target => update(target, index, value));
+    });
+    update(card, index, settings[index].initial);
+  });
+}
+document.querySelector('#theme-toggle').addEventListener('click', event => {
+  const light = root.dataset.theme !== 'light';
+  root.dataset.theme = light ? 'light' : 'dark';
+  event.currentTarget.setAttribute('aria-pressed', String(light));
+  event.currentTarget.setAttribute('aria-label', light ? '切换深色主题' : '切换浅色主题');
+  event.currentTarget.querySelector('span').textContent = light ? '深色预览' : '浅色预览';
+});
+document.querySelector('#layout-toggle').addEventListener('click', event => {
+  const stacked = root.dataset.layout !== 'stacked';
+  root.dataset.layout = stacked ? 'stacked' : 'auto';
+  event.currentTarget.setAttribute('aria-pressed', String(stacked));
+  event.currentTarget.querySelector('span').textContent = stacked ? '自适应布局' : '上下布局';
+});
+document.querySelector('#sync-toggle').addEventListener('click', event => {
+  sync = !sync;
+  event.currentTarget.setAttribute('aria-pressed', String(sync));
+  event.currentTarget.querySelector('span').textContent = sync ? '联动调节 · 开' : '联动调节 · 关';
+  if (sync) {
+    const values = [...lastChanged.querySelectorAll('input')].map(input => Number(input.value));
+    cards.forEach(card => values.forEach((value, index) => update(card, index, value)));
+  }
+});
+document.querySelector('#disabled-toggle').addEventListener('click', event => {
+  disabled = !disabled;
+  document.querySelectorAll('input[type="range"]').forEach(input => input.disabled = disabled);
+  event.currentTarget.setAttribute('aria-pressed', String(disabled));
+  event.currentTarget.textContent = disabled ? '恢复可调节' : '禁用态预览';
+});
+document.querySelector('#reset').addEventListener('click', () => cards.forEach(card => settings.forEach((setting, index) => update(card, index, setting.initial))));
+</script>
+</body>
+</html>

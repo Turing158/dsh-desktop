@@ -1883,6 +1883,7 @@ var React = require('react')
         if (updatePending.current || !dshUpdate.versions || !['latest', 'preview'].includes(channel)) return
         if (channel === 'preview' && dshUpdate.versions.latest === dshUpdate.versions.preview) return
         if (dshUpdate.versions.current === dshUpdate.versions[channel]) return
+        updateAbort.current?.abort()
         updatePending.current = true
         var controller = new AbortController()
         updateAbort.current = controller
@@ -1891,6 +1892,7 @@ var React = require('react')
         var bridge = window.__DSH_UI_STATE__
         var captured = false
         var preparedCandidate = null
+        var handedToHost = false
         if (previousVersions.candidateOnly || previousVersions.stagedUpdate) {
           var requestId = window.crypto.randomUUID()
           var candidateIdentity = window.__DSH_REMOTE_IDENTITY__
@@ -1906,13 +1908,14 @@ var React = require('react')
             if (!controller.signal.aborted) {
               preparedCandidate = candidate
               setDshUpdate({ attempted: true, busy: previousVersions.stagedUpdate ? 'waiting' : null, versions: previousVersions, error: null,
+                candidateReady: !previousVersions.stagedUpdate,
                 message: previousVersions.stagedUpdate ? null : '候选版本 {version} 已准备并校验；当前版本继续运行。', messageValues: { version: candidate.version } })
             }
           } catch (error) {
             if (!controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions,
               error: candidateError(error), message: null })
           } finally {
-            controller.signal.removeEventListener('abort', cancelPreparation)
+            if (!preparedCandidate) controller.signal.removeEventListener('abort', cancelPreparation)
             if (updateAbort.current === controller) {
               if (!preparedCandidate || !previousVersions.stagedUpdate || controller.signal.aborted) updatePending.current = false
               if (controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: null, message: '候选准备已取消，当前版本继续运行。' })
@@ -1953,6 +1956,7 @@ var React = require('react')
               if (preparedCandidate) request.candidateId = preparedCandidate.id
               try {
                 await invokeHost('install_dsh_update', request)
+                handedToHost = true
                 // The host owns the snapshot; stay frozen until the new document restores it.
                 return
               } catch (error) {
@@ -1971,11 +1975,20 @@ var React = require('react')
           if (updateAbort.current === controller) updatePending.current = false
           if (!controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: upgradeError(error), message: null })
         } finally {
+          if (preparedCandidate) {
+            controller.signal.removeEventListener('abort', cancelPreparation)
+            if (!handedToHost && !controller.signal.aborted) cancelPreparation()
+          }
           if (updateAbort.current === controller) updateCapture.current = false
         }
       }
 
       function cancelDshUpdateWait() {
+        if (dshUpdate.candidateReady) {
+          updateAbort.current?.abort()
+          setDshUpdate({ attempted: true, busy: null, versions: dshUpdate.versions, error: null, message: null })
+          return
+        }
         if (dshUpdate.busy === 'preparing') { updateAbort.current?.abort(); return }
         if (dshUpdate.busy !== 'waiting') return
         updateAbort.current?.abort()
@@ -1988,7 +2001,7 @@ var React = require('react')
         if (code === 'runtime-candidate-install-failed') return '候选安装失败，当前版本继续运行。请检查网络、磁盘空间和安装权限。'
         if (code === 'runtime-candidate-install-timeout') return '候选安装超时，当前版本继续运行。'
         if (code === 'runtime-candidate-cancelled') return '候选准备已取消，当前版本继续运行。'
-        if (code === 'runtime-candidate-stale') return '页面或运行版本已变化，请重新检测。已准备的材料保留。'
+        if (code === 'runtime-candidate-stale') return '页面或运行版本已变化，请重新检测。'
         return '候选准备失败，当前版本继续运行。请查看诊断。'
       }
 
@@ -2778,7 +2791,7 @@ var React = require('react')
           update: dshUpdate,
           desktopUpdate: desktopUpdate, version: appVersion,
           tab: updateTab, onTab: setUpdateTab,
-          onClose: function () { updateVisible.current = false; setUpdateOpen(false) },
+          onClose: function () { if (dshUpdate.candidateReady) cancelDshUpdateWait(); updateVisible.current = false; setUpdateOpen(false) },
           onCheck: checkDshUpdate,
           onCheckDesktop: checkDesktopUpdate,
           onOpenRelease: openDesktopRelease,
@@ -2963,7 +2976,13 @@ var React = require('react')
         return ctx.slots.inject(actionSlot, function () {
           function renameRequest() {
             var entry = ctx.slots.entriesOfSlot(renameSlot).find(function (entry) { return entry.options.id === 'rename' })
-            return entry?.inject?.()?.requestSessionRename
+            return entry?.inject?.()?.requestSessionRename || (ctx.get('contextMenus')?.resolve && function (id, title) {
+              var resolution = ctx.get('contextMenus').resolve({ kind: 'session', value: { sessionId: id, displayTitle: title } })
+              resolution.ready.then(function () {
+                var rename = resolution.source.getSnapshot().find(function (item) { return item.id === 'session.rename/rename' })
+                if (rename) resolution.select(rename.id)
+              }).catch(function (error) { reportFailure(ctx, t('重命名会话'), error) }).finally(resolution.dispose)
+            })
           }
           function HeaderSessionTitle(props) {
             useLocale(React)
@@ -3036,6 +3055,7 @@ var React = require('react')
       var headerSlot = 'conversation.session.header.utilities'
       var sourceSlot = 'sidebar.workspaces.session.menu.item'
       var mirrorSlot = 'desktop.session.header.menu.item'
+      var iconSlot = 'desktop.session.header.menu.icon'
       ctx.slots.inject(sourceSlot, function () {
         return ctx.slots.inject(headerSlot, function () {
           var original, removeHeader, removeItems = [], disposed = false
@@ -3052,6 +3072,11 @@ var React = require('react')
                 name: mirrorSlot, inject: entry.inject, locale: entry.locale, store: entry.store,
               }), entry.component))
             })
+            ctx.slots.entriesOfSlot('contextMenu.icon').forEach(function (entry) {
+              removeItems.push(ctx.slots.register(Object.assign({}, entry.options, {
+                name: iconSlot, inject: entry.inject, locale: entry.locale, store: entry.store,
+              }), entry.component))
+            })
           }
           function syncHeader() {
             if (disposed) return
@@ -3066,12 +3091,85 @@ var React = require('react')
             removeHeader = ctx.slots.register(Object.assign({}, next.options, {
               name: headerSlot, priority: (next.options.priority || 0) - 1,
               inject: next.inject, locale: next.locale, store: next.store,
-              children: { [mirrorSlot]: ctx.slots.spec(sourceSlot) },
+              children: Object.assign({ [mirrorSlot]: ctx.slots.spec(sourceSlot) }, ctx.slots.spec('contextMenu.icon')
+                ? { [iconSlot]: ctx.slots.spec('contextMenu.icon') } : {}),
             }), HeaderSessionMenu)
             syncItems()
           }
           function HeaderSessionMenu(props) {
-      useLocale(React)
+            useLocale(React)
+            var registry = ctx.get('contextMenus')
+            return registry?.resolve ? h(RegistryHeaderSessionMenu, Object.assign({}, props, { registry: registry })) : h(LegacyHeaderSessionMenu, props)
+          }
+          function HeaderMenuExtras(props) {
+            var anchor = React.useRef(null)
+            React.useLayoutEffect(function () {
+              var menu = anchor.current?.closest('[role="menu"]')
+              if (!menu) return
+              menu.setAttribute('data-dsh-header-session-id', String(props.sessionId))
+              if (props.cwd) menu.setAttribute('data-dsh-header-session-path', props.cwd)
+              for (var node of menu.querySelectorAll('[role="separator"]')) {
+                var key = Object.keys(node).find(function (key) { return key.startsWith('__reactFiber$') })
+                for (var fiber = key && node[key], depth = 0; fiber && depth < 8; fiber = fiber.return, depth++) {
+                  if (fiber.key === 'desktop-session-divider') { node.setAttribute('data-dsh-header-menu-divider', ''); break }
+                }
+              }
+              return function () { menu.removeAttribute('data-dsh-header-session-id'); menu.removeAttribute('data-dsh-header-session-path') }
+            }, [props.sessionId, props.cwd])
+            return h('div', { ref: anchor, 'data-dsh-header-menu-extras': '' })
+          }
+          function RegistryHeaderSessionMenu(props) {
+            var summary = props.useSessions(function (state) { return state.byId[props.sessionId] })
+            var title = summary?.displayTitle ?? summary?.title ?? ''
+            var resolved = React.useState(null), occurrence = resolved[0], setOccurrence = resolved[1]
+            var rows = React.useState([]), items = rows[0], setItems = rows[1]
+            // Keep the upstream component's own download, feedback and dialog
+            // hooks, but compose its Menu from the same registry as right-click.
+            var tree = original.component(props)
+            var nativeMenu = React.Children.toArray(tree.props.children).find(function (child) { return child.type === primitives.Menu })
+            var open = nativeMenu?.props.open === true
+            var close = nativeMenu?.props.onClose
+            var menuState = [open, function (value) { if (!value) close?.() }]
+            React.useEffect(function () {
+              if (!open) { setItems([]); setOccurrence(null); return }
+              var current = props.registry.resolve({ kind: 'session', value: { sessionId: props.sessionId, displayTitle: title } })
+              var publish = function () { setItems(current.source.getSnapshot()) }
+              var off = current.source.subscribe(publish)
+              setOccurrence(current)
+              publish()
+              return function () { off(); current.dispose() }
+            }, [open, props.registry, props.sessionId, title])
+            var catalog = ctx.get('shortcuts')?.catalog.getSnapshot() || []
+            function entries(actions) {
+              return actions.flatMap(function (action) {
+                var item = Object.assign({}, action, {
+                  shortcut: catalog.find(function (entry) { return entry.id === action.commandId }),
+                  icon: action.icon && props.renderSlot(iconSlot, { icon: action.icon }, { entryKey: action.icon.key }),
+                  submenu: action.children && entries(action.children),
+                })
+                return action.separatorBefore ? [{ type: 'separator', id: action.id + ':separator' }, item] : [item]
+              })
+            }
+            var children = React.Children.map(tree.props.children, function (child) {
+              if (!React.isValidElement(child) || child.type !== primitives.Menu) return child
+              return React.cloneElement(child, {
+                items: entries(items.filter(function (item) { return !item.afterContent })),
+                footer: entries(items.filter(function (item) { return item.afterContent })).concat(
+                  [{ type: 'separator', id: 'desktop-session-divider' }],
+                  child.props.items.filter(function (item) { return item.id === 'download' || item.id === 'feedback' })),
+                onSelect: function (id) {
+                  if (id === 'download' || id === 'feedback') child.props.onSelect(id)
+                  else { occurrence?.select(id); child.props.onClose() }
+                },
+                children: h(React.Fragment, null,
+                  props.renderSlot(mirrorSlot, { sessionId: props.sessionId, displayTitle: title }, { hookContext: menuState }),
+                  h(HeaderMenuExtras, { sessionId: props.sessionId, cwd: summary?.cwd })),
+              })
+            })
+            return React.cloneElement(tree, undefined, children)
+          }
+          function LegacyHeaderSessionMenu(props) {
+            useLocale(React)
             var root = React.useRef(null)
             var mounted = React.useState(null), target = mounted[0], setTarget = mounted[1]
             var summary = props.useSessions(function (state) { return state.byId[props.sessionId] })
@@ -3145,10 +3243,11 @@ var React = require('react')
           }
           var offHeader = ctx.slots.subscribe(headerSlot, syncHeader)
           var offItems = ctx.slots.subscribe(sourceSlot, syncItems)
+          var offIcons = ctx.slots.subscribe('contextMenu.icon', syncItems)
           var modeObserver = new MutationObserver(syncHeader)
           modeObserver.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
           syncHeader()
-          return function () { disposed = true; modeObserver.disconnect(); offHeader(); offItems(); clear() }
+          return function () { disposed = true; modeObserver.disconnect(); offHeader(); offItems(); offIcons(); clear() }
         })
       })
     }

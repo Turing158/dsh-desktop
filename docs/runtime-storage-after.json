@@ -1,0 +1,13 @@
+{
+  "observedAt": "2026-11-02T18:11:50.956Z",
+  "bytes": 1361188085,
+  "groups": {
+    "changes": 268435475,
+    "desktop-plugins.json": 165,
+    "diagnostics": 14810,
+    "locale-cache.txt": 2,
+    "maintenance": 88230,
+    "remote-control.json": 211,
+    "runtime": 1092649192
+  }
+}

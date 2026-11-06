@@ -4,11 +4,16 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 #[derive(Default)]
 pub struct NativeLocale(pub Mutex<Option<String>>);
+fn data_root(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(debug_assertions)]
+    if let Some(root) = std::env::var_os("DSH_DESKTOP_SMOKE_DIR") { return Ok(root.into()); }
+    app.path().app_data_dir().map_err(|error| error.to_string())
+}
 pub fn current(app: &AppHandle) -> Option<String> {
     let state = app.state::<NativeLocale>();
     let mut value = state.0.lock().ok()?;
     if value.is_none() {
-        *value = app.path().app_data_dir().ok().and_then(|p| std::fs::read_to_string(p.join("locale-cache.txt")).ok())
+        *value = data_root(app).ok().and_then(|p| std::fs::read_to_string(p.join("locale-cache.txt")).ok())
             .filter(|s| s == "en" || s == "zh");
     }
     value.clone()
@@ -20,7 +25,7 @@ pub fn text<'a>(app: &AppHandle, zh: &'a str, en: &'a str) -> &'a str {
 pub fn desktop_locale_changed(app: AppHandle, locale: String) -> Result<(), String> {
     let language = if locale.to_lowercase().starts_with("zh") { "zh" } else { "en" };
     if current(&app).as_deref() == Some(language) { return Ok(()); }
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = data_root(&app)?;
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     std::fs::write(path.join("locale-cache.txt"), language).map_err(|e| e.to_string())?;
     *app.state::<NativeLocale>().0.lock().map_err(|e| e.to_string())? = Some(language.into());

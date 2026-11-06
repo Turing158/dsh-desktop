@@ -1,5 +1,5 @@
-/** The host registers preferences shared by the DSH and native terminal adapters.
- * Import-free because this plugin is installed outside DSH's node_modules. */
+/** The host registers preferences shared by the DSH and native terminal adapters. */
+import { installRuntimeConptyFallback } from './conpty.mjs'
 const name = 'desktop-sidebar-terminal'
 const inject = ['settings']
 // Keep the old layout schema readable. The client restores height only and
@@ -40,6 +40,7 @@ SettingsSchema['~standard'] = { version: 1, vendor: 'dsh-desktop', validate(valu
   return resolved ? { value: resolved } : { issues: [{ message: 'Invalid terminal preference: ' + field, path: [field] }] }
 } }
 function apply(ctx) {
+  ctx.effect(installRuntimeConptyFallback, 'desktop Windows ConPTY compatibility')
   ctx.settings.register('desktop-terminal-dock', SettingsSchema)
 }
 export { apply, inject, name, SettingsSchema }

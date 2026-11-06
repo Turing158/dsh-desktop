@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, mkdir, writeFile, readFile, access, readdir } from 'node:fs/promises'
 import { resolve, join, dirname } from 'node:path'
 import { createServer } from 'node:net'
 import { offlineModelPatch } from './dsh-ui-helpers.mjs'
@@ -74,10 +75,15 @@ try {
     assert.equal(await access(join(root,'runtime/selection.json')).then(()=>true,()=>false),false)
     const inventory=JSON.parse(await readFile(join(root,'runtime/versions',prepared.runtime.managed.id,'inventory.json'),'utf8'))
     assert.ok(inventory.files.length>1000);report.fileCount=inventory.files.length
+    assert.deepEqual(await readdir(join(root,'runtime/versions')),[prepared.runtime.managed.id])
     assert.ok(await access(realBin).then(()=>true,()=>false));await pass(frozen);await stop()
   }
   const committed='pending first install commits only after the actual desktop UI acknowledges readiness'
   if(!has(committed)) {
+    const stagingId=randomUUID(),staging=join(root,'runtime/installing',stagingId)
+    await mkdir(staging,{recursive:true})
+    await writeFile(join(staging,'desktop-owner.json'),JSON.stringify({schema:1,kind:'install',id:stagingId}))
+    await writeFile(join(staging,'partial.tmp'),'obsolete initial installation')
     const page=await start()
     const selection=await waitFor(async()=>JSON.parse(await readFile(join(root,'runtime/selection.json'),'utf8')),'UI verified selection',180000)
     assert.equal(selection.active,report.runtime.managed.id);assert.equal(selection.backendReady,true);assert.equal(selection.uiReady,true)
@@ -85,12 +91,16 @@ try {
     await page.waitForFunction(()=>!!window.__DSH_UI_STATE__)
     const s=await waitFor(async()=>{const s=await state();return s.runtime?.managed?.committed && s},'native committed state')
     assert.equal(s.runtime.source,'managed')
+    await waitFor(async()=>!(await state()).runtimeCleanupPending && !await access(staging).then(()=>true,()=>false),'first-install staging cleanup')
+    assert.deepEqual(await readdir(join(root,'runtime/versions')),[report.runtime.managed.id])
     report.selection=selection;await pass(committed);await stop()
   }
   const selected='the next launch selects the verified managed tree ahead of an existing global install'
   if(!has(selected)) {
     await start({legacy:true});const s=await state()
     assert.equal(s.runtime.source,'managed');assert.equal(s.runtime.managed.id,report.runtime.managed.id)
+    await waitFor(async()=>!(await state()).runtimeCleanupPending,'cold-start cleanup')
+    assert.deepEqual(await readdir(join(root,'runtime/versions')),[report.runtime.managed.id])
     await pass(selected);await stop()
   }
   const pinned='an explicit runtime pin takes precedence even when the managed selection is unreadable'

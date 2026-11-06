@@ -1,0 +1,144 @@
+{
+  "schema": 1,
+  "verifiedAt": "2026-11-03T02:12:43.7151500+08:00",
+  "tests": {
+    "rustPassed": 253,
+    "rustIgnored": 5,
+    "pluginPassed": 760,
+    "snapshotAndUpdatePassed": 48,
+    "targetCleanerPassed": 1,
+    "releaseSingleCheck": "passed",
+    "productionDebugBuild": "passed"
+  },
+  "native": [
+    {
+      "name": "candidate",
+      "checks": [
+        "cold startup reclaims owned legacy runtimes and candidates while preserving unknown content",
+        "native update checks fetch changed tags and versions despite offline settings and fail when the registry is unavailable",
+        "failed local registry installation keeps backend and selection unchanged",
+        "cancellation terminates actual npm and releases preparation without stopping backend",
+        "actual exact-version npm candidate refreshes a cache missing the target version and freezes without selection mutation",
+        "verified prepared candidate is reused without npm requests or a new runtime tree",
+        "changed cached candidate is rebuilt from npm cache and never selected",
+        "cancelling an already prepared candidate reclaims its snapshot and keeps the current backend",
+        "stale identity and moving version tags are refused before candidate installation",
+        "cached legacy update request is rejected before global installation or backend stop",
+        "actual desktop update buttons show installation stages and cancel without capturing UI",
+        "preparation text and cancelled result follow the current locale after switching languages",
+        "npm lifecycle scripts and both version probes use an isolated candidate home"
+      ],
+      "sourceVersion": null,
+      "targetVersion": null,
+      "stages": null,
+      "upgradeElapsedMs": null
+    },
+    {
+      "name": "managed-upgrade",
+      "checks": [
+        "full update commit retains only the current runtime and reclaims previous versions and installation staging",
+        "shared and dangling npm junctions survive update without traversing external dependency targets",
+        "successful commit deletes its backup, obsolete backups, partial captures and failed update data",
+        "actual preview installs, checkpoints data, restores draft, and commits selection",
+        "cold startup retries cleanup from the committed record and leaves external dependencies intact",
+        "cold restart uses the committed version even when the original configured entry remains present",
+        "an unavailable npm registry does not prevent cold startup of the sole retained runtime"
+      ],
+      "sourceVersion": "0.2.1-rc.2",
+      "targetVersion": "0.2.2-alpha.2",
+      "stages": [
+        "installing",
+        "downloading",
+        "installing-dependencies",
+        "verifying",
+        "prepared",
+        "verifying",
+        "checking-data",
+        "saving-sessions",
+        "restoring",
+        "committing",
+        "complete"
+      ],
+      "upgradeElapsedMs": 240274
+    },
+    {
+      "name": "rollback-and-locked-backup",
+      "checks": [
+        "checkpoint failure restores old UI, shows the original error, preserves the journal cause, and removes partial copies",
+        "record publication failure removes the unpublished checkpoint while preserving historical recovery data",
+        "full update commit retains only the current runtime and reclaims previous versions and installation staging",
+        "shared and dangling npm junctions survive update without traversing external dependency targets",
+        "successful commit deletes its backup, obsolete backups, partial captures and failed update data",
+        "actual preview installs, checkpoints data, restores draft, and commits selection",
+        "a locked historical backup does not roll back a successful upgrade or block other deletions",
+        "cold startup retries cleanup from the committed record and leaves external dependencies intact",
+        "cold restart uses the committed version even when the original configured entry remains present",
+        "an unavailable npm registry does not prevent cold startup of the sole retained runtime"
+      ],
+      "sourceVersion": "0.2.1-rc.2",
+      "targetVersion": "0.2.2-alpha.2",
+      "stages": [
+        "verifying",
+        "checking-data",
+        "restoring",
+        "committing",
+        "complete"
+      ],
+      "upgradeElapsedMs": 35051
+    }
+  ],
+  "historicalCleanup": {
+    "removed": 33,
+    "deferred": 0,
+    "reclaimedBytes": 19602542971,
+    "versionsBefore": 11,
+    "candidatesBefore": 19,
+    "versionsAfter": 1,
+    "candidatesAfter": 0,
+    "remainingAppDataBytes": 1361188085,
+    "active": "0.2.1-rc.5-x86_64-cbc4f4a2e172b85d1addc1835a440482a1cf77f3f4bf9cbbc7fd611025c1dcb2-872267c7-45ad-4558-90c1-f6dec4eefc4f",
+    "coldStartupCleanupWithoutRefresh": true
+  },
+  "sourceHashes": [
+    {
+      "path": "src-tauri/src/runtime_cleanup.rs",
+      "sha256": "5ece0f5066588aab018191b06b2dfc7f419e5a8b6bb775fae7f824e5faf06433"
+    },
+    {
+      "path": "src-tauri/src/main.rs",
+      "sha256": "004ca99db19f489a290276051afd2019b440d2e354c3518cc106a3d7ebaf8624"
+    },
+    {
+      "path": "src-tauri/src/runtime_store.rs",
+      "sha256": "08d682f5864456c13b2ec8ca4932536abf9183173accbbb4e91092535500b083"
+    },
+    {
+      "path": "src-tauri/src/dsh_update.rs",
+      "sha256": "9e60aa7c0fee75bf878266691ab0288830948337a2062353c0a102d4b888065d"
+    },
+    {
+      "path": "src-tauri/src/dsh_upgrade.rs",
+      "sha256": "bb003c630fdacb016c0d7bd77673dab7cd0da84d913cf13b43bd49a81404995b"
+    },
+    {
+      "path": "src-tauri/src/npm.rs",
+      "sha256": "792f6f1bed3e17d311a09d183abf8ea75289e1fa5c72ae7e184f48588968156f"
+    },
+    {
+      "path": "src-tauri/src/locale.rs",
+      "sha256": "26740e5348b6d7a607ffc0425be90b4c51b083e24437d746e01d0953926e83a1"
+    },
+    {
+      "path": "dsh-plugin/runtime-store/snapshot.mjs",
+      "sha256": "2143fbb428a33b80db3603b4c846bea303ed416c9f7ad1754a06bb431b4802ff"
+    },
+    {
+      "path": "dsh-plugin/runtime-store/prepare.mjs",
+      "sha256": "e0f34853f95af775a49692c7aba345fd3794bcbd932a6817a8269d1b7a6d9fec"
+    },
+    {
+      "path": "tools/clean-target.mjs",
+      "sha256": "cf0c93a62a51c83d9faf46ef95a2d392688a53002593cc42ce88f7919f65f063"
+    }
+  ]
+}

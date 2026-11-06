@@ -184,7 +184,7 @@
     }
     function dispose() { for (const reference of retainedDrafts.values()) reference.release(); retainedDrafts.clear() }
     function workspaceFor(id) { return ctx.workspaces.list.getSnapshot().items.find(w => w.sessionIds.includes(id))?.workspaceId || null }
-    function validateFormCoverage(roots, providers, remoteApply = false, configurationRestore = false) {
+    function validateFormCoverage(roots, providers, remoteApply = false, configurationRestore = false, marketplaceRestart = false) {
       const owned = node => [...providers.values()].some(provider => provider.owns?.(node))
       // Exit animations leave inert DOM clones after React closes a surface.
       // They paint the old UI but no longer own any form state to preserve.
@@ -196,12 +196,19 @@
         // Plugin switches are committed before restart can be requested. Only
         // exempt the settings shell; the editable-field audit below still runs.
         if (remoteApply && hasLive(dialog, '.dshPlugins') && !hasLive(dialog, '[role=alertdialog]')) continue
+        if (remoteApply && marketplaceRestart && hasLive(dialog, '[data-dsh-market-root]') && !hasLive(dialog, '[role=alertdialog]')) continue
         if (remoteApply && configurationRestore && hasLive(dialog, '[data-dsh-configuration-restore]') && !hasLive(dialog, '[role=alertdialog]')) continue
         if (!owned(dialog)) fail('snapshot-form-unsupported')
       }
       for (const field of document.querySelectorAll('input:not([type=hidden]),textarea,select,[contenteditable=true]')) {
         if (!live(field)) continue
         if (remoteApply && field.closest('.dshRemote')) continue
+        // The market's search is an ephemeral filter. Its other editable
+        // settings (including credentials), and unrelated dialogs, still need
+        // a provider; recognizing the market root alone must not exempt them.
+        const market = remoteApply && marketplaceRestart && field.closest('[data-dsh-market-root]')
+        const search = market && field.closest('[class*="_searchInput"]')
+        if (market && (field.type === 'search' || field.type === 'text' && field.tagName === 'INPUT' && search && market.contains(search))) continue
         // Only reviewed, ephemeral selection/confirmation checkboxes belong to
         // this action. Passwords and unrelated settings still require coverage.
         if (remoteApply && configurationRestore && field.type === 'checkbox' && field.closest('[data-dsh-configuration-restore]')) continue
@@ -211,7 +218,7 @@
         if (visibleEditable || field.files?.length || field.value || field.textContent || field.checked || field.tagName === 'SELECT') fail('snapshot-form-unsupported')
       }
     }
-    async function capture({ signal, frontendVersion, providers, remoteApply = false, configurationRestore = false, draftsOnly = false }) {
+    async function capture({ signal, frontendVersion, providers, remoteApply = false, configurationRestore = false, marketplaceRestart = false, draftsOnly = false }) {
       const terminals = remoteApply ? providers.get('desktop-terminal') : undefined
       if (!draftsOnly && !terminals && window.__DSH_TERMINAL_IDENTITY__ && (await window.__TAURI__.core.invoke('terminal_list', { identity: window.__DSH_TERMINAL_IDENTITY__ })).length) fail('snapshot-terminal-active')
       validateCapabilities()
@@ -292,7 +299,7 @@
           }
         }
       }
-      if (!draftsOnly) validateFormCoverage(roots, providers, remoteApply, configurationRestore)
+      if (!draftsOnly) validateFormCoverage(roots, providers, remoteApply, configurationRestore, marketplaceRestart)
       if (draftsOnly) {
         const latest=ctx.sessions.list.getSnapshot()
         const latestIds=new Set(Object.keys(latest.byId))

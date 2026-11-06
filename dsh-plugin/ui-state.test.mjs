@@ -557,6 +557,83 @@ function bridge() {
   return { ...env, api, calls, blocked }
 }
 
+test('market host restart captures state once and hands the snapshot and current identity to the desktop', async () => {
+  const f = bridge(), nativeIdentity = { backendInstance: 3, documentNonce: [1] }
+  const payload = { drafts: ['unsent'], assets: ['attachment bytes'] }
+  f.window.__DSH_REMOTE_IDENTITY__ = nativeIdentity
+  f.window.__TAURI__.core.invoke = async (command, args) => {
+    f.calls.push({ command, args })
+    if (command === 'remote_status') return { frontendVersion: '0.2.1-rc.2' }
+    assert.equal(f.blocked(), true, 'capture stays frozen until the replacement document restores it')
+  }
+  let captures = 0
+  f.api.registerRestartAdapter(() => ({ capture: async options => {
+    captures++
+    assert.equal(options.frontendVersion, '0.2.1-rc.2')
+    assert.equal(options.remoteApply, true)
+    assert.equal(options.marketplaceRestart, true)
+    return payload
+  } }))
+  const first = f.window.__dshHostShell.restart()
+  assert.equal(f.window.__dshHostShell.restart(), first)
+  await first
+  assert.deepEqual(f.calls.map(call => call.command), ['remote_status', 'plugins_restart'])
+  assert.equal(f.calls[1].args.identity, nativeIdentity)
+  assert.equal(f.calls[1].args.payload, payload)
+  assert.equal(captures, 1)
+  assert.equal(f.window.__dshHostShell.restart(), first, 'a successful restart waits for navigation')
+})
+
+test('failed market capture leaves input usable, shows the reason and permits a native retry', async () => {
+  const f = bridge()
+  f.window.__DSH_REMOTE_IDENTITY__ = { backendInstance: 3 }
+  await f.window.__dshHostShell.restart()
+  assert.deepEqual(f.calls.map(call => call.command), ['remote_status'])
+  assert.equal(f.blocked(), false)
+  assert.match(f.body.children.at(-1).children[0].textContent, /尚未准备好/)
+  const payload = { drafts: ['kept'] }
+  f.api.registerRestartAdapter(() => ({ capture: async () => payload }))
+  await f.body.children.at(-1).children.at(-1).onclick()
+  await f.window.__dshHostShell.restart()
+  assert.deepEqual(f.calls.map(call => call.command), ['remote_status', 'remote_status', 'plugins_restart'])
+  assert.equal(f.calls.at(-1).args.payload, payload)
+})
+
+test('native market restart rejection releases its capture and retries without an unmanaged restart', async () => {
+  const f = bridge()
+  f.window.__DSH_REMOTE_IDENTITY__ = { backendInstance: 3 }
+  f.api.registerRestartAdapter(() => ({ capture: async () => ({ drafts: ['kept'] }) }))
+  let fail = true
+  f.window.__TAURI__.core.invoke = async command => {
+    if (command === 'plugins_restart' && fail) throw { message: '启动、保存或恢复仍在进行' }
+    return { frontendVersion: '0.2.1-rc.2' }
+  }
+  await f.window.__dshHostShell.restart()
+  assert.equal(f.blocked(), false)
+  assert.match(f.body.children.at(-1).children[0].textContent, /启动、保存或恢复/)
+  fail = false
+  await f.window.__dshHostShell.restart()
+  assert.equal(f.blocked(), true)
+})
+
+test('the restart hook is restricted to native top-level documents and preserves an existing host hook', () => {
+  const browser = environment()
+  vm.runInContext(bridgeSource, browser.context)
+  assert.equal(browser.window.__dshHostShell, undefined)
+  const frame = environment()
+  frame.window.top = {}
+  frame.window.__TAURI__ = { core: { invoke() {} } }
+  vm.runInContext(bridgeSource, frame.context)
+  assert.equal(frame.window.__dshHostShell, undefined)
+  const native = environment(), restart = () => {}, shell = { restart, other: 'keep' }
+  native.window.__TAURI__ = { core: { invoke() {} } }
+  native.window.__dshHostShell = shell
+  vm.runInContext(bridgeSource, native.context)
+  assert.equal(native.window.__dshHostShell, shell)
+  assert.equal(shell.restart, restart)
+  assert.equal(shell.other, 'keep')
+})
+
 test('remote apply on an incompatible runtime reports the missing capability and unfreezes input', async () => {
   const f = bridge()
   f.api.registerAdapter({ capture: async () => { throw new Error('snapshot-adapter-unsupported') } })
@@ -628,6 +705,25 @@ test('configuration restore accepts only its reviewed checkboxes and refuses oth
   f.fields.push(field)
   await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
   field.type = 'checkbox'; field.closest = () => null
+  await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
+})
+
+test('market host restart accepts its search filters and rejects confirmations, credentials and unrelated fields', async () => {
+  const f = fixture(), opt = { ...options(), remoteApply: true, marketplaceRestart: true }
+  const searchContainer = {}, marker = { contains: node => node === searchContainer }, confirmations = []
+  f.dialogs.push({ closest: () => null, querySelectorAll: selector => selector === '[data-dsh-market-root]' ? [{ closest: () => null }] : confirmations })
+  const search = { type: 'text', tagName: 'INPUT', className: '_input_abc_25', value: 'filter', checkVisibility: () => true,
+    closest: selector => selector === '[data-dsh-market-root]' ? marker : selector === '[class*="_searchInput"]' ? searchContainer : null }
+  f.fields.push(search)
+  assert.equal((await f.adapter.capture(opt)).drafts[0].text, '草稿一')
+  await assert.rejects(f.adapter.capture({ ...opt, marketplaceRestart: false }), /snapshot-form-unsupported/)
+  await assert.rejects(f.adapter.capture({ ...opt, remoteApply: false }), /snapshot-form-unsupported/)
+  confirmations.push({ closest: () => null })
+  await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
+  confirmations.pop()
+  search.type = 'password'
+  await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
+  search.type = 'text'; search.className = 'Market_ab12_searchInput'; search.closest = () => null
   await assert.rejects(f.adapter.capture(opt), /snapshot-form-unsupported/)
 })
 

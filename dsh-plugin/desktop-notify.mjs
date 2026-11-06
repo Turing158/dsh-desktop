@@ -212,6 +212,27 @@ function describeTurnEnd(reason, session, maxBodyChars) {
 function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig)
 
+  // Send preferences independently of the webview, including in tray/minimal
+  // mode. Deduplicate updates so changing other appearance fields is cheap.
+  ctx.inject?.(['settings'], child => {
+    let last
+    function publish(value) {
+      try {
+        const section = value ?? child.settings.get?.('desktop-appearance')
+        if (!section) return
+        const next = JSON.stringify(section.notifications ?? {})
+        if (last === next) return
+        last = next
+        console.log('__DSH_NOTIFICATION_SETTINGS__ ' + next)
+      } catch { /* Settings failures must not interrupt a task. */ }
+    }
+    publish()
+    child.on('settings/updated', (ns, next) => { if (ns === 'desktop-appearance') publish(next) })
+    child.on('settings/document-updated', ns => {
+      if (ns === 'desktop-appearance') queueMicrotask(() => publish())
+    })
+  })
+
   // Per-agent bookkeeping: an `idle` transition only means "task finished" when
   // the agent actually ran and closed a turn. `idle` also follows cancellation
   // and `runMaintenance`, and neither of those should raise a toast.

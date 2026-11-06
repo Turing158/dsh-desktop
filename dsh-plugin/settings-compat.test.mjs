@@ -128,3 +128,19 @@ test('background settings validate images and percentage bounds, and persist ind
   assert.equal(h.settings.get('desktop-appearance').backgroundNavigation, false)
   assert.equal(h.settings.get('desktop-appearance').backgroundNavigationSurfaceTransparency, 60)
 })
+
+test('sound preferences persist together and rejected uploads preserve the last good selection', async t => {
+  const h = await fixture(t); if (!h) return
+  const notifications = { enabled: false, soundEnabled: false, sound: 'default', customName: '', customAudio: '' }
+  await h.settings.update('desktop-appearance', { notifications, colorScheme: 'teal' })
+  await h.settings.update('desktop-appearance', { animation: 'off' })
+  assert.deepEqual(h.settings.get('desktop-appearance').notifications, notifications)
+  const saved = await readFile(h.file, 'utf8')
+  for (const patch of [{ enabled: 'false' }, { sound: 'bad' }, { sound: 'custom' }, { customAudio: 'https://example.com/a.wav' }, { customAudio: 'x'.repeat(1800001) }]) {
+    await assert.rejects(h.settings.update('desktop-appearance', { notifications: { ...notifications, ...patch } }), /Invalid desktop settings/)
+  }
+  assert.equal(await readFile(h.file, 'utf8'), saved)
+  const restored = await fixture(t, { name: 'desktop-settings.json', text: saved }); if (!restored) return
+  assert.deepEqual(restored.settings.get('desktop-appearance').notifications, notifications)
+  assert.equal(restored.settings.get('desktop-appearance').colorScheme, 'teal')
+})

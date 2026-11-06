@@ -21,6 +21,12 @@ pub fn install(app: &tauri::AppHandle) {
                     if sequence > last {
                         last = sequence;
                         match value["action"].as_str() {
+                            Some("notify") => {
+                                let instance = app.state::<crate::state::Shared>().lock().map(|s| s.ui.backend_instance).unwrap_or(0);
+                                if let Ok(payload) = serde_json::from_value::<crate::dsh::NotifyPayload>(value["payload"].clone()) {
+                                    crate::deliver(&app, app.state::<crate::state::Shared>().inner(), payload, instance);
+                                }
+                            }
                             Some("enter") => crate::minimal::set(&app, true),
                             Some("show") => crate::minimal::show(&app),
                             Some("diagnostics") => crate::diagnostics::open(&app),
@@ -29,9 +35,19 @@ pub fn install(app: &tauri::AppHandle) {
                                 // explicitly requested isolated debug scenario.
                                 let source=value["source"].as_str().map(std::path::PathBuf::from);
                                 if let (Some(source),Some(node))=(source,crate::dsh::resolve_node()) {
-                                    let result=crate::runtime_store::freeze(&app,&node,&source).and_then(|runtime| {
+                                    let result=(|| {
+                                        let coordinator=app.state::<crate::maintenance::MaintenanceCoordinator>();
+                                        let deadline=std::time::Instant::now()+Duration::from_secs(30);
+                                        let _lease=loop {
+                                            match coordinator.begin(crate::maintenance::Kind::Install) {
+                                                Ok(lease)=>break lease,
+                                                Err(error) if std::time::Instant::now()>=deadline=>return Err(error),
+                                                Err(_)=>std::thread::sleep(Duration::from_millis(100)),
+                                            }
+                                        };
+                                        let runtime=crate::runtime_store::freeze(&app,&node,&source)?;
                                         crate::runtime_store::remember_first_install(&app,&runtime)?;Ok(runtime)
-                                    });
+                                    })();
                                     let json=match result {Ok(runtime)=>serde_json::json!({"runtime":runtime}),Err(error)=>serde_json::json!({"error":error})};
                                     let _=crate::maintenance::atomic_json(&dir.join("runtime-prepared.json"),&json);
                                 }
@@ -103,7 +119,9 @@ pub fn install(app: &tauri::AppHandle) {
                     crate::state::Phase::Failed { .. } => "failed",
                     _ => "starting",
                 };
-                serde_json::json!({ "phase":state.ui.phase, "identity":state.ui.identity(), "hasSnapshot":state.ui.snapshot.is_some(), "error":state.ui.last_error, "windowCount":window_count, "loaded":state.ui.loaded, "visible":visible, "backend":backend, "command":last, "runtime":state.runtime })
+                serde_json::json!({ "phase":state.ui.phase, "identity":state.ui.identity(), "hasSnapshot":state.ui.snapshot.is_some(), "error":state.ui.last_error, "windowCount":window_count, "loaded":state.ui.loaded, "visible":visible, "backend":backend, "command":last, "runtime":state.runtime, "runtimeCleanupPending":crate::runtime_cleanup::pending(&app),
+                    "notifications": { "enabled": state.notification_preferences.enabled, "soundEnabled":state.notification_preferences.sound_enabled,
+                        "sound":state.notification_preferences.sound, "customName":state.notification_preferences.custom_name, "audioBytes":state.notification_preferences.custom_audio.len() } })
             };
             if let Ok(json) = serde_json::to_vec(&status) {
                 let _ = std::fs::write(dir.join("state.json"), json);

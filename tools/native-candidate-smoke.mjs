@@ -56,6 +56,20 @@ async function wait(fn,label,timeout=90000) {
   throw Error('timeout: '+label)
 }
 async function state(){return JSON.parse(await readFile(join(root,'state.json'),'utf8'))}
+const obsolete=join(root,'runtime/versions/legacy-cleanup-fixture')
+const obsoleteCandidate=join(root,'runtime/candidates',randomUUID())
+const unknown=join(root,'runtime/versions/user-notes')
+if(!process.env.DSH_CANDIDATE_RESUME) {
+  await mkdir(join(obsolete,'tree/node_modules/@deepseek-ai/dsh/lib'),{recursive:true})
+  await writeFile(join(obsolete,'tree/node_modules/@deepseek-ai/dsh/lib/bin.js'),'obsolete fixture')
+  await writeFile(join(obsolete,'manifest.json'),JSON.stringify({schema:1,id:'legacy-cleanup-fixture',version:'0.1.0',
+    architecture:process.arch==='x64'?'x86_64':process.arch==='arm64'?'aarch64':'x86',entry:'node_modules/@deepseek-ai/dsh/lib/bin.js',
+    fingerprint:'a'.repeat(64),inventoryHash:'b'.repeat(64),nodeHash:'c'.repeat(64),fileCount:1,totalBytes:16}))
+  await mkdir(obsoleteCandidate,{recursive:true})
+  await writeFile(join(obsoleteCandidate,'preparation.json'),JSON.stringify({schema:1,requestId:randomUUID(),targetVersion:version,stage:'failed'}))
+  await writeFile(join(obsoleteCandidate,'partial.bin'),'failed installation')
+  await mkdir(unknown,{recursive:true});await writeFile(join(unknown,'notes.txt'),'preserve unknown content')
+}
 try {
   await writeFile(join(root,'command.json'),'{}');await writeFile(join(root,'state.json'),'{}')
   child=spawn(resolve('src-tauri/target/debug/deepseek-harness-desktop.exe'),[],{cwd:root,windowsHide:true,stdio:'ignore',env:{...process.env,
@@ -64,9 +78,16 @@ try {
     npm_config_offline:'true',npm_config_prefer_offline:'true',npm_config_prefer_online:'false',
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port='+port}})
   await wait(async()=>{const s=await state();return s.backend==='running'&&s.loaded},'source backend')
+  const startupCleanup='cold startup reclaims owned legacy runtimes and candidates while preserving unknown content'
+  if(!report.checks.includes(startupCleanup)) {
+    await wait(async()=>!await lstat(obsolete).then(()=>true,()=>false)&&!await lstat(obsoleteCandidate).then(()=>true,()=>false),'startup runtime cleanup')
+    assert.equal(await readFile(join(unknown,'notes.txt'),'utf8'),'preserve unknown content')
+    await pass(startupCleanup)
+  }
   browser=await chromium.connectOverCDP('http://127.0.0.1:'+port)
   const page=await wait(()=>browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:')&&!p.url().includes('tauri.localhost')),'source page')
   await handleOnboarding(page)
+  await page.waitForFunction(()=>!!window.__DSH_DSH_UPDATE__?.getSnapshot()?.versions && !window.__DSH_DSH_UPDATE__.getSnapshot().busy)
   const sourceState=await state()
   const identity=await page.evaluate(()=>window.__DSH_REMOTE_IDENTITY__)
   const invoke=(command,args)=>page.evaluate(async({command,args})=>{
@@ -106,7 +127,8 @@ try {
   if(!report.checks.includes(failure)) {
     mode='fail'
     const result=await invoke('prepare_dsh_candidate',{identity,requestId:randomUUID(),targetVersion:version})
-    assert.match(result.error,/runtime-candidate-install-failed/);await unchanged();await pass(failure)
+    assert.match(result.error,/runtime-candidate-install-failed/);await unchanged()
+    assert.deepEqual(await readdir(join(root,'runtime/candidates')),[]);await pass(failure)
   }
   const cancellation='cancellation terminates actual npm and releases preparation without stopping backend'
   if(!report.checks.includes(cancellation)) {
@@ -138,7 +160,10 @@ try {
     assert.ok(!result.error,result.error);assert.equal(result.value.version,version);assert.equal(result.value.switchAvailable,true)
     const manifest=JSON.parse(await readFile(join(root,'runtime/versions',result.value.id,'manifest.json'),'utf8'))
     assert.equal(manifest.version,version);assert.equal(manifest.fingerprint,result.value.fingerprint)
-    await unchanged();report.candidate=result.value;await pass(success)
+    await unchanged();report.candidate=result.value
+    assert.deepEqual(await readdir(join(root,'runtime/candidates')),[])
+    assert.deepEqual((await readdir(join(root,'runtime/versions'))).filter(name=>name!=='user-notes'),[result.value.id])
+    await pass(success)
   }
   const reuse='verified prepared candidate is reused without npm requests or a new runtime tree'
   if(!report.checks.includes(reuse)) {
@@ -160,7 +185,18 @@ try {
     const result=await invoke('prepare_dsh_candidate',{identity,requestId:randomUUID(),targetVersion:version})
     assert.ok(!result.error,result.error);assert.notEqual(result.value.id,report.candidate.id)
     assert.equal(tarballRequests,downloads,'fresh metadata must still reuse the verified tarball')
+    assert.equal(await lstat(join(root,'runtime/versions',report.candidate.id)).then(()=>true,()=>false),false)
     report.candidate=result.value;await unchanged();await pass(changed)
+  }
+  const readyCancellation='cancelling an already prepared candidate reclaims its snapshot and keeps the current backend'
+  if(!report.checks.includes(readyCancellation)) {
+    const requestId=randomUUID(),result=await invoke('prepare_dsh_candidate',{identity,requestId,targetVersion:version})
+    assert.ok(!result.error,result.error)
+    assert.ok((await invoke('cancel_dsh_candidate',{identity,requestId:randomUUID()})).error)
+    const cancelled=await invoke('cancel_dsh_candidate',{identity,requestId});assert.ok(!cancelled.error,cancelled.error)
+    await wait(async()=>!await lstat(join(root,'runtime/versions',result.value.id)).then(()=>true,()=>false),'prepared candidate reclaimed')
+    await unchanged();assert.equal(await readFile(join(unknown,'notes.txt'),'utf8'),'preserve unknown content')
+    await pass(readyCancellation)
   }
   const stale='stale identity and moving version tags are refused before candidate installation'
   if(!report.checks.includes(stale)) {
@@ -212,6 +248,7 @@ try {
     await page.getByText('候选准备已取消，当前版本继续运行。',{exact:true}).waitFor();registry.closeAllConnections();mode='success'
     await page.evaluate(()=>window.candidateSmokeContext.locale.setLocale('en'))
     await page.getByText('Candidate preparation was cancelled. The current version keeps running.',{exact:true}).waitFor()
+    await wait(async()=>await readFile(join(root,'locale-cache.txt'),'utf8')==='en','isolated native locale cache')
     await page.screenshot({path:join(root,'candidate-cancelled-en.png')});await unchanged();await pass(locale)
   }
   const isolated='npm lifecycle scripts and both version probes use an isolated candidate home'

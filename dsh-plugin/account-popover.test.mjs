@@ -73,7 +73,8 @@ test('launcher follows upstream arrival/replacement, vanilla mode, and teardown 
 
 test('account and existing settings adapters converge in either load order without duplicate priorities', () => {
   const appearance = readFileSync(new URL('./ui-client/client.js', import.meta.url), 'utf8')
-  const settingsBinder = appearance.slice(appearance.indexOf('function bindSettingsLauncher(ctx) {'), appearance.indexOf('\n    function apply(ctx) {'))
+  const settingsBinder = appearance.match(/function bindSettingsLauncher\(ctx\) \{[\s\S]*?\r?\n    \}/)?.[0]
+  assert.ok(settingsBinder, 'settings launcher binder is present')
   const previousObserver = globalThis.MutationObserver
   try {
     for (const accountFirst of [true, false]) {

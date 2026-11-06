@@ -63,6 +63,7 @@ function New-DesktopInstaller {
             '@@UNINSTALL_KEY@@' = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\dsh-desktop'
             '@@ESTIMATED_KB@@' = [string][int]((Get-ChildItem -LiteralPath $core -File -Recurse | Measure-Object Length -Sum).Sum / 1KB)
             '@@APP_TAR@@' = $archive; '@@APP_MANIFEST@@' = $appManifest
+            '@@APP_ICON@@' = Join-Path $root 'src-tauri\icons\icon.ico'
             '@@RUNTIME_HELPER@@' = Join-Path $root 'tools\installer-runtime.ps1'
             '@@RUNTIME_RECIPE@@' = $recipeFile; '@@OUTFILE@@' = $outFile
         }

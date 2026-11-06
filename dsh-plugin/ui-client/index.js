@@ -53,6 +53,35 @@ const REASONING_CONTROLS = ['select', 'slider']
 const COLOR_SCHEME_FIELD = 'colorScheme'
 const COLOR_SCHEMES = ['default', 'blue', 'teal', 'moss', 'violet', 'amber', 'rose']
 
+// Store the imported clip with the preferences so it survives port changes,
+// profile backups and moving the original file. The client converts to PCM WAV.
+const MAX_SOUND_DATA = 1800000
+function validNotificationAudio(data) {
+  if (data.length > MAX_SOUND_DATA || !/^data:audio\/wav;base64,[A-Za-z0-9+/]+={0,2}$/.test(data)) return false
+  try {
+    const bytes = Uint8Array.from(atob(data.slice(22)), char => char.charCodeAt(0))
+    if (bytes.length < 46 || bytes.length > 44 + 44100 * 30 || (bytes.length - 44) % 2) return false
+    const view = new DataView(bytes.buffer), text = (from, length) => String.fromCharCode(...bytes.subarray(from, from + length))
+    return text(0, 4) === 'RIFF' && text(8, 8) === 'WAVEfmt ' && text(36, 4) === 'data'
+      && view.getUint32(4, true) + 8 === bytes.length && view.getUint32(16, true) === 16
+      && view.getUint16(20, true) === 1 && view.getUint16(22, true) === 1
+      && view.getUint32(24, true) === 22050 && view.getUint32(28, true) === 44100
+      && view.getUint16(32, true) === 2 && view.getUint16(34, true) === 16
+      && view.getUint32(40, true) + 44 === bytes.length
+  } catch { return false }
+}
+function notificationSettings(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const { enabled = true, soundEnabled = true, sound = 'system', customName = '', customAudio = '' } = value
+  if (typeof enabled !== 'boolean' || typeof soundEnabled !== 'boolean'
+    || !['system', 'default', 'custom'].includes(sound)
+    || typeof customName !== 'string' || customName.length > 255
+    || typeof customAudio !== 'string' || customAudio.length > MAX_SOUND_DATA
+    || (customAudio !== '' && !validNotificationAudio(customAudio))
+    || (sound === 'custom' && !customAudio)) return undefined
+  return { enabled, soundEnabled, sound, customName, customAudio }
+}
+
 /**
  * Accepted animation preferences.
  *
@@ -196,6 +225,11 @@ function normalize(value) {
   }
 
   const section = { [ANIMATION_FIELD]: animation, [UI_MODE_FIELD]: ui, [TITLEBAR_MODE_FIELD]: titlebar, [TITLEBAR_HOVER_FIELD]: titlebarHover }
+  if (value.notifications !== undefined) {
+    const notifications = notificationSettings(value.notifications)
+    if (!notifications) return undefined
+    section.notifications = notifications
+  }
   // Omitted in old documents: keep their original palette and settings shape.
   if (value[COLOR_SCHEME_FIELD] !== undefined) {
     if (!COLOR_SCHEMES.includes(value[COLOR_SCHEME_FIELD])) return undefined
@@ -346,6 +380,18 @@ POPUP_TUNING_FIELDS.forEach((field, index) => {
   SCHEMA_ENVELOPE.refs[14].dict[field] = uid
 })
 
+Object.assign(SCHEMA_ENVELOPE.refs, {
+  90: { type: 'boolean', meta: { default: true } },
+  91: { type: 'const', meta: { required: true }, value: 'system' },
+  92: { type: 'const', meta: { required: true }, value: 'default' },
+  93: { type: 'const', meta: { required: true }, value: 'custom' },
+  94: { type: 'union', meta: { default: 'system' }, list: [91, 92, 93] },
+  95: { type: 'string', meta: { default: '', max: 255 } },
+  96: { type: 'string', meta: { default: '', max: MAX_SOUND_DATA } },
+  97: { type: 'object', dict: { enabled: 90, soundEnabled: 90, sound: 94, customName: 95, customAudio: 96 } },
+})
+SCHEMA_ENVELOPE.refs[14].dict.notifications = 97
+
 /**
  * Schema for this namespace, without a validator dependency.
  *
@@ -424,6 +470,9 @@ SettingsSchema['~standard'] = {
       // Name the field that actually failed rather than listing all five, so
       // the message stays as specific as a compiled schema's.
       const raw = input !== null && typeof input === 'object' ? input : {}
+      if (raw.notifications !== undefined && !notificationSettings(raw.notifications)) {
+        return { issues: [{ message: 'Invalid notification settings or audio clip', path: ['notifications'] }] }
+      }
       const badComposer = [...COMPOSER_TUNING_FIELDS, ...DIALOG_TUNING_FIELDS, ...POPUP_TUNING_FIELDS].find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
       if (badComposer) return { issues: [{ message: badComposer + ' must be a number between 0 and 100', path: [badComposer] }] }
       const badBackground = Object.keys(BACKGROUND_FIELDS).find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
@@ -496,4 +545,5 @@ export {
   inject,
   name,
   normalize,
+  notificationSettings,
 }

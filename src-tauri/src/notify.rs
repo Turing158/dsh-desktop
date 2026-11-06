@@ -6,6 +6,7 @@
 
 #[cfg(windows)]
 mod windows;
+pub mod sound;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -36,6 +37,7 @@ pub fn capability(transport: &TransportState) -> crate::compatibility::Observati
 }
 
 pub fn initialize(app: &AppHandle) {
+    app.manage(sound::Player::default());
     #[cfg(windows)]
     {
         let registration = windows::register(&app.config().identifier);
@@ -117,6 +119,9 @@ impl ToastNotifier {
 
 impl Notifier for ToastNotifier {
     fn notify(&self, title: &str, body: &str) -> Result<(), String> {
+        let preferences = self.app.state::<crate::state::Shared>().lock()
+            .map(|state| state.notification_preferences.clone()).unwrap_or_default();
+        if !preferences.enabled { return Ok(()); }
         // Windows toasts render a single short paragraph; an empty body would
         // leave a title-only toast, which is fine, but a very long one is
         // truncated by the shell anyway, so trim it deliberately here.
@@ -134,11 +139,17 @@ impl Notifier for ToastNotifier {
         #[cfg(windows)]
         {
             let notifications = self.app.state::<NativeNotifications>();
-            let result=notifications.0.as_ref().map_err(Clone::clone)?.submit(
+            let result=notifications.0.as_ref().map_err(Clone::clone)?.submit_with_audio(
                 &title,
                 &body,
                 self.session_id.as_deref(),
+                preferences.system_audio(),
             );
+            if preferences.sound_enabled && preferences.sound != "system" {
+                if let Err(error) = self.app.state::<sound::Player>().play(&preferences) {
+                    crate::debug_log(&format!("[notify/audio-failed] {error}"));
+                }
+            }
             if let Ok(mut state)=self.app.state::<crate::state::Shared>().lock() {state.notification_transport.delivery_failed=result.is_err();}
             result
         }
@@ -153,6 +164,16 @@ impl Notifier for ToastNotifier {
                 .map_err(|error| error.to_string())
         }
     }
+}
+
+#[tauri::command]
+pub fn preview_notification_sound(app: AppHandle, preferences: sound::Preferences) -> Result<(), String> {
+    app.state::<sound::Player>().play(&preferences)
+}
+
+#[tauri::command]
+pub fn stop_notification_sound(app: AppHandle) {
+    app.state::<sound::Player>().stop();
 }
 
 /// A notifier that records calls instead of displaying them, for tests.

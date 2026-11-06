@@ -60,6 +60,7 @@ pub struct AppState {
     pub capabilities: std::collections::BTreeMap<String, crate::compatibility::Observed>,
     pub plugin_capabilities: std::collections::BTreeMap<String, crate::compatibility::Observed>,
     pub notification_transport: crate::notify::TransportState,
+    pub notification_preferences: crate::notify::sound::Preferences,
     pub remote: crate::remote_control::Runtime,
     pub phase: Phase,
     /// Located runtime, once known.
@@ -102,6 +103,7 @@ impl Default for AppState {
             capabilities: std::collections::BTreeMap::new(),
             plugin_capabilities: std::collections::BTreeMap::new(),
             notification_transport: crate::notify::TransportState::default(),
+            notification_preferences: crate::notify::sound::Preferences::default(),
             remote: crate::remote_control::Runtime::default(),
             phase: Phase::Probing,
             runtime: None,

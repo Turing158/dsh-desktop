@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "checks": [
+    "real marketplace installation mounts through the native host restart",
+    "marketplace self-update and its actual restart button preserve drafts, attachments, listener settings and reject the old identity",
+    "title bar maximizes and restores the real native window after the marketplace restart",
+    "a physical title bar drag moves the real native window after the marketplace restart",
+    "title bar minimizes the real native window after the marketplace restart",
+    "title bar close hides the native window to the tray after the marketplace restart"
+  ],
+  "marketVersion": "1.73.11",
+  "update": {
+    "ok": true,
+    "activation": {
+      "dshmarket": {
+        "state": "restart",
+        "reasons": [
+          "新版本已就位,但运行中的进程仍在使用启动时加载的旧模块——重启后生效(页面本身会立即变成新版,服务端不会) / the new build is in place, but the running process still serves the module it imported at boot — restart to apply (the page itself updates immediately; the server half does not)"
+        ],
+        "bundle": true,
+        "hot": false
+      }
+    },
+    "installed": {
+      "dshmarket": "1.73.13"
+    },
+    "exitCode": 0,
+    "timedOut": false
+  }
+}

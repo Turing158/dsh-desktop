@@ -1,0 +1,73 @@
+{
+  "observedAt": "2026-11-03T02:01:49.2531562+08:00",
+  "active": "0.2.1-rc.5-x86_64-cbc4f4a2e172b85d1addc1835a440482a1cf77f3f4bf9cbbc7fd611025c1dcb2-872267c7-45ad-4558-90c1-f6dec4eefc4f",
+  "previous": "0.2.1-rc.2-x86_64-42da2bf6353266e23217bada4b0773cb76037669cc4ba0faa948f1fe752b33f3-bb053ca1-2bec-4157-9b24-ad2c524e473b",
+  "versions": [
+    {
+      "id": ".preparing-4fcf77ec-39e2-4eff-8b1d-8828d3d2a4ef",
+      "active": false,
+      "temporaryStage": true
+    },
+    {
+      "id": "0.2.1-rc.2-x86_64-42da2bf6353266e23217bada4b0773cb76037669cc4ba0faa948f1fe752b33f3-bb053ca1-2bec-4157-9b24-ad2c524e473b",
+      "version": "0.2.1-rc.2",
+      "bytes": 725083044,
+      "active": false
+    },
+    {
+      "id": "0.2.1-rc.5-x86_64-cbc4f4a2e172b85d1addc1835a440482a1cf77f3f4bf9cbbc7fd611025c1dcb2-872267c7-45ad-4558-90c1-f6dec4eefc4f",
+      "version": "0.2.1-rc.5",
+      "bytes": 725224200,
+      "active": true
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-29a00a004f48297fe8a76cf61770124b610570b09046399a58ef05e5b24cff0a-da3a89bd-d985-4609-9594-69a28f9ee590",
+      "version": "0.2.2-alpha.2",
+      "bytes": 771381002,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-29a00a004f48297fe8a76cf61770124b610570b09046399a58ef05e5b24cff0a-de7f9386-e511-46ad-9755-5478b36b1cc2",
+      "version": "0.2.2-alpha.2",
+      "bytes": 771381002,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-990223230e4ec656d939f1129c94373de1609f3ae4d3bc1d8d008f72de470714-048c1d6c-e4a5-41d8-9c91-177321c051fb",
+      "version": "0.2.2-alpha.2",
+      "bytes": 774104001,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-990223230e4ec656d939f1129c94373de1609f3ae4d3bc1d8d008f72de470714-2f9babc4-1661-45ec-9794-bf10d9dc81e9",
+      "version": "0.2.2-alpha.2",
+      "bytes": 774104001,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-990223230e4ec656d939f1129c94373de1609f3ae4d3bc1d8d008f72de470714-e6773684-f031-477a-aa98-f75b53d1c5bb",
+      "version": "0.2.2-alpha.2",
+      "bytes": 774104001,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-990223230e4ec656d939f1129c94373de1609f3ae4d3bc1d8d008f72de470714-f28222e0-3b45-4b56-8767-2b80fd846ecd",
+      "version": "0.2.2-alpha.2",
+      "bytes": 774104001,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-990223230e4ec656d939f1129c94373de1609f3ae4d3bc1d8d008f72de470714-f494c994-619a-4592-98f7-7112e72a2aee",
+      "version": "0.2.2-alpha.2",
+      "bytes": 774104001,
+      "active": false
+    },
+    {
+      "id": "0.2.2-alpha.2-x86_64-fda07321436ab6cb3b7fee7182cd98c03f4bd58535412159c20c6ecc44b0226a-28815e56-108f-4ccb-ba1e-f1c9158651f4",
+      "version": "0.2.2-alpha.2",
+      "bytes": 771377880,
+      "active": false
+    }
+  ],
+  "candidateCount": 19
+}

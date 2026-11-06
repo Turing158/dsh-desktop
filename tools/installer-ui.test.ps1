@@ -149,6 +149,7 @@ try {
             '@@INSTALL_DIR@@'='DSH-Installer-UI-Test'; '@@VERSION@@'='0.0.0'; '@@PUBLISHER@@'='Test'; '@@ARCH@@'='x64'
             '@@OUTFILE@@'=$output; '@@RUNTIME_HELPER@@'=$helperFile; '@@RUNTIME_RECIPE@@'=(Join-Path $scratch 'recipe.json')
             '@@APP_MANIFEST@@'=(Join-Path $scratch 'manifest.json'); '@@APP_TAR@@'=$archive; '@@ESTIMATED_KB@@'='1'
+            '@@APP_ICON@@'=(Join-Path $project 'src-tauri\icons\icon.ico')
         }
         $script = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer.nsi') -Raw -Encoding UTF8
         foreach ($token in $tokens.Keys) { $script = $script.Replace($token, ([string]$tokens[$token]).Replace('$','$$')) }

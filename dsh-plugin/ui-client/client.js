@@ -54,10 +54,12 @@ var React = require('react')
      */
     var Menu = null
     var Tooltip = null
+    var Switch = null
     try {
       var primitives = require('@deepseek-ai/dsh-client-ui-primitives')
       if (primitives && typeof primitives.Menu === 'function') Menu = primitives.Menu
       if (primitives && typeof primitives.Tooltip === 'function') Tooltip = primitives.Tooltip
+      if (primitives && typeof primitives.Switch === 'function') Switch = primitives.Switch
     } catch (error) {
       // Logged rather than swallowed: a silent fallback would look like a styling
       // choice, when it means the selector's menu has degraded to the native list.
@@ -613,6 +615,21 @@ var React = require('react')
       })
       return result
     }
+    // Keep the native range in charge of input, keyboard and save events. The
+    // decoration shares its 24px thumb travel, including the 0/100 endpoints.
+    function SettingsRange(props) {
+      var progress = (Number(props.value) - props.min) / (props.max - props.min)
+      return h('span', { className: 'dshSettingRange', style: { '--dsh-range-progress': Math.max(0, Math.min(1, progress)) } },
+        h('input', props),
+        h('span', { className: 'dshSettingRange__visual', 'aria-hidden': 'true' },
+          h('span', { className: 'dshSettingRange__rail' }),
+          h('span', { className: 'dshSettingRange__fill' }),
+          h('span', { className: 'dshSettingRange__ticks' }, [0, 25, 50, 75, 100].map(function (percent) {
+            return h('i', { key: percent, style: { left: percent + '%' } })
+          })),
+          h('span', { className: 'dshSettingRange__thumb' })))
+    }
+
     function ComposerMaterialSlider(props) {
       var surface = props.surface || MATERIAL_SURFACES[0]
       var material = props.state[surface.field]
@@ -623,7 +640,7 @@ var React = require('react')
       return h('div', { className: 'dshAppearance__materialTuning' },
         h('label', { className: 'dshAppearance__materialSlider' },
           h('span', null, control.label),
-          h('input', { type: 'range', min: 0, max: 100, step: 1, value: value,
+          h(SettingsRange, { type: 'range', min: 0, max: 100, step: 1, value: value,
             'aria-label': control.label, 'aria-valuetext': value + '%',
             onChange: function (event) { props.preview(control.field, Number(event.target.value)) },
             onPointerUp: save, onPointerCancel: save, onKeyUp: save, onBlur: save }),
@@ -1151,9 +1168,11 @@ var React = require('react')
       function slider(label, field, disabled) {
         return h('label', { className: 'dshAppearance__backgroundSlider' },
           h('span', null, label),
-          h('input', { type: 'range', min: 0, max: 100, step: 1, value: state[field], disabled: disabled,
-            'aria-label': label, onChange: function (event) { props.preview(field, Number(event.target.value)) },
+          h(SettingsRange, { type: 'range', min: 0, max: 100, step: 1, value: state[field], disabled: disabled,
+            'aria-label': label, 'aria-valuetext': state[field] + '%',
+            onChange: function (event) { props.preview(field, Number(event.target.value)) },
             onPointerUp: function (event) { props.save(field, Number(event.target.value)) },
+            onPointerCancel: function (event) { props.save(field, Number(event.target.value)) },
             onKeyUp: function (event) { props.save(field, Number(event.target.value)) },
             onBlur: function (event) { props.save(field, Number(event.target.value)) } }),
           h('output', null, state[field] + '%'))
@@ -1204,7 +1223,8 @@ var React = require('react')
             slider(
               navigation ? t('标题栏与左边导航栏底色透明度') : t('{region}底色透明度', { region: t(region[1]) }),
               navigation ? 'backgroundNavigationSurfaceTransparency' : field + 'SurfaceTransparency',
-              !state.backgroundImage || !state[field]))
+              !state.backgroundImage || !state[field]),
+            region[0] === 'Right' ? h('p', null, t('同时应用于自动化任务和插件页面（含插件市场）。')) : null)
         }))
     }
 
@@ -1458,6 +1478,140 @@ var React = require('react')
           if (remove) remove()
         }
       })
+    }
+
+    // Decode common audio formats once at import and persist a bounded mono WAV.
+    // Native playback then needs no browser, file path, or codec installation.
+    async function importNotificationAudio(file) {
+      if (file.size > 10 * 1024 * 1024) throw new Error(t('音频文件不能超过 10 MB'))
+      var audio = new (window.AudioContext || window.webkitAudioContext)()
+      try {
+        var decoded = await audio.decodeAudioData(await file.arrayBuffer())
+        if (!decoded.length || !Number.isFinite(decoded.duration) || decoded.duration > 30) {
+          throw new Error(t('请选择不超过 30 秒的音频'))
+        }
+        var count = Math.ceil(decoded.duration * 22050)
+        var offline = new OfflineAudioContext(1, count, 22050)
+        var source = offline.createBufferSource()
+        source.buffer = decoded; source.connect(offline.destination); source.start()
+        var rendered = await offline.startRendering(), samples = rendered.getChannelData(0)
+        var bytes = new Uint8Array(44 + samples.length * 2), view = new DataView(bytes.buffer)
+        function textAt(offset, text) { for (var i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i) }
+        textAt(0, 'RIFF'); view.setUint32(4, bytes.length - 8, true); textAt(8, 'WAVEfmt ')
+        view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true)
+        view.setUint32(24, 22050, true); view.setUint32(28, 44100, true)
+        view.setUint16(32, 2, true); view.setUint16(34, 16, true); textAt(36, 'data')
+        view.setUint32(40, samples.length * 2, true)
+        for (var i = 0; i < samples.length; i++) {
+          var sample = Math.max(-1, Math.min(1, samples[i]))
+          view.setInt16(44 + i * 2, sample * (sample < 0 ? 32768 : 32767), true)
+        }
+        var binary = ''
+        for (var i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192))
+        return 'data:audio/wav;base64,' + btoa(binary)
+      } finally { await audio.close() }
+    }
+
+    function createSoundSection(scope) {
+      var subscribe = function (listener) { return scope.subscribe(listener) }
+      var getSnapshot = function () { return scope.getSnapshot() }
+      return function SoundSection() {
+        useLocale(React)
+        var snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+        var saved = snapshot.value?.notifications || {}
+        var preferences = { enabled: true, soundEnabled: true, sound: 'system', customName: '', customAudio: '', ...saved }
+        var pending = React.useState(false), busy = pending[0], setBusy = pending[1]
+        var issue = React.useState(''), error = issue[0], setError = issue[1]
+        var playback = React.useState(false), playing = playback[0], setPlaying = playback[1]
+        var input = React.useRef(null), live = React.useRef(true), previewing = React.useRef(false), timer = React.useRef(null)
+        var previewAudio = React.useRef(null)
+        var unavailable = snapshot.status !== 'ready' || snapshot.mode === 'memory'
+        var disabled = busy || unavailable
+        var muted = !preferences.enabled || !preferences.soundEnabled
+        function stop() {
+          clearTimeout(timer.current)
+          previewAudio.current?.pause(); previewAudio.current = null
+          if (previewing.current) window.__TAURI__?.core?.invoke('stop_notification_sound').catch(function () {})
+          previewing.current = false
+          if (live.current) setPlaying(false)
+        }
+        React.useEffect(function () {
+          live.current = true
+          return function () { live.current = false; stop() }
+        }, [])
+        async function save(patch) {
+          stop(); setBusy(true); setError('')
+          try {
+            var current = scope.getSnapshot()
+            if (current.status !== 'ready' || current.mode === 'memory') throw new Error('unavailable')
+            var accepted = await scope.set('notifications', { ...preferences, ...current.value?.notifications, ...patch })
+            if (accepted === false) throw new Error('refused')
+          } catch (error) {
+            if (live.current) setError(t('声音提醒设置保存失败，请重试。'))
+          } finally { if (live.current) setBusy(false) }
+        }
+        async function upload(file) {
+          if (!file) return
+          stop(); setBusy(true); setError('')
+          try {
+            var data = await importNotificationAudio(file)
+            if (live.current) await save({ sound: 'custom', customName: file.name.slice(0, 255), customAudio: data })
+          } catch (error) {
+            if (live.current) setError(error instanceof DOMException ? t('无法读取音频，请选择有效的 MP3、WAV、OGG 或 M4A 文件。') : error.message)
+          } finally { if (live.current) setBusy(false) }
+        }
+        async function preview() {
+          if (playing) { stop(); return }
+          setError(''); setPlaying(true)
+          try {
+            if (window.__TAURI__?.core?.invoke) {
+              previewing.current = true
+              await window.__TAURI__.core.invoke('preview_notification_sound', { preferences: preferences })
+              if (!live.current) { stop(); return }
+              var duration = preferences.sound === 'custom' ? (atob(preferences.customAudio.split(',')[1]).length - 44) / 44100 : 1
+              timer.current = setTimeout(function () { previewing.current = false; if (live.current) setPlaying(false) }, duration * 1000 + 300)
+            } else if (preferences.sound === 'custom') {
+              var audio = new Audio(preferences.customAudio)
+              previewAudio.current = audio
+              audio.onended = function () { if (live.current) setPlaying(false) }
+              await audio.play()
+            } else { throw new Error('desktop-required') }
+          } catch (error) {
+            stop()
+            if (live.current) setError(t('无法播放音效，请在桌面应用中重试并检查系统声音设置。'))
+          }
+        }
+        function toggle(title, hint, field) {
+          var checked = preferences[field]
+          var props = { checked: checked, disabled: disabled || (field === 'soundEnabled' && !preferences.enabled),
+            label: title, onChange: function (next) { save({ [field]: next }) } }
+          return h('div', { className: 'dshSound__row' },
+            h('div', null, h('div', { className: 'dshSound__label' }, title), h('p', { className: 'dshSound__hint' }, hint)),
+            Switch ? h(Switch, props) : h('input', { type: 'checkbox', role: 'switch', 'aria-label': title,
+              checked: checked, disabled: props.disabled, onChange: function (event) { props.onChange(event.target.checked) } }))
+        }
+        return h('div', { className: 'dshSound', 'aria-busy': busy },
+          toggle(t('开启提醒'), t('任务完成、出错或需要确认时显示桌面通知'), 'enabled'),
+          toggle(t('播放声音'), t('收到提醒时播放所选音效'), 'soundEnabled'),
+          h('fieldset', { className: 'dshSound__effects', disabled: disabled || muted },
+            h('legend', { className: 'dshSound__label' }, t('提醒音效')),
+            h('div', { className: 'dshSound__options', role: 'group', 'aria-label': t('提醒音效') },
+              [['system', t('系统'), t('使用 Windows 通知声音')], ['default', t('默认'), t('轻柔的双音提示')], ['custom', t('自定义'), t('使用自己的音频')]].map(function (option) {
+                return h('button', { key: option[0], type: 'button', className: 'dshSound__option', 'aria-pressed': preferences.sound === option[0],
+                  onClick: function () { stop(); if (option[0] === 'custom' && !preferences.customAudio) input.current?.click(); else save({ sound: option[0] }) } },
+                  h('span', null, option[1]), h('small', null, option[2]))
+              })),
+            h('input', { ref: input, type: 'file', hidden: true, accept: 'audio/*,.mp3,.wav,.ogg,.m4a,.flac',
+              'aria-label': t('上传自定义音频'), onChange: function (event) { var file = event.target.files?.[0]; event.target.value = ''; upload(file) } }),
+            h('div', { className: 'dshSound__actions' },
+              h('button', { type: 'button', onClick: preview }, playing ? t('停止试听') : t('试听音效')),
+              h('button', { type: 'button', onClick: function () { input.current?.click() } }, preferences.customAudio ? t('更换音频') : t('上传音频')),
+              preferences.customAudio ? h('button', { type: 'button', onClick: function () { save({ sound: preferences.sound === 'custom' ? 'system' : preferences.sound, customAudio: '', customName: '' }) } }, t('移除音频')) : null),
+            preferences.customName ? h('p', { className: 'dshSound__filename', title: preferences.customName }, preferences.customName) : null,
+            h('p', { className: 'dshSound__hint' }, t('支持 MP3、WAV、OGG、M4A 等格式，最长 30 秒、最大 10 MB。导入后无需保留原文件。'))),
+          unavailable ? h('p', { role: 'status', className: 'dshSound__hint' }, t('请在桌面应用中修改声音提醒设置')) : null,
+          error ? h('p', { role: 'alert', className: 'dshSound__error' }, error) : null)
+      }
     }
 
     function apply(ctx) {
@@ -2153,6 +2307,8 @@ var React = require('react')
        * @type {undefined | (() => void) | null}
        */
       var sectionEntry = null
+      var soundEntry = null
+      var SoundSection = createSoundSection(scope)
 
       /**
        * Whether the `settings.section` slot has been declared yet.
@@ -2193,6 +2349,8 @@ var React = require('react')
           },
           Section,
         )
+        soundEntry = ctx.slots.register({ name: 'settings.section', id: 'sound-notifications', order: 5.5,
+          label: function () { return t('声音提醒') }, children: {} }, SoundSection)
       }
 
       /**
@@ -2202,6 +2360,7 @@ var React = require('react')
        * their own.
        */
       function unmountSection() {
+        if (soundEntry) { soundEntry(); soundEntry = null }
         if (sectionEntry === null) return
         var dispose = sectionEntry
         sectionEntry = null

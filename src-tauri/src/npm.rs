@@ -15,8 +15,14 @@ use crate::dsh::CommandExt;
 pub const INSTALL_SPEC: &str = "@deepseek-ai/dsh@latest";
 
 pub fn install_argv(prefix: &Path) -> Vec<String> {
-    vec!["install".into(), "--global".into(), "--prefix".into(), prefix.to_string_lossy().into_owned(),
-        INSTALL_SPEC.into(), "--no-audit".into(), "--no-fund".into(), "--loglevel=info".into()]
+    let mut args=vec!["install".into(), "--global".into(), "--prefix".into(), prefix.to_string_lossy().into_owned(),
+        INSTALL_SPEC.into(), "--no-audit".into(), "--no-fund".into(), "--loglevel=info".into()];
+    if let Some(cache)=managed_cache(prefix) { args.extend(["--cache".into(),cache.to_string_lossy().into_owned()]); }
+    args
+}
+fn managed_cache(prefix: &Path) -> Option<PathBuf> {
+    prefix.parent().filter(|p| p.file_name().is_some_and(|name| name=="candidates" || name=="installing"))
+        .and_then(Path::parent).map(|root| root.join("npm-cache"))
 }
 
 /// Exact candidate versions never resolve a moving tag after the user's check.
@@ -26,9 +32,7 @@ pub fn candidate_argv(prefix: &Path, version: &str) -> Result<Vec<String>,String
     args[4]=format!("@deepseek-ai/dsh@{version}");
     // Candidate prefixes stay isolated; npm's content-addressed tarball cache
     // is shared across attempts and checked by npm's integrity verification.
-    let cache=prefix.parent().filter(|p|p.file_name().is_some_and(|name|name=="candidates"))
-        .and_then(Path::parent).map(|root|root.join("npm-cache")).unwrap_or_else(||prefix.join("npm-cache"));
-    args.extend(["--cache".into(),cache.to_string_lossy().into_owned()]);
+    if managed_cache(prefix).is_none() { args.extend(["--cache".into(),prefix.join("npm-cache").to_string_lossy().into_owned()]); }
     // start_candidate_metadata refreshes the dependency tree before this
     // install. Keeping preferOnline off here allows tarball cache reuse.
     args.extend(["--prefer-offline".into(), "--prefer-online=false".into(), "--offline=false".into()]);
@@ -46,7 +50,18 @@ fn candidate_metadata_argv(prefix: &Path, version: &str) -> Result<Vec<String>, 
 
 /// PowerShell command: single quotes prevent interpolation of unusual paths.
 pub fn install_command(prefix: &Path) -> String {
-    format!("npm install --global --prefix '{}' {INSTALL_SPEC}", prefix.to_string_lossy().replace("'", "''"))
+    let mut command=format!("npm install --global --prefix '{}' {INSTALL_SPEC}", prefix.to_string_lossy().replace("'", "''"));
+    if let Some(cache)=managed_cache(prefix) { command.push_str(&format!(" --cache '{}'",cache.to_string_lossy().replace("'", "''"))); }
+    command
+}
+pub(crate) fn clean_cache(node: &Path, cache: &Path) -> Result<(), String> {
+    let cli=npm_cli_for(node).ok_or("runtime-cache-npm-unavailable")?;
+    let mut command=Command::new(node);
+    command.arg(crate::dsh::node_script_path(&cli)).args(["cache","clean","--force","--cache"])
+        .arg(cache).args(["--logs-dir"]).arg(cache.join("_logs"))
+        .args(["--logs-max=0","--fetch-retries=0","--loglevel=error"]);
+    crate::dsh_update::output(&mut command,"runtime-cache-clean",std::time::Duration::from_secs(120))
+        .map(|_|()).map_err(|_|"runtime-cache-clean-deferred".into())
 }
 
 /// A line of install progress streamed to the UI.

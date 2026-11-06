@@ -657,7 +657,7 @@ pub fn authorize_backend(app: &AppHandle, instance: u64, url: &str) -> Result<()
     let url = url.parse::<tauri::Url>().map_err(|_| "remote-origin")?;
     app.add_capability(serde_json::json!({ "identifier": format!("remote-control-{instance}"), "windows": ["main"], "local": false,
         "remote": { "urls": [format!("{}/*", url.origin().ascii_serialization())] },
-        "permissions": ["allow-desktop-locale", "allow-remote-control", "allow-window-controls", "allow-clipboard", "allow-edit-shortcut", "allow-folder-focus", "allow-workspace-directory", "allow-session-export", "allow-attachment-images", "allow-diagnostics-read", "allow-diagnostics-export", "allow-capability-report", "allow-recovery-read", "allow-recovery-restore", "allow-draft-checkpoint", "allow-backup-export", "allow-backup-inspect", "allow-backup-restore", "core:app:allow-version"]
+        "permissions": ["allow-desktop-locale", "allow-notification-sound", "allow-remote-control", "allow-window-controls", "allow-clipboard", "allow-edit-shortcut", "allow-folder-focus", "allow-workspace-directory", "allow-session-export", "allow-attachment-images", "allow-diagnostics-read", "allow-diagnostics-export", "allow-capability-report", "allow-recovery-read", "allow-recovery-restore", "allow-draft-checkpoint", "allow-backup-export", "allow-backup-inspect", "allow-backup-restore", "core:app:allow-version"]
     }).to_string()).map_err(|_| "remote-permission".into())
 }
 pub fn page_load(window: &WebviewWindow, started: bool) {

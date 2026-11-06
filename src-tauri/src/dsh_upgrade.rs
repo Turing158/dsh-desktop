@@ -32,6 +32,14 @@ impl ManagerState {
         self.active.lock().is_ok_and(|s| s.is_some())
     }
 }
+pub(crate) fn prepared_paths(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
+    let manager = app.state::<ManagerState>();
+    let prepared = manager.prepared.lock().map_err(|_| "runtime-cleanup-state")?;
+    Ok(prepared.as_ref().map(|(_, source, target)| vec![source.dsh_bin.clone(), target.dsh_bin.clone()]).unwrap_or_default())
+}
+pub(crate) fn clear_prepared(app: &AppHandle) {
+    if let Ok(mut prepared) = app.state::<ManagerState>().prepared.lock() { *prepared = None; }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
@@ -275,6 +283,7 @@ pub async fn install(
                     s.ui.loaded = false;
                     s.ui.transition(UiPhase::Restoring);
                 }
+                clear_prepared(&app);
                 let _ = journal.update(Stage::RolledBack, "source-exited-before-checkpoint");
                 progress(&app, "rolled-back");
                 std::thread::spawn(move || {
@@ -342,6 +351,7 @@ pub async fn install(
             failure(&app, &error);
             let _ = journal.failed("update-checkpoint-failed");
             if !rollback_pending(&app) {
+                clear_prepared(&app);
                 restore_snapshot_version(&shared, &source);
                 let _ = journal.update(Stage::RolledBack, "checkpoint-failed-source-retained");
                 progress(&app, "rolled-back");
@@ -460,6 +470,7 @@ pub fn acknowledge(app: &AppHandle, checkpoint: uuid::Uuid) -> Result<(), String
         }
     }
     cleanup_committed(app, &active.record);
+    clear_prepared(app);
     slot.take();
     progress(app, "complete");
     Ok(())
@@ -520,6 +531,7 @@ pub fn rollback_pending(app: &AppHandle) -> bool {
             return;
         }
         restore_snapshot_version(&shared, &active.record.source);
+        clear_prepared(&app);
         if let Some(p) = journal {
             let _ = p.update(Stage::RolledBack, "data-and-runtime-rolled-back");
         }

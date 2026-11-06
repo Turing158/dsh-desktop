@@ -54,7 +54,10 @@ fn verification_cache() -> &'static Mutex<HashMap<PathBuf, Arc<VerifiedTree>>> {
 }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
-struct Prepared { version: String, entry: String, fingerprint: String, file_count: usize, total_bytes: u64 }
+struct Prepared {
+    version: String, entry: String, fingerprint: String, file_count: usize, total_bytes: u64,
+    #[serde(default)] reused_id: Option<String>,
+}
 
 fn invalid(code: &'static str) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, code) }
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
@@ -94,6 +97,7 @@ pub fn directory(app: &tauri::AppHandle) -> Result<PathBuf,String> {
     app.path().app_data_dir().map(|root|root.join("runtime")).map_err(|_|"runtime-store-unavailable".into())
 }
 pub fn install_directory(app: &tauri::AppHandle) -> Result<PathBuf,String> {
+    crate::runtime_cleanup::acquire(app)?;
     let root=directory(app)?; ensure(&root).map_err(|_|"runtime-store-unavailable")?;
     let record=root.join("install-prefix.json");
     let id=if record.try_exists().map_err(|_|"runtime-store-unavailable")? {
@@ -107,6 +111,7 @@ pub fn install_directory(app: &tauri::AppHandle) -> Result<PathBuf,String> {
     }
     fs::create_dir_all(&prefix).map_err(|_|"runtime-store-unavailable")?;
     plain_ancestors(&prefix).map_err(|_|"runtime-linked-path")?;
+    crate::runtime_cleanup::own_temporary(&root, &prefix, "install").map_err(|_| "runtime-install-owner-failed")?;
     Ok(prefix)
 }
 fn ensure(root: &Path) -> io::Result<()> {
@@ -126,6 +131,7 @@ fn manifest(root: &Path, id: &str) -> io::Result<Manifest> {
         || m.file_count==0 || m.file_count>MAX_FILES || m.total_bytes>MAX_BYTES {return Err(invalid("runtime-manifest-invalid"));}
     Ok(m)
 }
+pub(crate) fn owned_version_bytes(root: &Path, id: &str) -> io::Result<u64> { manifest(root, id).map(|m| m.total_bytes) }
 fn verify(root: &Path, m: &Manifest) -> io::Result<PathBuf> {
     let started=Instant::now();
     let directory=root.join("versions").join(&m.id);
@@ -304,11 +310,13 @@ fn pending(root: &Path, node: &Path) -> io::Result<Option<Runtime>> {
 /// Freeze an actual package before any running backend is stopped. The original
 /// tree stays intact. Failed/incomplete stages remain unselected for inspection.
 pub fn freeze(app: &tauri::AppHandle, node: &Path, source: &Path) -> Result<Runtime,String> {
+    crate::runtime_cleanup::acquire(app)?;
     let helper=crate::patch_file(app)?.parent().ok_or("runtime-helper-missing")?.join("runtime-store/prepare.mjs");
     freeze_at(&directory(app)?,node,source,&helper)
 }
 
 pub fn candidate_directory(app: &tauri::AppHandle) -> Result<PathBuf,String> {
+    crate::runtime_cleanup::acquire(app)?;
     candidate_directory_at(&directory(app)?)
 }
 fn candidate_directory_at(root: &Path) -> Result<PathBuf,String> {
@@ -319,6 +327,7 @@ fn candidate_directory_at(root: &Path) -> Result<PathBuf,String> {
     }
     fs::create_dir_all(&directory).map_err(|_|"runtime-candidate-stage-unavailable")?;
     plain_ancestors(&directory).map_err(|_|"runtime-linked-path")?;
+    crate::runtime_cleanup::own_temporary(root, &directory, "candidate").map_err(|_| "runtime-candidate-owner-failed")?;
     let cache=root.join("npm-cache");
     fs::create_dir_all(&cache).map_err(|_|"runtime-store-unavailable")?;
     plain_ancestors(&cache).map_err(|_|"runtime-linked-path")?;
@@ -354,6 +363,7 @@ fn reusable_candidate_at(root:&Path,node:&Path,version:&str)->Result<Option<Runt
 
 /// Publish a verified tree without changing selection or first-install intent.
 pub fn freeze_candidate(app: &tauri::AppHandle,node: &Path,prefix: &Path,version: &str) -> Result<Runtime,String> {
+    crate::runtime_cleanup::acquire(app)?;
     let helper=crate::patch_file(app)?.parent().ok_or("runtime-helper-missing")?.join("runtime-store/prepare.mjs");
     let root=directory(app)?;
     freeze_candidate_at(&root,node,prefix,version,&helper)
@@ -445,24 +455,68 @@ fn freeze_at_context(root: &Path,node:&Path,source:&Path,helper:&Path,candidate:
     let stage=root.join("versions").join(format!(".preparing-{}",uuid::Uuid::new_v4()));
     fs::create_dir(&stage).map_err(|_|"runtime-stage-unavailable")?;
     let request=stage.join("request.json");
+    // Establish ownership before any fallible work, so an interrupted freeze
+    // has an explicit, bounded destination for later reclamation.
     crate::maintenance::atomic_json(&request,&serde_json::json!({"source":source,"destination":stage.join("tree")})).map_err(|_|"runtime-stage-unavailable")?;
-    let mut cmd=Command::new(node);
-    cmd.arg(crate::dsh::node_script_path(helper)).arg(crate::dsh::node_script_path(&request));
-    let text=crate::dsh_update::output(&mut cmd,"runtime-freeze",Duration::from_secs(600))?;
-    let prepared:Prepared=serde_json::from_str(&text).map_err(|_|"runtime-preparation-invalid")?;
-    let id=format!("{}-{}-{}-{}",prepared.version,std::env::consts::ARCH,prepared.fingerprint,uuid::Uuid::new_v4());
-    let m=Manifest {schema:1,id:id.clone(),version:prepared.version,architecture:std::env::consts::ARCH.into(),entry:prepared.entry,node_hash:file_hash(node).map_err(|_|"runtime-node-unavailable")?,
-        fingerprint:prepared.fingerprint,inventory_hash:digest(&read(&stage.join("inventory.json"),MAX_INVENTORY).map_err(|_|"runtime-preparation-invalid")?),
-        file_count:prepared.file_count,total_bytes:prepared.total_bytes};
-    crate::maintenance::atomic_json(&stage.join("manifest.json"),&m).map_err(|_|"runtime-manifest-save-failed")?;
-    // No existing version is overwritten, even when its package version matches.
-    fs::rename(&stage,root.join("versions").join(&id)).map_err(|_|"runtime-publish-failed")?;
-    let m=manifest(root,&id).map_err(|_|"runtime-manifest-invalid")?;
-    let entry=verify(root,&m).map_err(|_|"runtime-tree-invalid")?;
-    let reported=if let Some(prefix)=candidate {candidate_version(node,&entry,prefix)?}
-        else {crate::dsh::probe_version(node,&entry).ok_or("runtime-version-unavailable")?};
-    if reported.trim_start_matches('v')!=m.version {return Err("runtime-version-mismatch".into());}
-    Ok(runtime(node,entry,&m,false))
+    let mut published=None;
+    let result=(|| {
+        let node_hash=file_hash(node).map_err(|_|"runtime-node-unavailable")?;
+        let mut existing=Vec::new();
+        for entry in fs::read_dir(root.join("versions")).map_err(|_|"runtime-store-unavailable")? {
+            let Ok(entry)=entry else {continue};
+            let Some(id)=entry.file_name().to_str().map(str::to_owned) else {continue};
+            if let Ok(m)=manifest(root,&id) {
+                if m.node_hash==node_hash {
+                    existing.push(serde_json::json!({"id":m.id,"version":m.version,"entry":m.entry,
+                        "fingerprint":m.fingerprint,"fileCount":m.file_count,"totalBytes":m.total_bytes}));
+                }
+            }
+        }
+        let prepare=|existing:&[serde_json::Value]|->Result<Prepared,String> {
+            crate::maintenance::atomic_json(&request,&serde_json::json!({"source":source,"destination":stage.join("tree"),"existing":existing}))
+                .map_err(|_|"runtime-stage-unavailable")?;
+            let mut cmd=Command::new(node);
+            cmd.arg(crate::dsh::node_script_path(helper)).arg(crate::dsh::node_script_path(&request));
+            let text=crate::dsh_update::output(&mut cmd,"runtime-freeze",Duration::from_secs(600))?;
+            serde_json::from_str(&text).map_err(|_|"runtime-preparation-invalid".into())
+        };
+        let mut prepared=prepare(&existing)?;
+        if let Some(id)=&prepared.reused_id {
+            if let Ok(m)=manifest(root,id) {
+                if m.node_hash==node_hash && m.version==prepared.version && m.entry==prepared.entry
+                    && m.fingerprint==prepared.fingerprint && m.file_count==prepared.file_count && m.total_bytes==prepared.total_bytes {
+                    if let Ok(entry)=verify(root,&m) {
+                        let committed=load_selection(root).ok().flatten().is_some_and(|s|s.active==m.id);
+                        return Ok(runtime(node,entry,&m,committed));
+                    }
+                }
+            }
+            // A modified existing tree is never reused or overwritten.
+            prepared=prepare(&[])?;
+        }
+        let id=format!("{}-{}-{}-{}",prepared.version,std::env::consts::ARCH,prepared.fingerprint,uuid::Uuid::new_v4());
+        let m=Manifest {schema:1,id:id.clone(),version:prepared.version,architecture:std::env::consts::ARCH.into(),entry:prepared.entry,node_hash,
+            fingerprint:prepared.fingerprint,inventory_hash:digest(&read(&stage.join("inventory.json"),MAX_INVENTORY).map_err(|_|"runtime-preparation-invalid")?),
+            file_count:prepared.file_count,total_bytes:prepared.total_bytes};
+        crate::maintenance::atomic_json(&stage.join("manifest.json"),&m).map_err(|_|"runtime-manifest-save-failed")?;
+        fs::rename(&stage,root.join("versions").join(&id)).map_err(|_|"runtime-publish-failed")?;
+        published=Some(id.clone());
+        let m=manifest(root,&id).map_err(|_|"runtime-manifest-invalid")?;
+        let entry=verify(root,&m).map_err(|_|"runtime-tree-invalid")?;
+        let reported=if let Some(prefix)=candidate {candidate_version(node,&entry,prefix)?}
+            else {crate::dsh::probe_version(node,&entry).ok_or("runtime-version-unavailable")?};
+        if reported.trim_start_matches('v')!=m.version {return Err("runtime-version-mismatch".into());}
+        Ok(runtime(node,entry,&m,false))
+    })();
+    if stage.is_dir() {
+        if let Err(error)=crate::runtime_cleanup::discard_stage(root,&stage) {crate::debug_log(&format!("[runtime-cleanup] freeze stage deferred: {error}"));}
+    }
+    if result.is_err() {
+        if let Some(id)=published {
+            if let Err(error)=crate::runtime_cleanup::discard_unpublished(root,&id) {crate::debug_log(&format!("[runtime-cleanup] invalid publication deferred: {error}"));}
+        }
+    }
+    result
 }
 pub fn remember_first_install(app: &tauri::AppHandle, runtime: &Runtime) -> Result<(),String> {
     let managed=runtime.managed.as_ref().ok_or("runtime-unmanaged")?;
@@ -543,6 +597,7 @@ pub async fn desktop_runtime_ready(window: tauri::WebviewWindow, identity: crate
             if let Some(current)=s.runtime.as_mut().filter(|r|r.dsh_bin==runtime.dsh_bin) {if let Some(m)=&mut current.managed {m.committed=true;}}
         }
         crate::diagnostics::record(&app,"runtime","first-install-committed");
+        crate::runtime_cleanup::schedule(&app);
         Ok(())
     }).await.map_err(|_|"runtime-worker")?
 }
@@ -751,7 +806,8 @@ process.stdout.write(JSON.stringify({schema:1,fingerprint:'a'.repeat(64),bundleC
         let helper=Path::new(env!("CARGO_MANIFEST_DIR")).join("../dsh-plugin/runtime-store/prepare.mjs");
         let root=tmp.path().join("runtime");let a=freeze_at(&root,&node,&source,&helper).unwrap();
         let b=freeze_at(&root,&node,&source,&helper).unwrap();
-        assert_ne!(a.dsh_bin,b.dsh_bin);assert_eq!(a.managed.as_ref().unwrap().fingerprint,b.managed.as_ref().unwrap().fingerprint);
+        assert_eq!(a.dsh_bin,b.dsh_bin);assert_eq!(a.managed.as_ref().unwrap().fingerprint,b.managed.as_ref().unwrap().fingerprint);
+        assert_eq!(fs::read_dir(root.join("versions")).unwrap().count(),1);
         assert!(source.join("lib/bin.js").is_file());assert!(a.dsh_bin.is_file());assert!(selected(&root,&node).unwrap().is_none());
         fs::write(source.join("package.json"),br#"{"name":"@deepseek-ai/dsh","version":"0.2.1-rc.2","dependencies":{"absent":"1"}}"#).unwrap();
         assert!(freeze_at(&root,&node,&source,&helper).is_err());assert!(a.dsh_bin.is_file());

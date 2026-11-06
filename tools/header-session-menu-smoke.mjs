@@ -57,12 +57,20 @@ try {
  await page.waitForTimeout(300)
  const ids=await page.evaluate(async path=>{
   const c=window.__MOTION_SMOKE__,w=await c.workspaces.create({path}),ids=[]
+  // Newer DSH publishes optimistic messages only after host admission. Project
+  // that acceptance locally so this menu fixture never sends a model request.
+  window.__showMenuSession=(id,text)=>{
+   const session=c.sessions.binding(id).session
+   const submission=session.beginSubmission({mode:'queue',text,attachments:[]})
+   const settlement=session.submissionSettlements?.get(submission.requestId)
+   if(settlement && session.refreshAcceptedSubmissions){settlement.accepted=true;session.promptAttempted=true;session.refreshAcceptedSubmissions();session.notifier.markDirty()}
+  }
   for(const title of ['Header A','Header B']){
    const id=await c.sessions.create({workspaceId:w.workspaceId});c.uiWorkspace.openSession(id)
    await c.sessions.binding(id).session.rename(title)
-   c.sessions.binding(id).session.beginSubmission({mode:'queue',text:title,attachments:[]});ids.push(id)
+   window.__showMenuSession(id,title);ids.push(id)
   }
-  c.uiWorkspace.openSession(ids[0]);c.sessions.binding(ids[0]).session.beginSubmission({mode:'queue',text:'Header A',attachments:[]});window.__menuCalls=[]
+  c.uiWorkspace.openSession(ids[0]);window.__showMenuSession(ids[0],'Header A');window.__menuCalls=[]
   window.__TAURI__={core:{invoke:async(command,args)=>{window.__menuCalls.push({command,args});return null}}}
   Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__menuCalls.push({command:'native-clipboard',text})}}})
   return ids
@@ -72,10 +80,52 @@ try {
  async function open(){await trigger.click();await menu.waitFor();await menu.locator('[data-dsh-desktop="reveal-item"]').waitFor()}
  async function close(){await page.keyboard.press('Escape');await page.waitForTimeout(220)}
  const labels=()=>menu.locator('[role="menuitem"]:visible').allTextContents()
+ async function checkDividers(layout){
+  await menu.evaluate(async n=>{await Promise.all(n.getAnimations().map(animation=>animation.finished.catch(()=>{})))})
+  const near=(actual,expected,message)=>assert.ok(Math.abs(actual-expected)<.05,message)
+  const geometry=await menu.evaluate(n=>{
+   const rows=[...n.querySelectorAll('[role="menuitem"]')].map(item=>item.getBoundingClientRect()).filter(box=>box.height)
+   return [...n.querySelectorAll('[role="separator"]')].map(divider=>{
+    const box=divider.getBoundingClientRect(),style=getComputedStyle(divider)
+    const before=rows.filter(row=>row.bottom<=box.top).at(-1),after=rows.find(row=>row.top>=box.bottom)
+    return {x:box.x,width:box.width,height:box.height,color:style.backgroundColor,before:before&&box.top-before.bottom,after:after&&after.top-box.bottom}
+   }).filter(box=>box.height)
+  })
+  report[layout+'Dividers']=geometry
+  assert.equal(geometry.length,registryMenu?3:2,layout+': only group boundaries have dividers')
+  for(const divider of geometry){
+   near(divider.height,1,layout+': each divider is one pixel tall')
+   near(divider.x,geometry[0].x,layout+': left edges align')
+   near(divider.width,geometry[0].width,layout+': widths match')
+   assert.equal(divider.color,geometry[0].color,layout+': colors match')
+   near(divider.before,4,layout+': spacing above is uniform')
+   near(divider.after,4,layout+': spacing below is uniform')
+  }
+ }
+ const registryMenu=await page.evaluate(()=>Boolean(window.__MOTION_SMOKE__.get('contextMenus')?.resolve))
  await open()
- assert.deepEqual((await labels()).map(x=>x.replace(/Ctrl[^\n]*/, '').trim()),['置顶会话','重命名','分叉会话','归档会话','复制...','打开…','下载 Session 日志','反馈'])
+ await checkDividers('light')
+ assert.deepEqual((await labels()).map(x=>x.replace(/Ctrl[^\n]*/, '').trim()),registryMenu
+  ? ['置顶会话','重命名','分叉会话','在文件夹显示','复制...','打开…','归档会话','下载 Session 日志','反馈']
+  : ['置顶会话','重命名','分叉会话','归档会话','复制...','打开…','下载 Session 日志','反馈'])
  assert.equal(await menu.locator('[data-dsh-header-menu-divider]').count(),1)
  assert.equal(await menu.evaluate(n=>{const d=n.querySelector('[data-dsh-header-menu-divider]');return !!(d.compareDocumentPosition([...n.querySelectorAll('[role="menuitem"]')].find(x=>x.textContent.includes('下载 Session'))) & Node.DOCUMENT_POSITION_FOLLOWING)}),true)
+ if(registryMenu){
+  const headerLabels=(await labels()).map(x=>x.replace(/Ctrl[^\n]*/, '').trim())
+  await close()
+  await page.evaluate(id=>{
+   const c=window.__MOTION_SMOKE__,state=c.sessions.list.getSnapshot()
+   c.sessions.list.set({...state,byId:{...state.byId,[id]:{...state.byId[id],blank:false}}})
+   c.get('layout').toggleSidebar()
+  },ids[0])
+  const row=page.locator('[role="treeitem"][data-row-key="session:'+ids[0]+'"]')
+  await row.click({button:'right'})
+  const sidebarMenu=page.locator('[role="menu"]:not([data-dsh-ghost])').filter({has:page.locator('[data-dsh-desktop="reveal-item"]')}).first()
+  await sidebarMenu.waitFor()
+  assert.deepEqual((await sidebarMenu.locator('[role="menuitem"]:visible').allTextContents()).map(x=>x.replace(/Ctrl[^\n]*/, '').trim()),headerLabels.slice(0,-2))
+  await close();await page.evaluate(()=>window.__MOTION_SMOKE__.get('layout').toggleSidebar());await open()
+  pass('header options match an actual sidebar right-click, followed only by download and feedback')
+ }
  await page.screenshot({path:join(root,'header-menu-light.png')})
  await menu.getByRole('menuitem',{name:/^置顶会话/}).click()
  await open()
@@ -121,7 +171,7 @@ try {
  await page.waitForFunction(link=>window.__menuCalls.some(x=>x.command==='clipboard_write_text' && x.args.text===link),'deepseekharness://session/'+ids[0].replace(/^session-/,''))
  await page.waitForTimeout(220)
  pass('copy submenu uses the same actions and the current session id')
- await page.evaluate(id=>{const c=window.__MOTION_SMOKE__;c.uiWorkspace.openSession(id);c.sessions.binding(id).session.beginSubmission({mode:'queue',text:'Header B',attachments:[]})},ids[1]);await page.waitForTimeout(300)
+ await page.evaluate(id=>{const c=window.__MOTION_SMOKE__;c.uiWorkspace.openSession(id);window.__showMenuSession(id,'Header B')},ids[1]);await page.waitForTimeout(300)
  await open()
  await menu.getByRole('menuitem',{name:/^置顶会话/}).waitFor()
  assert.equal(await menu.getAttribute('data-dsh-header-session-id'),ids[1])
@@ -155,7 +205,7 @@ try {
  await page.evaluate(ids=>{
   const c=window.__MOTION_SMOKE__,state=c.sessions.list.getSnapshot()
   c.sessions.list.set({...state,byId:{...state.byId,[ids[1]]:window.__rootHeaderSummary},projectionsBySession:{...state.projectionsBySession,[ids[0]]:window.__rootHeaderProjection}})
-  c.uiWorkspace.openSession(ids[1]);c.sessions.binding(ids[1]).session.beginSubmission({mode:'queue',text:'Header B',attachments:[]})
+  c.uiWorkspace.openSession(ids[1]);window.__showMenuSession(ids[1],'Header B')
  },ids)
  await title.waitFor()
  pass('subagent titles keep their switcher, ancestor titles navigate, and returning to a root session restores rename')
@@ -169,15 +219,32 @@ try {
  await page.evaluate(()=>window.__removeMenuContribution())
  await page.waitForTimeout(220)
  pass('later sidebar menu contributions are mirrored with their original callback and close behavior')
+ if(registryMenu){
+  await page.evaluate(()=>{
+   window.__removeRegistryContribution=window.__MOTION_SMOKE__.get('contextMenus').register({id:'menu-smoke',target:'session',order:350,resolve:target=>[
+    {id:'disabled',label:'不可用操作',disabled:true},
+    {id:'nested',label:'扩展子菜单',children:[{id:'run',label:'执行扩展操作',run:()=>window.__menuCalls.push({command:'registry-extra',id:target.sessionId})}]},
+   ]})
+  })
+  await open()
+  assert.equal(await menu.getByRole('menuitem',{name:'不可用操作',exact:true}).isDisabled(),true)
+  await menu.getByRole('menuitem',{name:'扩展子菜单',exact:true}).hover()
+  await page.getByRole('menuitem',{name:'执行扩展操作',exact:true}).click()
+  assert.equal(await page.evaluate(()=>window.__menuCalls.find(x=>x.command==='registry-extra').id),ids[1])
+  await page.evaluate(()=>window.__removeRegistryContribution())
+  await page.waitForTimeout(220)
+  pass('registry contributions preserve disabled states, nested menus and the captured session')
+ }
  await open();await trigger.press('ArrowDown')
  assert.match(await page.evaluate(()=>document.activeElement.textContent),/^置顶会话/)
  await page.keyboard.press('End')
  assert.equal(await page.evaluate(()=>document.activeElement.textContent),'反馈')
  await close()
  await page.evaluate(()=>window.__MOTION_SMOKE__.configForms.get('ui-theme').set('preference','dark'))
- await open();await page.screenshot({path:join(root,'header-menu-dark.png')});await close()
+ await open();await checkDividers('dark');await page.screenshot({path:join(root,'header-menu-dark.png')});await close()
  await page.setViewportSize({width:390,height:844});await open()
  const box=await menu.boundingBox();assert.ok(box.x>=0 && box.x+box.width<=390 && box.y+box.height<=844)
+ await checkDividers('mobile')
  await page.screenshot({path:join(root,'header-menu-mobile.png')});await close()
  pass('keyboard traversal and light/dark/mobile layouts include the complete menu')
  await page.evaluate(()=>{delete window.__TAURI__})
@@ -217,9 +284,26 @@ try {
  assert.equal(await page.locator('[data-slot-error]').count(),0)
  assert.deepEqual(errors,[])
  pass('vanilla round trip restores the original menu and reapplies the shared menu without duplicates or errors')
+ await page.evaluate(()=>window.__MOTION_SMOKE__.sidebarRight.openTab('terminal'))
+ await page.waitForFunction(()=>{
+  const c=window.__MOTION_SMOKE__,tab=c.sidebarRight.openTabs.getSnapshot().find(t=>t.kind==='terminal')
+  if(!tab)return false
+  const nav=c.sidebarRight.tabDomain.occurrence(tab.sessionId,{id:tab.tabId}).navigation.getSnapshot()
+  window.__menuTerminal=c.get('webTerminals').view(tab.sessionId,tab.tabId,nav.address,nav.params?.terminalId,nav.params?.shellPath)
+  return window.__menuTerminal.state.getSnapshot().writable
+ })
+ await page.evaluate(()=>window.__menuTerminal.write('echo DESKTOP_MENU_TERMINAL_OK\r'))
+ await page.waitForFunction(()=>(document.querySelector('[data-sidebar-terminal] .xterm-rows')?.textContent||'').split('DESKTOP_MENU_TERMINAL_OK').length>=3)
+ await page.evaluate(async()=>{await window.__menuTerminal.close();const c=window.__MOTION_SMOKE__;for(const tab of c.sidebarRight.openTabs.getSnapshot())if(tab.kind==='terminal')c.sidebarRight.close(tab.tabId)})
+ assert.deepEqual(errors,[])
+ pass('terminal opened from the real DSH UI runs a shell command with the packaged compatibility plugin')
 } catch(error) {
  report.error=error.stack
  report.pageErrors=errors
+ if(page)report.state=await page.evaluate(()=>{
+  const c=window.__MOTION_SMOKE__,list=c?.sessions.list.getSnapshot()
+  return {list,sessions:list?.ids.map(id=>({id,state:c.sessions.binding(id)?.session.getSnapshot()})),body:document.body.innerText.slice(0,3000)}
+ }).catch(()=>null)
  if(page)report.menus=await page.locator('[role="menu"]').evaluateAll(nodes=>nodes.map(node=>node.outerHTML)).catch(()=>null)
  if(page)report.header=await page.locator('[data-slot="conversation.session.header"] nav').evaluateAll(nodes=>nodes.map(node=>node.outerHTML)).catch(()=>null)
  if(page)await page.screenshot({path:join(root,'failure.png')}).catch(()=>{})

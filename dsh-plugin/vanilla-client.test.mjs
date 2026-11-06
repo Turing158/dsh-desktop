@@ -295,10 +295,10 @@ function createContext(options = {}) {
         throw new Error(`duplicate registration for ${spec.id}`)
       }
       state.sections.set(spec.id, spec)
-      state.sectionComponent = component
+      if (spec.id === 'appearance') state.sectionComponent = component
       return () => {
         state.sections.delete(spec.id)
-        state.sectionComponent = null
+        if (spec.id === 'appearance') state.sectionComponent = null
       }
     },
   }
@@ -362,7 +362,8 @@ test('the plugin registers a settings section and a mode attribute on load', () 
   module.apply(ctx)
 
   assert.equal(state.injections, 1, 'the settings section slot must be injected')
-  assert.deepEqual([...state.sections.keys()], ['appearance'], 'the 外观 section must be registered')
+  assert.deepEqual([...state.sections.keys()], ['appearance', 'sound-notifications'], 'sound reminders follow appearance')
+  assert.equal(state.sections.get('sound-notifications').order, 5.5)
   // Desktop is the default, and it is written explicitly so the page states it.
   assert.equal(document.mode(), 'desktop', 'the mode attribute must be set on load')
 })
@@ -404,7 +405,7 @@ test('the menu request persists the mode, applies it, and announces it', () => {
   assert.equal(document.mode(), 'desktop')
   assert.deepEqual(state.writes, [['ui', 'vanilla'], ['ui', 'desktop']])
   assert.deepEqual(events, ['vanilla', 'desktop'])
-  assert.deepEqual([...state.sections.keys()], ['appearance'], 'and must come back')
+  assert.deepEqual([...state.sections.keys()], ['appearance', 'sound-notifications'], 'and must come back')
 })
 
 test('an unknown mode in the request is ignored rather than applied', () => {

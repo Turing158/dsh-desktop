@@ -11,7 +11,7 @@ pub fn now_ms() -> u64 {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-pub enum Kind { Update, Restore, Rollback, Backup, Diagnostics, Restart, Install, UiLifecycle }
+pub enum Kind { Update, Restore, Rollback, Backup, Diagnostics, Restart, Install, UiLifecycle, Cleanup }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage { Preparing, WaitingIdle, Capturing, Checkpointing, StartingCandidate, Restoring, Committing, RollingBack, RolledBack, Complete, Resolved, RecoveryRequired }

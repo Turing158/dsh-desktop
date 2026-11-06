@@ -277,7 +277,7 @@
     capture,
     // Settings restarts use the audited adapter even while optional WebView
     // disposal is disabled. The payload stays native; no browser storage copy.
-    async prepareRemoteApply(frontendVersion, notice = t('正在保存界面并应用远程控制配置…'), { configurationRestore = false } = {}) {
+    async prepareRemoteApply(frontendVersion, notice = t('正在保存界面并应用远程控制配置…'), { configurationRestore = false, marketplaceRestart = false } = {}) {
       if (composing || picker || frozen) throw new Error(t('请完成当前输入或文件选择后重试'))
       const target = restartTarget()
       if (!target) throw new Error(t('页面保存服务尚未准备好，请稍后重试'))
@@ -285,7 +285,7 @@
       setFrozen(true)
       try {
         await frame()
-        const payload = await target.capture({ signal: new AbortController().signal, frontendVersion, providers, remoteApply: true, configurationRestore })
+        const payload = await target.capture({ signal: new AbortController().signal, frontendVersion, providers, remoteApply: true, configurationRestore, marketplaceRestart })
         display(notice, false, true)
         return payload
       } catch (error) { setFrozen(false); throw new Error(message(error.message), { cause: error }) }
@@ -323,6 +323,41 @@
     pendingOperation() { return composing || picker },
     draftsChanged() {startCheckpoints();checkpoints?.changed()},
     checkpointStatus() {return checkpointStatus},
+  }
+  // dshmarket delegates to this host hook before its detached self-restart.
+  // Only the desktop can replace its child, refresh exact-origin permissions,
+  // and restore drafts while retaining ownership of the backend process tree.
+  if (window.__TAURI__?.core?.invoke && typeof window.__dshHostShell?.restart !== 'function') {
+    const shell = window.__dshHostShell ||= {}
+    let pendingRestart
+    shell.restart = () => {
+      if (pendingRestart) return pendingRestart
+      let captured = false
+      pendingRestart = Promise.resolve().then(async () => {
+        const identity = window.__DSH_REMOTE_IDENTITY__
+        if (!identity) throw new Error(t('页面保存服务尚未准备好，请稍后重试'))
+        const status = await invoke('remote_status', { identity })
+        const payload = await window.__DSH_UI_STATE__.prepareRemoteApply(status.frontendVersion, t('正在保存界面并重启 DSH…'), { marketplaceRestart: true })
+        captured = true
+        await invoke('plugins_restart', { identity, payload })
+        // The host owns the snapshot. Keep input and repeated restart requests
+        // locked until it navigates to the new backend and restores this page.
+      }).catch(error => {
+        pendingRestart = undefined
+        if (captured) window.__DSH_UI_STATE__.finishRemoteApply()
+        if (isConnectionSuspended()) return
+        // The market's hook is fire-and-forget; surface failures here instead
+        // of falling through to its unmanaged process replacement.
+        display(error?.message || (typeof error === 'string' ? error : message()))
+        overlay?.setAttribute('role', 'alert')
+        const retry = document.createElement('button')
+        retry.textContent = t('重启 DSH')
+        retry.dataset.dshUiRetry = 'true'
+        retry.onclick = () => { retry.disabled = true; shell.restart() }
+        overlay?.append(retry)
+      })
+      return pendingRestart
+    }
   }
   if (boot.restoring) {
     window.__DSH_DESKTOP_BOOT__?.markRestoring()

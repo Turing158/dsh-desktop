@@ -167,3 +167,8 @@ commands.allow = ["submit_ui_snapshot", "request_ui_restore", "finish_ui_restore
 identifier = "allow-desktop-locale"
 description = "Cache the DSH presentation language for native chrome and startup pages."
 commands.allow = ["desktop_locale_changed"]
+
+[[permission]]
+identifier = "allow-notification-sound"
+description = "Preview or stop a bounded notification sound in the current desktop page."
+commands.allow = ["preview_notification_sound", "stop_notification_sound"]

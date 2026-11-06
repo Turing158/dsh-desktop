@@ -404,6 +404,7 @@ pub fn restored(
     }
     drop(discarded);
     drop(lease);
+    crate::runtime_cleanup::schedule(app);
     crate::tray::sync_checkmark(app);
     if let Some(window) = app.get_webview_window("main") {
         ui_snapshot::refresh_bridge(&window);
@@ -525,6 +526,7 @@ pub fn page_load(window: &WebviewWindow, generation: u64, url: &tauri::Url, star
         } else {
             ui_snapshot::refresh_bridge(window);
         }
+        if backend_ready { crate::runtime_cleanup::schedule(window.app_handle()); }
     }
     crate::tray::sync_checkmark(window.app_handle());
 }

@@ -21,6 +21,7 @@ mod directory_picker;
 mod drag_guard;
 mod dsh;
 mod runtime_store;
+mod runtime_cleanup;
 mod builtin_plugins;
 mod dsh_update;
 mod dsh_upgrade;
@@ -102,6 +103,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .manage(locale::NativeLocale::default())
+        .manage(runtime_cleanup::RuntimeMaintenance::default())
         .manage(state::shared())
         .manage(terminal::TerminalManager::default())
         .manage(dsh_update::UpdateManager::new(maintenance_coordinator.clone()))
@@ -119,6 +121,8 @@ fn main() {
             }
             let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
                 locale::desktop_locale_changed,
+                notify::preview_notification_sound,
+                notify::stop_notification_sound,
                 probe_state,
                 runtime_store::desktop_runtime_ready,
                 boot_bar::desktop_boot_context,
@@ -612,15 +616,22 @@ fn boot(app: AppHandle) {
         }
         guard.boot_in_progress = true;
     }
-    struct BootGuard(Shared);
+    struct BootGuard {
+        state: Shared,
+        app: AppHandle,
+    }
     impl Drop for BootGuard {
         fn drop(&mut self) {
-            if let Ok(mut s) = self.0.lock() {
+            if let Ok(mut s) = self.state.lock() {
                 s.boot_in_progress = false;
             }
+            // WebView2 can finish its initial navigation before the backend is
+            // ready. Always request maintenance after boot as well, so cold
+            // startup does not depend on another page-load event or refresh.
+            runtime_cleanup::schedule(&self.app);
         }
     }
-    let _boot_guard = BootGuard(state.clone());
+    let _boot_guard = BootGuard { state: state.clone(), app: app.clone() };
     // Audit once per launch/retry on the boot worker. Interrupted legacy
     // updates have no data checkpoint, so never infer an automatic rollback.
     if let Ok(directory) = maintenance::directory(&app) {
@@ -661,6 +672,10 @@ fn boot(app: AppHandle) {
     // The version is still reported to the UI through `probe_state`, which
     // re-reads it; boot itself only needs the executable.
 
+    if let Err(error) = runtime_cleanup::acquire(&app) {
+        fail(&app, &state, format!("运行时目录暂不可用：{error}"), "请等待使用同一运行时目录的其他实例退出后重试。");
+        return;
+    }
     match dsh_upgrade::recover_interrupted(&app) {
         Ok(Some(runtime))=>{launch(&app,&state,runtime);return},
         Ok(None)=>{},
@@ -806,6 +821,9 @@ fn prepare_first_install(app: &AppHandle, state: &Shared, node_exe: &std::path::
         Err(error)=>{manual_install_failure(app,state,format!("无法准备独立运行时：{error}"));return;}
     };
     if let Err(error)=runtime_store::remember_first_install(app,&runtime) {
+        if let (Ok(root),Some(managed))=(runtime_store::directory(app),runtime.managed.as_ref()) {
+            let _=runtime_cleanup::discard_unpublished(&root,&managed.id);
+        }
         manual_install_failure(app,state,error);return;
     }
     launch(app,state,runtime);
@@ -1199,6 +1217,7 @@ fn deliver(app: &AppHandle, state: &Shared, payload: dsh::NotifyPayload, instanc
         .map(|mut guard| {
             guard.ui.backend_instance == instance
                 && guard.ui.phase != ui_snapshot::UiPhase::Exiting
+                && guard.notification_preferences.enabled
                 && guard.dedupe.should_show(&key)
         })
         .unwrap_or(true);
@@ -1269,6 +1288,10 @@ fn record(app: &AppHandle, state: &Shared, event: ChildEvent, instance: u64) {
             return;
         }
         match event {
+            ChildEvent::NotificationSettings(preferences) => {
+                guard.notification_preferences = preferences;
+                app.state::<notify::sound::Player>().stop();
+            }
             ChildEvent::Storage(roots) => {
                 guard.storage = Some(data_inventory::ObservedStorage { roots, backend_instance: instance, observed_at: maintenance::now_ms() });
             }

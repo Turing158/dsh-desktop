@@ -234,6 +234,10 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   // settings UI rather than one field.
   const Schema = z.default ?? z
   const rehydrated = new Schema(module.SCHEMA_ENVELOPE)
+  for (const notifications of [{}, { enabled: false }, { soundEnabled: false, sound: 'default' }]) {
+    assert.deepEqual(rehydrated({ notifications }), module.normalize({ notifications }))
+  }
+  assert.throws(() => rehydrated({ notifications: { sound: 'invalid' } }), /sound/)
 
   assert.deepEqual(rehydrated({}), {
     animation: 'system',
@@ -359,6 +363,7 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
     'composerFrostedIntensity', 'composerGlassIntensity', 'composerMaterial', 'composerTransparency',
     'dialogFrostedIntensity', 'dialogGlassIntensity', 'dialogMaterial', 'dialogTransparency',
     'fontSizeOverride',
+    'notifications',
     'popupFrostedIntensity', 'popupGlassIntensity', 'popupMaterial', 'popupTransparency',
     'reasoningControl',
     'titlebar',

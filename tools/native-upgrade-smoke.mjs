@@ -11,11 +11,15 @@ import {createServer} from 'node:net'
 import {offlineModelPatch,handleOnboarding} from './dsh-ui-helpers.mjs'
 const require=createRequire(import.meta.url)
 const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
-const root=process.env.DSH_UPGRADE_RESUME || await mkdtemp(resolve('src-tauri/target/native-upgrade-'))
+const root=process.env.DSH_UPGRADE_SOURCE_ROOT ? resolve(process.env.DSH_UPGRADE_SOURCE_ROOT)
+  : process.env.DSH_UPGRADE_RESUME || await mkdtemp(resolve('src-tauri/target/native-upgrade-'))
 const home=join(root,'home'),workspace=join(root,'workspace'),exe=join(root,'deepseek-harness-desktop.exe')
 const bin=join(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
-const report={root,checks:[],stages:[]},save=()=>writeFile(join(root,'report.json'),JSON.stringify(report,null,2))
-const pass=async name=>{report.checks.push(name);await save();console.log('PASS: '+name)}
+const report=process.env.DSH_UPGRADE_RESUME
+  ? JSON.parse(await readFile(join(root,'report.json'),'utf8')) : {root,checks:[],stages:[]}
+if(report.error){(report.previousFailures??=[]).push(report.error);delete report.error}
+const save=()=>writeFile(join(root,'report.json'),JSON.stringify(report,null,2))
+const pass=async name=>{if(!report.checks.includes(name))report.checks.push(name);await save();console.log('PASS: '+name)}
 await mkdir(home,{recursive:true});await mkdir(workspace,{recursive:true})
 if(!process.env.DSH_UPGRADE_RESUME) await writeFile(join(home,'cordis.patch.yml'),offlineModelPatch)
 if(!process.env.DSH_UPGRADE_RESUME && process.env.DSH_UPGRADE_PERF_DATA_SOURCE)
@@ -30,20 +34,20 @@ if(!process.env.DSH_UPGRADE_RESUME) {
 // Legacy successful, partial, and rolled-back upgrade folders must all be
 // removed by the next successful commit, including nested dependency links.
 const obsolete=(await readdir(root)).filter(name=>/^\.dsh-update-[0-9a-f-]{36}-(before|failed)$/.test(name)).map(name=>join(root,name))
-for(const suffix of ['before','before','failed']) {
+for(const suffix of process.env.DSH_UPGRADE_RESUME ? [] : ['before','before','failed']) {
   const path=join(root,`.dsh-update-${randomUUID()}-${suffix}`)
   await mkdir(path);await writeFile(join(path,'sentinel'),'obsolete update data')
   await symlink(external,join(path,'external-package'),'junction');obsolete.push(path)
 }
-let cachedTarget
+let cachedTarget,cachedSource,cachedDestination
 if(process.env.DSH_UPGRADE_CANDIDATE_ROOT) {
   const cached=JSON.parse(await readFile(join(process.env.DSH_UPGRADE_CANDIDATE_ROOT,'runtime/update.json'),'utf8')).target
-  const destination=join(root,'runtime/versions',cached.managed.id)
-  if(!await lstat(join(destination,'manifest.json')).then(()=>true,()=>false))
-    await cp(join(process.env.DSH_UPGRADE_CANDIDATE_ROOT,'runtime/versions',cached.managed.id),destination,{recursive:true})
+  const destination=cachedDestination=join(root,'runtime/versions',cached.managed.id)
+  cachedSource=join(process.env.DSH_UPGRADE_CANDIDATE_ROOT,'runtime/versions',cached.managed.id)
   cachedTarget={...cached,dsh_bin:join(destination,'tree/node_modules/@deepseek-ai/dsh/lib/bin.js')}
 }
-await copyFile(resolve('src-tauri/target/debug/deepseek-harness-desktop.exe'),exe)
+const builtHost=resolve(process.env.DSH_UPGRADE_EXE || 'src-tauri/target/debug/deepseek-harness-desktop.exe')
+if(builtHost!==exe)await copyFile(builtHost,exe)
 for(const [source,destination] of Object.entries(JSON.parse(await readFile('src-tauri/tauri.conf.json','utf8')).bundle.resources)) {
   const path=join(root,destination);await mkdir(dirname(path),{recursive:true});await copyFile(resolve('src-tauri',source),path)
 }
@@ -56,11 +60,14 @@ async function wait(fn,label,timeout=120000) {
     await sleep(250)}
   throw Error('timeout '+label+(last?' ('+last+')':''))
 }
-async function start() {
+async function start({offline=false}={}) {
   const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r))
   await writeFile(join(root,'state.json'),'{}');await writeFile(join(root,'command.json'),'{}')
-  child=spawn(exe,[],{cwd:root,windowsHide:true,stdio:['ignore','ignore','pipe'],env:{...process.env,DSH_HOME:home,DSH_DESKTOP_DSH:bin,
-    DSH_DESKTOP_NODE:process.execPath,DSH_DESKTOP_SMOKE_DIR:root,DSH_DESKTOP_DEBUG:join(root,'debug.log'),DSH_UI_SMOKE_KEY:'offline',WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port='+port}})
+  const env={...process.env,DSH_HOME:home,DSH_DESKTOP_DSH:bin,DSH_DESKTOP_NODE:process.execPath,
+    DSH_DESKTOP_SMOKE_DIR:root,DSH_DESKTOP_DEBUG:join(root,'debug.log'),DSH_UI_SMOKE_KEY:'offline',WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-port='+port}
+  if(process.env.DSH_UPGRADE_SOURCE_ROOT)delete env.DSH_DESKTOP_DSH
+  if(offline)Object.assign(env,{npm_config_registry:'http://127.0.0.1:1/',npm_config_offline:'true',npm_config_fetch_retries:'0'})
+  child=spawn(exe,[],{cwd:root,windowsHide:true,stdio:['ignore','ignore','pipe'],env})
   await writeFile(join(root,'cdp-port.txt'),String(port))
   child.stderr.on('data',data=>appendFile(join(root,'stderr.log'),data).catch(()=>{}))
   child.on('exit',(code,signal)=>writeFile(join(root,'child-exit.json'),JSON.stringify({code,signal,time:Date.now()})).catch(()=>{}))
@@ -68,7 +75,7 @@ async function start() {
   page=await wait(()=>browser.contexts().flatMap(c=>c.pages()).find(p=>p.url().startsWith('http://127.0.0.1:')),'page')
   await handleOnboarding(page)
   await wait(async()=>{const s=await state();return s.backend==='running'&&s.loaded},'backend')
-  await page.waitForFunction(()=>window.__DSH_SMOKE_CONTEXT__ && window.__DSH_UI_STATE__ && window.__DSH_DSH_UPDATE__?.getSnapshot()?.versions)
+  await page.waitForFunction(offline=>window.__DSH_SMOKE_CONTEXT__ && window.__DSH_UI_STATE__ && (offline || window.__DSH_DSH_UPDATE__?.getSnapshot()?.versions),offline)
 }
 async function quit(force=false) {
   if(child?.exitCode===null) {
@@ -83,9 +90,18 @@ async function holdFile(path) {
   let locked=false;lockChild.stdout.on('data',data=>{if(String(data).includes('LOCKED'))locked=true})
   await wait(()=>locked,'exclusive checkpoint file',10000)
 }
+async function importCachedTarget() {
+  if(!cachedTarget)return
+  // Startup and an earlier rollback may reclaim an unreferenced candidate.
+  // Re-import the isolated fixture only after reclamation finishes.
+  await wait(async()=>!(await state()).runtimeCleanupPending,'reclamation before fixture import')
+  if(!await lstat(join(cachedDestination,'manifest.json')).then(()=>true,()=>false))await cp(cachedSource,cachedDestination,{recursive:true})
+}
 try {
   await start();console.log('Test directory: '+root)
+  await importCachedTarget()
   const initial=await state();report.sourceVersion=initial.runtime.version
+  if(process.env.DSH_UPGRADE_SOURCE_ROOT)assert.equal(initial.runtime.source,'managed')
   const versions=await page.evaluate(()=>window.__DSH_DSH_UPDATE__.getSnapshot().versions);report.targetVersion=versions.preview
   assert.equal(versions.stagedUpdate,true);assert.notEqual(versions.current,versions.preview)
   const id=await page.evaluate(async path=>{
@@ -108,6 +124,10 @@ try {
   await verifyDraft()
   async function switchTo(target) {
     await verifyDraft()
+    // Manual IPC bypasses locator handlers. Run their actionability check so
+    // initial welcome dialogs finish before the native snapshot is captured.
+    await page.locator('#root').click({trial:true})
+    await importCachedTarget()
     await writeFile(join(root,'upgrade-reused.json'),'{}')
     await writeFile(join(root,'command.json'),JSON.stringify({sequence:Date.now(),action:'upgrade-reuse-candidate',target}))
     const reused=await wait(async()=>{const value=JSON.parse(await readFile(join(root,'upgrade-reused.json'),'utf8'));return value.ready||value.error ? value : null},'verified cached candidate',300000)
@@ -122,6 +142,9 @@ try {
     return attempt
   }
   if (cachedTarget && process.env.DSH_UPGRADE_TEST_ROLLBACK) {
+    const checkpointCheck='checkpoint failure restores old UI, shows the original error, preserves the journal cause, and removes partial copies'
+    const publicationCheck='record publication failure removes the unpublished checkpoint while preserving historical recovery data'
+    if(!report.checks.includes(checkpointCheck)) {
     const lockFile=join(home,'checkpoint-locked');await writeFile(lockFile,'locked checkpoint regression')
     await holdFile(lockFile)
     const checkpointAttempt=await switchTo(cachedTarget)
@@ -130,15 +153,19 @@ try {
     const failure=await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress'))
     assert.ok(failure.error);assert.equal((await state()).runtime.version,versions.current)
     await verifyDraft()
+    await wait(async()=>!(await state()).runtimeCleanupPending && !await lstat(join(root,'runtime/versions',cachedTarget.managed.id)).then(()=>true,()=>false),'failed checkpoint candidate reclaimed')
     await page.evaluate(()=>window.__DSH_DSH_UPDATE__.show())
     await page.locator('.dshTb__updateError').waitFor({timeout:120000});assert.equal(await page.locator('.dshTb__updateError').textContent(),failure.error)
+    await page.getByRole('dialog').getByRole('button',{name:/^(关闭窗口|Close window)$/}).click()
     const journals=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
     assert.ok(journals.some(j=>j.stage==='rolled-back'&&j.errorCode==='update-checkpoint-failed'))
     const leftovers=await readdir(root)
     assert.equal(leftovers.filter(name=>name.startsWith('.dsh-update-')&&name.endsWith('-before')).length,obsolete.filter(path=>path.endsWith('-before')).length)
     for(const path of obsolete)assert.equal(await readFile(join(path,'sentinel'),'utf8'),'obsolete update data')
     lockChild.stdin.end('\n');await wait(()=>lockChild.exitCode!==null,'unlock checkpoint',10000);lockChild=null
-    await pass('checkpoint failure restores old UI, shows the original error, preserves the journal cause, and removes partial copies')
+    await pass(checkpointCheck)
+    }
+    if(!report.checks.includes(publicationCheck)) {
     const recordPath=join(root,'runtime/update.json')
     await mkdir(recordPath)
     const recordAttempt=await switchTo(cachedTarget)
@@ -149,7 +176,8 @@ try {
     await verifyDraft()
     assert.equal((await readdir(root)).filter(name=>name.startsWith('.dsh-update-')&&name.endsWith('-before')).length,obsolete.filter(path=>path.endsWith('-before')).length)
     await rmdir(recordPath)
-    await pass('record publication failure removes the unpublished checkpoint while preserving historical recovery data')
+    await pass(publicationCheck)
+    }
     if(obsolete.length)await holdFile(join(obsolete[0],'sentinel'))
   }
   const started=Date.now()
@@ -181,7 +209,18 @@ try {
   report.upgradeElapsedMs=Date.now()-started
   assert.equal((await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress'))).error,null)
   assert.equal(record.stage,'committed');assert.equal(record.target.version,versions.preview)
+  await wait(async()=>{
+    const selection=JSON.parse(await readFile(join(root,'runtime/selection.json'),'utf8'))
+    const directories=await readdir(join(root,'runtime/versions'))
+    return selection.previous===null && directories.length===1 && directories[0]===record.target.managed.id && !(await state()).runtimeCleanupPending
+  },'retain only the committed runtime',300000)
   const selection=JSON.parse(await readFile(join(root,'runtime/selection.json'),'utf8'));assert.equal(selection.active,record.target.managed.id)
+  assert.equal(selection.previous,null)
+  assert.deepEqual(await readdir(join(root,'runtime/candidates')).catch(error=>{if(error.code!=='ENOENT')throw error;return []}),[])
+  assert.deepEqual(await readdir(join(root,'runtime/installing')).catch(error=>{if(error.code!=='ENOENT')throw error;return []}),[])
+  if(initial.runtime.managed)assert.equal(await lstat(join(root,'runtime/versions',initial.runtime.managed.id)).then(()=>true,()=>false),false)
+  assert.equal(await lstat(bin).then(()=>true,()=>false),true)
+  await pass('full update commit retains only the current runtime and reclaims previous versions and installation staging')
   assert.match(await page.locator('[contenteditable=true]').first().textContent(),/升级后仍然保留/)
   assert.equal((await lstat(moduleLink)).isSymbolicLink(),true)
   assert.equal(await readlink(moduleLink),external)
@@ -197,10 +236,13 @@ try {
     lockChild.stdin.end('\n');await wait(()=>lockChild.exitCode!==null,'unlock obsolete checkpoint',10000);lockChild=null
     await pass('a locked historical backup does not roll back a successful upgrade or block other deletions')
   }
-  await quit();await start();assert.equal((await state()).runtime.version,versions.preview)
+  await quit();await start({offline:true});assert.equal((await state()).runtime.version,versions.preview)
+  await wait(async()=>!(await state()).runtimeCleanupPending,'cold-start runtime reclamation')
+  assert.deepEqual(await readdir(join(root,'runtime/versions')),[record.target.managed.id])
   assert.equal((await readdir(root)).some(name=>name.startsWith('.dsh-update-')&&/-(before|failed)$/.test(name)),false)
   assert.equal(await readFile(join(external,'sentinel'),'utf8'),'external dependency is untouched')
   await pass('cold startup retries cleanup from the committed record and leaves external dependencies intact')
   await pass('cold restart uses the committed version even when the original configured entry remains present')
+  await pass('an unavailable npm registry does not prevent cold startup of the sole retained runtime')
 } catch(error){report.error=error.stack;await save();if(page)await page.screenshot({path:join(root,'failure.png')}).catch(()=>{});throw error}
 finally {if(lockChild){lockChild.stdin.end('\n');lockChild.kill()}await quit();await save();console.log('Artifacts: '+root)}

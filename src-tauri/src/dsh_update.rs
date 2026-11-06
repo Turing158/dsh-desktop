@@ -21,7 +21,12 @@ use crate::{
 pub struct UpdateManager(Arc<AtomicBool>, crate::maintenance::MaintenanceCoordinator);
 
 #[derive(Default,Clone)]
-pub struct CandidateManager(Arc<std::sync::Mutex<Option<CandidateState>>>);
+pub struct CandidateManager(Arc<std::sync::Mutex<CandidateRegistry>>);
+#[derive(Default)]
+struct CandidateRegistry {
+    active: Option<CandidateState>,
+    ready: Option<(uuid::Uuid, crate::remote_control::Identity)>,
+}
 struct CandidateState {
     request_id: uuid::Uuid, identity:crate::remote_control::Identity,
     cancelled:bool, installer:Option<npm::InstallHandle>,
@@ -30,33 +35,53 @@ struct CandidateGuard {manager:CandidateManager,request_id:uuid::Uuid}
 impl CandidateManager {
     fn begin(&self,request_id:uuid::Uuid,identity:crate::remote_control::Identity)->Result<CandidateGuard,String> {
         let mut state=self.0.lock().map_err(|_|"runtime-candidate-state")?;
-        if state.is_some() {return Err("runtime-candidate-busy".into());}
-        *state=Some(CandidateState {request_id,identity,cancelled:false,installer:None});
+        if state.active.is_some() {return Err("runtime-candidate-busy".into());}
+        state.ready=None;
+        state.active=Some(CandidateState {request_id,identity,cancelled:false,installer:None});
         Ok(CandidateGuard {manager:self.clone(),request_id})
     }
-    fn cancel(&self,request_id:uuid::Uuid,identity:crate::remote_control::Identity)->Result<(),String> {
+    #[cfg(test)]
+    fn cancel(&self,request_id:uuid::Uuid,identity:crate::remote_control::Identity)->Result<bool,String> {
+        self.cancel_with(request_id,identity,||Ok(()))
+    }
+    fn cancel_with(&self,request_id:uuid::Uuid,identity:crate::remote_control::Identity,
+        release_ready:impl FnOnce()->Result<(),String>)->Result<bool,String> {
         let mut state=self.0.lock().map_err(|_|"runtime-candidate-state")?;
-        let Some(state)=state.as_mut() else {return Ok(())};
-        if state.request_id!=request_id || state.identity!=identity {return Err("runtime-candidate-stale".into());}
-        state.cancelled=true;if let Some(installer)=&state.installer {installer.cancel();}Ok(())
+        if let Some(active)=state.active.as_mut() {
+            if active.request_id!=request_id || active.identity!=identity {return Err("runtime-candidate-stale".into());}
+            active.cancelled=true;if let Some(installer)=&active.installer {installer.cancel();}return Ok(false);
+        }
+        if let Some(ready)=state.ready {
+            if ready!=(request_id,identity) {return Err("runtime-candidate-stale".into());}
+            // Keep request ownership until its runtime pin is released. A new
+            // preparation cannot publish a pin that this cancellation clears.
+            release_ready()?;
+            state.ready=None;return Ok(true);
+        }
+        Ok(false)
     }
 }
 impl CandidateGuard {
     fn check(&self)->Result<(),String> {
         let state=self.manager.0.lock().map_err(|_|"runtime-candidate-state")?;
-        match state.as_ref().filter(|s|s.request_id==self.request_id) {
+        match state.active.as_ref().filter(|s|s.request_id==self.request_id) {
             Some(s) if !s.cancelled=>Ok(()),_=>Err("runtime-candidate-cancelled".into())
         }
     }
     fn installer(&self,installer:Option<npm::InstallHandle>)->Result<(),String> {
         let mut state=self.manager.0.lock().map_err(|_|"runtime-candidate-state")?;
-        let state=state.as_mut().filter(|s|s.request_id==self.request_id).ok_or("runtime-candidate-stale")?;
+        let state=state.active.as_mut().filter(|s|s.request_id==self.request_id).ok_or("runtime-candidate-stale")?;
         if state.cancelled {if let Some(installer)=installer {installer.cancel();}return Err("runtime-candidate-cancelled".into());}
         state.installer=installer;Ok(())
     }
+    fn ready(&self)->Result<(),String> {
+        let mut state=self.manager.0.lock().map_err(|_|"runtime-candidate-state")?;
+        let active=state.active.as_ref().filter(|s|s.request_id==self.request_id && !s.cancelled).ok_or("runtime-candidate-cancelled")?;
+        state.ready=Some((active.request_id,active.identity));state.active=None;Ok(())
+    }
 }
 impl Drop for CandidateGuard {
-    fn drop(&mut self) {if let Ok(mut state)=self.manager.0.lock() {if state.as_ref().is_some_and(|s|s.request_id==self.request_id) {*state=None;}}}
+    fn drop(&mut self) {if let Ok(mut state)=self.manager.0.lock() {if state.active.as_ref().is_some_and(|s|s.request_id==self.request_id) {state.active=None;}}}
 }
 
 #[derive(Debug,Serialize,Deserialize)]
@@ -120,12 +145,13 @@ pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_c
     let app=window.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let operation=operation.durable(&app)?;let progress=operation.progress();
+        crate::dsh_upgrade::clear_prepared(&app);
         progress.target(&target_version)?;
         let prefix=crate::runtime_store::candidate_directory(&app)?;
         let record=prefix.join("preparation.json");
-        crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
-            "sourceVersion":source.version,"targetVersion":target_version,"stage":"installing"})).map_err(|_|"runtime-candidate-record-failed")?;
-        let result:Result<CandidateSummary,String>=(|| {
+        let mut result:Result<CandidateSummary,String>=(|| {
+            crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
+                "sourceVersion":source.version,"targetVersion":target_version,"stage":"installing"})).map_err(|_|"runtime-candidate-record-failed")?;
             guard.check()?;
             crate::dsh_upgrade::progress(&app,"installing");
             progress.update(crate::maintenance::Stage::Preparing,"candidate-cache-check-started")?;
@@ -162,6 +188,32 @@ pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_c
             let _=crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
                 "targetVersion":target_version,"stage":"failed","errorCode":code}));
             let _=progress.failed(code);
+            crate::dsh_upgrade::clear_prepared(&app);
+        }
+        if let Ok(root)=crate::runtime_store::directory(&app) {
+            if let Err(error)=crate::runtime_cleanup::discard_temporary(&root,&prefix) {
+                crate::debug_log(&format!("[runtime-cleanup] candidate installation deferred: {error}"));
+                crate::diagnostics::record(&app,"runtime","candidate-cleanup-deferred");
+            }
+        }
+        // Reclaim under this preparation lease before the UI immediately
+        // starts a switch, so background maintenance cannot race that switch.
+        let reclaim=|| {
+            if let Ok(root)=crate::runtime_store::directory(&app) {
+                let mut pins=vec![source.dsh_bin.clone()];
+                if let Ok(prepared)=crate::dsh_upgrade::prepared_paths(&app) {pins.extend(prepared);}
+                if crate::runtime_cleanup::collect(&root,&pins).is_err() {crate::diagnostics::record(&app,"runtime","cleanup-deferred");}
+                if let Err(code)=crate::runtime_cleanup::trim_cache(&root,&source.node_exe,crate::runtime_cleanup::CACHE_BYTES) {
+                    crate::diagnostics::record(&app,"runtime",&code);
+                }
+            }
+        };
+        reclaim();
+        if result.is_ok() {
+            if let Err(error)=guard.ready() {
+                crate::dsh_upgrade::clear_prepared(&app);let _=progress.failed(&error);
+                crate::dsh_upgrade::progress(&app,"cancelled");result=Err(error);reclaim();
+            }
         }
         result
     }).await.map_err(|_|"runtime-candidate-worker")?
@@ -170,7 +222,12 @@ pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_c
 #[tauri::command]
 pub fn cancel_dsh_candidate(window:WebviewWindow,identity:crate::remote_control::Identity,request_id:uuid::Uuid)->Result<(),String> {
     caller(&window)?;crate::remote_control::caller(&window,identity).map_err(|e|e.message)?;
-    window.state::<CandidateManager>().cancel(request_id,identity)
+    let app=window.app_handle();
+    if window.state::<CandidateManager>().cancel_with(request_id,identity,|| {
+        if app.state::<crate::dsh_upgrade::ManagerState>().is_updating() {return Err("runtime-candidate-busy".into());}
+        crate::dsh_upgrade::clear_prepared(app);Ok(())
+    })? {crate::runtime_cleanup::schedule(app);}
+    Ok(())
 }
 
 pub(crate) struct Operation(Option<Arc<AtomicBool>>, Option<crate::maintenance::Lease>);
@@ -528,6 +585,31 @@ mod tests {
         assert!(manager.begin(uuid::Uuid::new_v4(),identity).is_ok());
     }
 
+    #[test]
+    fn a_ready_candidate_can_be_cancelled_only_by_its_original_request_and_document() {
+        let manager=CandidateManager::default();let id=uuid::Uuid::new_v4();
+        let identity=crate::remote_control::Identity {backend_instance:1,window_generation:1,document_generation:2,document_nonce:[1;16]};
+        let guard=manager.begin(id,identity).unwrap();guard.ready().unwrap();drop(guard);
+        assert!(manager.cancel(uuid::Uuid::new_v4(),identity).is_err());
+        let mut stale=identity;stale.document_generation+=1;assert!(manager.cancel(id,stale).is_err());
+        assert!(manager.cancel(id,identity).unwrap());assert!(!manager.cancel(id,identity).unwrap());
+    }
+    #[test]
+    fn a_refused_ready_cancellation_retains_request_ownership_for_retry() {
+        let manager=CandidateManager::default();let id=uuid::Uuid::new_v4();
+        let identity=crate::remote_control::Identity {backend_instance:1,window_generation:1,document_generation:2,document_nonce:[1;16]};
+        let guard=manager.begin(id,identity).unwrap();guard.ready().unwrap();drop(guard);
+        assert_eq!(manager.cancel_with(id,identity,||Err("runtime-candidate-busy".into())).unwrap_err(),"runtime-candidate-busy");
+        assert!(manager.cancel(id,identity).unwrap());
+    }
+    #[test]
+    fn a_late_cancel_cannot_discard_a_newer_candidate_preparation() {
+        let manager=CandidateManager::default();let id=uuid::Uuid::new_v4();
+        let identity=crate::remote_control::Identity {backend_instance:1,window_generation:1,document_generation:2,document_nonce:[1;16]};
+        let old=manager.begin(id,identity).unwrap();old.ready().unwrap();drop(old);
+        let next=manager.begin(uuid::Uuid::new_v4(),identity).unwrap();
+        assert!(manager.cancel(id,identity).is_err());assert!(next.check().is_ok());
+    }
     #[test]
     fn helper_failures_keep_their_real_code_instead_of_the_blanket_code() {
         for (message, code) in [

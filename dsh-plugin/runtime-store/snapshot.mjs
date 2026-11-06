@@ -72,6 +72,14 @@ async function hash(path) {
   for await(const chunk of createReadStream(path))digest.update(chunk)
   return digest.digest('hex')
 }
+async function stableHash(path, size) {
+  const before = await lstat(path, { bigint: true })
+  if (!before.isFile() || before.isSymbolicLink() || before.size !== BigInt(size)) throw Error('runtime-source-changed')
+  const sha256 = await hash(path), after = await lstat(path, { bigint: true })
+  if (!after.isFile() || after.isSymbolicLink() || before.dev !== after.dev || before.ino !== after.ino
+    || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw Error('runtime-source-changed')
+  return sha256
+}
 async function copyHashed(from, to, size) {
   const digest = createHash('sha256')
   let copied = 0
@@ -150,6 +158,20 @@ export async function freezeRuntimeClosure(source,destination,limits = {}) {
     queue.push(...inventory.externalDependencies.map(edge=>edge.target))
   }
   files.sort((a,b)=>a.path.localeCompare(b.path))
+  const packagePath=join('node_modules',relative(boundary,source)).split(sep).join('/')
+  if (limits.reuseCandidates?.length) {
+    const hashed=[]
+    for(let offset=0;offset<files.length;offset+=24) {
+      hashed.push(...await Promise.all(files.slice(offset,offset+24).map(async file=>({
+        path:file.path,size:file.size,sha256:await stableHash(file.source,file.size),
+      }))))
+    }
+    const fingerprint=createHash('sha256').update(JSON.stringify(hashed)).digest('hex')
+    const existing=limits.reuseCandidates.find(candidate=>candidate.fingerprint===fingerprint
+      && candidate.entry===packagePath+'/lib/bin.js' && candidate.fileCount===hashed.length && candidate.totalBytes===totalBytes)
+    if(existing) return {schema:1,fingerprint,files:hashed,packages,edges:sourceEdges,missingOptional,totalBytes,
+      packagePath,externalPackages:roots.length-1,reusedId:existing.id}
+  }
   await mkdir(destination,{recursive:true})
   const ensureDirectory=directoryMaker()
   const copied=[]
@@ -169,5 +191,5 @@ export async function freezeRuntimeClosure(source,destination,limits = {}) {
   if(JSON.stringify(sortEdges(sourceEdges))!==JSON.stringify(sortEdges(frozen.edges))||frozen.totalBytes!==totalBytes||frozen.files.length!==files.length)throw Error('runtime-resolution-changed')
   const fingerprint=createHash('sha256').update(JSON.stringify(copied)).digest('hex')
   return {schema:1,fingerprint,files:copied,packages,edges:sourceEdges,missingOptional,totalBytes,
-    packagePath:join('node_modules',relative(boundary,source)).split(sep).join('/'),externalPackages:roots.length-1}
+    packagePath,externalPackages:roots.length-1}
 }

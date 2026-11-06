@@ -209,6 +209,7 @@ struct Request {
     title: String,
     body: String,
     session_id: Option<String>,
+    system_audio: bool,
     reply: mpsc::Sender<Result<(), String>>,
 }
 
@@ -244,11 +245,12 @@ impl NotificationService {
                             let result = match &apartment {
                                 Ok(_) => {
                                     let report = report.clone();
-                                    show(
+                                    show_with_audio(
                                         &app_id,
                                         &request.title,
                                         &request.body,
                                         request.session_id.as_deref(),
+                                        request.system_audio,
                                         move |event| report(event),
                                     )
                                     .map(|toast| {
@@ -279,7 +281,12 @@ impl NotificationService {
         })
     }
 
+    #[cfg(test)]
     pub fn submit(&self, title: &str, body: &str, session_id: Option<&str>) -> Result<(), String> {
+        self.submit_with_audio(title, body, session_id, true)
+    }
+
+    pub fn submit_with_audio(&self, title: &str, body: &str, session_id: Option<&str>, system_audio: bool) -> Result<(), String> {
         let (reply, result) = mpsc::channel();
         self.requests
             .as_ref()
@@ -288,6 +295,7 @@ impl NotificationService {
                 title: title.into(),
                 body: body.into(),
                 session_id: session_id.map(str::to_owned),
+                system_audio,
                 reply,
             })
             .map_err(|e| format!("通知线程不可用：{e}"))?;
@@ -356,23 +364,26 @@ fn session_link(session_id: Option<&str>) -> Option<String> {
     (crate::deep_link::parse(&link).ok()? == format!("session-{suffix}")).then_some(link)
 }
 
+#[cfg(test)]
 fn notification_xml(title: &str, body: &str, session_id: Option<&str>) -> WinResult<XmlDocument> {
+    notification_xml_with_audio(title, body, session_id, true)
+}
+
+fn notification_xml_with_audio(title: &str, body: &str, session_id: Option<&str>, system_audio: bool) -> WinResult<XmlDocument> {
     let activation = session_link(session_id)
         .map(|link| format!(" activationType=\"protocol\" launch=\"{link}\""))
         .unwrap_or_default();
     let document = XmlDocument::new()?;
+    let audio = if system_audio { "" } else { "<audio silent=\"true\"/>" };
     document.LoadXml(&HSTRING::from(format!(
-        "<toast{activation}><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
+        "<toast{activation}><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual>{audio}</toast>",
         xml_text(title), xml_text(body),
     )))?;
     Ok(document)
 }
 
-pub fn show(
-    app_id: &str,
-    title: &str,
-    body: &str,
-    session_id: Option<&str>,
+fn show_with_audio(
+    app_id: &str, title: &str, body: &str, session_id: Option<&str>, system_audio: bool,
     report: impl Fn(DeliveryEvent) + Send + Sync + 'static,
 ) -> Result<PendingToast, String> {
     let _apartment = Apartment::new().map_err(|e| e.to_string())?;
@@ -401,7 +412,7 @@ pub fn show(
             setting.0
         ));
     }
-    let document = notification_xml(title, body, session_id).map_err(|e| e.to_string())?;
+    let document = notification_xml_with_audio(title, body, session_id, system_audio).map_err(|e| e.to_string())?;
     let toast = ToastNotification::CreateToastNotification(&document).map_err(|e| e.to_string())?;
     let finished = Arc::new(AtomicBool::new(false));
     let report = Arc::new(report);
@@ -459,6 +470,15 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabling_system_audio_adds_an_explicit_silent_toast_element() {
+        let _apartment = Apartment::new().unwrap();
+        let silent = notification_xml_with_audio("Done", "Body", None, false).unwrap();
+        assert!(silent.GetXml().unwrap().to_string().contains("silent=\"true\""));
+        let system = notification_xml_with_audio("Done", "Body", None, true).unwrap();
+        assert_eq!(system.GetElementsByTagName(&HSTRING::from("audio")).unwrap().Length().unwrap(), 0);
+    }
 
     #[test]
     fn shortcut_registration_repairs_without_rewriting_valid_files() {

@@ -3,12 +3,14 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { freezeRuntimeClosure } from './snapshot.mjs'
 
-export async function prepareRuntime(source, destination) {
+export async function prepareRuntime(source, destination, existing = []) {
   const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
   if (pkg.name !== '@deepseek-ai/dsh' || !/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?(?:\+[a-z0-9.-]+)?$/i.test(pkg.version)) throw Error('runtime-package-invalid')
-  const inventory = await freezeRuntimeClosure(source, destination)
+  const inventory = await freezeRuntimeClosure(source, destination, { reuseCandidates: existing.filter(candidate => candidate.version === pkg.version) })
   const entry = inventory.packagePath + '/lib/bin.js'
   if (!inventory.files.some(file => file.path === entry)) throw Error('runtime-entry-missing')
+  if (inventory.reusedId) return { version: pkg.version, entry, fingerprint: inventory.fingerprint,
+    fileCount: inventory.files.length, totalBytes: inventory.totalBytes, reusedId: inventory.reusedId }
   // Written beside the tree, never included in its own content fingerprint.
   await writeFile(join(destination, '..', 'inventory.json'), JSON.stringify(inventory), { flag: 'wx' })
   return { version: pkg.version, entry, fingerprint: inventory.fingerprint, fileCount: inventory.files.length, totalBytes: inventory.totalBytes }
@@ -17,7 +19,7 @@ export async function prepareRuntime(source, destination) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     const request = JSON.parse(await readFile(process.argv[2], 'utf8'))
-    const result = await prepareRuntime(request.source, request.destination)
+    const result = await prepareRuntime(request.source, request.destination, request.existing)
     process.stdout.write(JSON.stringify(result))
   } catch (error) {
     process.stderr.write(String(error.message).split(':')[0])

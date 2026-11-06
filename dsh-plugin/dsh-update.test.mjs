@@ -300,8 +300,30 @@ for (const channel of ['latest','preview']) {
     assert.equal(install.args.candidateId,'verified-candidate');assert.equal(install.args.targetVersion,tags[channel])
     assert.ok(f.calls.findIndex(c=>c.command==='prepare_dsh_candidate')<f.calls.findIndex(c=>c.command==='capture'))
     assert.equal(f.calls.some(c=>c.command==='unfreeze'),false)
+    assert.equal(f.calls.some(c=>c.command==='cancel_dsh_candidate'),false)
   })
 }
+test('closing a completed candidate-only dialog releases the prepared candidate',async()=>{
+  const f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,candidateOnly:true}),
+    prepare:async()=>({id:'ready',version:tags.preview,switchAvailable:false})})
+  f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush()
+  const request=f.calls.find(c=>c.command==='prepare_dsh_candidate')
+  f.closeDialog();await flush()
+  const cancelled=f.calls.find(c=>c.command==='cancel_dsh_candidate')
+  assert.equal(cancelled.args.requestId,request.args.requestId)
+  assert.equal(f.calls.some(c=>c.command==='install_dsh_update'),false)
+})
+
+test('cancelling a staged wait releases the already prepared candidate',async()=>{
+  const f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true}),nativeActivity:async()=>true,
+    prepare:async()=>({id:'ready',version:tags.preview,switchAvailable:true})})
+  f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush();await flush()
+  const request=f.calls.find(c=>c.command==='prepare_dsh_candidate')
+  f.button('取消等待').props.onClick();await flush()
+  assert.equal(f.calls.find(c=>c.command==='cancel_dsh_candidate').args.requestId,request.args.requestId)
+  assert.equal(f.calls.some(c=>c.command==='install_dsh_update'),false)
+})
+
 test('cancelled staged preparation cannot activate a late successful candidate',async()=>{
   const pending=deferred(),f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true}),prepare:()=>pending.promise})
   f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush()

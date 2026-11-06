@@ -108,6 +108,28 @@ test('exports the Cordis plugin shape and injects nothing', () => {
   assert.equal(typeof apply, 'function')
 })
 
+test('notification preferences are published at startup and after committed settings without a client', async () => {
+  const h = harness()
+  let section = { notifications: { enabled: false, soundEnabled: true, sound: 'system' } }
+  h.ctx.settings = { get: ns => ns === 'desktop-appearance' ? section : undefined }
+  h.ctx.inject = (_services, callback) => callback(h.ctx)
+  try {
+    apply(h.ctx, {})
+    const reports = () => h.lines.filter(line => line.startsWith('__DSH_NOTIFICATION_SETTINGS__ ')).map(line => JSON.parse(line.slice('__DSH_NOTIFICATION_SETTINGS__ '.length)))
+    assert.deepEqual(reports(), [section.notifications])
+    h.listener('settings/updated').callback('ui-theme', {})
+    h.listener('settings/updated').callback('desktop-appearance', { ...section, animation: 'off' })
+    assert.equal(reports().length, 1)
+    // Legacy document-updated is emitted before the committed value changes.
+    h.listener('settings/document-updated').callback('desktop-appearance')
+    section = { notifications: { enabled: true, soundEnabled: false, sound: 'default' } }
+    h.listener('settings/updated').callback('desktop-appearance', section)
+    await Promise.resolve()
+    assert.deepEqual(reports().at(-1), section.notifications)
+    assert.equal(reports().length, 2)
+  } finally { h.restore() }
+})
+
 test('registers the question observer BEFORE the UI answerer (prepend)', () => {
   const h = harness()
   try {

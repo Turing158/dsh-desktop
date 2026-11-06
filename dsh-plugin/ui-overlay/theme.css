@@ -994,6 +994,27 @@ html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_footer'] {
   border-top: 1px solid var(--dsh-menu-border);
 }
 
+/* The session header already supplies explicit group dividers. Keep the
+   viewport and footer aligned, without drawing another line at their boundary. */
+html:not([data-dsh-ui='vanilla']) body [role='menu'][data-dsh-header-session-id] > :is([class*='_viewport'], [class*='_footer']) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+html:not([data-dsh-ui='vanilla']) body [role='menu'][data-dsh-header-session-id] :is([role='separator'], div[class*='_separator']) {
+  height: 1px !important;
+  margin: 4px 6px !important;
+  background: var(--dsh-menu-border) !important;
+}
+
+/* Copy and Open belong to one group. The registry already separates that
+   group; the legacy slot menu needs only its first injected divider. */
+html:not([data-dsh-ui='vanilla']) body [role='menu'][data-dsh-header-session-id]:has(> [class*='_footer']) [data-dsh-header-menu-extras] > [role='separator'],
+html:not([data-dsh-ui='vanilla']) body [role='menu'][data-dsh-header-session-id] [data-dsh-header-menu-extras] > [role='separator']:not(:first-child) {
+  display: none;
+}
+
 html:not([data-dsh-ui='vanilla']) body :is([data-dsh-desktop='reveal-submenu'], [data-dsh-desktop='copy-submenu'], [data-dockkit-tab-menu], .dshTerminal__context, .dshTerminal__moreList) {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -2985,8 +3006,24 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-left] body [data-slot='sid
   -webkit-mask-image: linear-gradient(to bottom, rgb(0 0 0 / var(--dsh-workspace-top-alpha)), #000 24px, #000 calc(100% - 24px), transparent);
   mask-image: linear-gradient(to bottom, rgb(0 0 0 / var(--dsh-workspace-top-alpha)), #000 24px, #000 calc(100% - 24px), transparent);
 }
-/* The saved Right preference controls both sidebar locations and Automations. */
+/* Plugin pages are transparent upstream. Keep Chat's picture from leaking
+   through when the shared sidebar/page background preference is disabled. */
+html:not([data-dsh-ui='vanilla']) body [data-plugin-panel],
+html:not([data-dsh-ui='vanilla']) body [data-global-panel]:has([data-plugin-panel], [data-testid='task-manager-page']) {
+  background: var(--dsw-alias-bg-base);
+}
+/* In the Plugins tab this wrapper is display:contents. Its legacy overhang
+   still paints an orphaned solid strip above the market navigation. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-plugin-panel] [data-dsh-market-plugins-tab='true']:not([data-dsh-market-fullscreen='true']) [class$='_stickyHead']::before {
+  content: none;
+}
+/* The saved Right preference controls both sidebar locations, Automations and
+   Plugins. Sticky chrome repaints the same fixed image to cover scrolling text. */
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-testid='task-manager-page'],
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-plugin-panel],
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-global-panel]:has([data-plugin-panel], [data-testid='task-manager-page']),
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-plugin-panel] [data-plugin-bar][data-natural]::before,
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-plugin-panel] [data-dsh-market-plugins-tab='true']:not([data-dsh-market-fullscreen='true']) :is([class$='_head'], [class$='_cats']),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body .dshTerminalDock[data-dsh-terminal-dock],
 html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm) {
@@ -3019,6 +3056,9 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
   [data-dsh-background-right] [data-testid='task-manager-page'],
+  [data-dsh-background-right] [data-plugin-panel],
+  [data-dsh-background-right] [data-sidebar-drawer] [data-global-panel]:has([data-plugin-panel], [data-testid='task-manager-page']),
+  [data-dsh-background-right] [data-plugin-panel] [data-dsh-market-plugins-tab='true']:not([data-dsh-market-fullscreen='true']) :is([class$='_head'], [class$='_cats']),
   [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
   [data-dsh-background-right] .dshTerminalDock[data-dsh-terminal-dock],
   [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
@@ -3030,6 +3070,8 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
   [data-dsh-background-right] [data-testid='task-manager-page'],
+  [data-dsh-background-right] [data-plugin-panel],
+  [data-dsh-background-right] [data-sidebar-drawer] [data-global-panel]:has([data-plugin-panel], [data-testid='task-manager-page']),
   [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
   [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
 ) {
@@ -3041,6 +3083,9 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   [data-dsh-background-left] [class*='_sidebarCol'],
   [data-dsh-background-chat] [class*='_centerCol'],
   [data-dsh-background-right] [data-testid='task-manager-page'],
+  [data-dsh-background-right] [data-plugin-panel],
+  [data-dsh-background-right] [data-sidebar-drawer] [data-global-panel]:has([data-plugin-panel], [data-testid='task-manager-page']),
+  [data-dsh-background-right] [data-plugin-panel] [data-dsh-market-plugins-tab='true']:not([data-dsh-market-fullscreen='true']) :is([class$='_head'], [class$='_cats']),
   [data-dsh-background-right] [data-sidebar-right-panel] :is([data-dockkit-host], [data-dockkit-empty]),
   [data-dsh-background-right] .dshTerminalDock[data-dsh-terminal-dock],
   [data-dsh-background-right] :is([data-sidebar-right-panel], [data-dsh-terminal-dock]) [data-sidebar-terminal] :has(> .xterm)
@@ -3051,6 +3096,28 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-blur] body :is(
   z-index: -1;
   pointer-events: none;
   border-radius: inherit;
+  -webkit-backdrop-filter: blur(var(--dsh-background-blur, 0px));
+  backdrop-filter: blur(var(--dsh-background-blur, 0px));
+}
+/* Match the drawer layout's leading-control clearance. Limit this blur layer
+   to the exposed padding; the page below paints and blurs its own background. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right][data-dsh-background-blur] body [data-sidebar-drawer] [data-global-panel]:has([data-plugin-panel], [data-testid='task-manager-page'])::before {
+  bottom: auto;
+  height: max(0px, calc(48px - var(--dsh-frame-top-clearance, 0px)));
+}
+/* Upstream uses the plugin bar's ::before for its collapsing paint height and
+   ::after for the compact border. Blur that paint below the header controls,
+   retaining the measured height, border and sticky position. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right][data-dsh-background-blur] body [data-plugin-panel] [data-plugin-bar][data-natural] > header {
+  z-index: 1;
+}
+html:not([data-dsh-ui='vanilla'])[data-dsh-background-right][data-dsh-background-blur] body [data-plugin-panel] [data-plugin-bar][data-natural]::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--plugin-header-paint-height, var(--plugin-header-rest-height));
+  z-index: 0;
+  pointer-events: none;
   -webkit-backdrop-filter: blur(var(--dsh-background-blur, 0px));
   backdrop-filter: blur(var(--dsh-background-blur, 0px));
 }
@@ -3084,9 +3151,122 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-side
 .dshAppearance__background button:disabled, .dshAppearance__background input:disabled { opacity: .45; cursor: default; }
 .dshAppearance__backgroundPreview { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 10px; margin-top: 12px; }
 :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) { display: flex; align-items: center; gap: 12px; padding: 12px 0; font-size: 13px; line-height: 1.5; }
-:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) span { flex: 0 1 150px; }
-:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) input { min-width: 60px; flex: 1; accent-color: var(--dsh-ui-accent); }
+:is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) > span:first-child { flex: 0 1 150px; }
+.dshSettingRange { display: inline-flex; min-width: 60px; flex: 1; }
+.dshSettingRange > input { min-width: 0; width: 100%; accent-color: var(--dsh-ui-accent); }
+.dshSettingRange__visual { display: none; }
 :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) output { flex: 0 0 38px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Settings slider D: a borderless hairline, quarter marks and a square handle.
+   Split the line around the handle so transparent materials need no opaque rim.
+   Hover motion stays full strength under the OS reduced-motion preference. */
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange {
+  --dsh-range-accent: var(--dsw-alias-brand-primary);
+  --dsh-range-rail: color-mix(in srgb, var(--dsw-alias-label-primary) 28%, transparent);
+  position: relative;
+  height: 44px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input {
+  position: absolute;
+  inset: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 44px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input::-webkit-slider-runnable-track { height: 44px; border: 0; background: transparent; box-shadow: none; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input::-moz-range-track { height: 44px; border: 0; background: transparent; box-shadow: none; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input::-moz-range-progress { background: transparent; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 24px;
+  height: 44px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input::-moz-range-thumb { width: 24px; height: 44px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__visual { display: block; position: absolute; inset: 0 12px; pointer-events: none; }
+html:not([data-dsh-ui='vanilla']) body :is(.dshSettingRange__rail, .dshSettingRange__fill) {
+  position: absolute;
+  top: 50%;
+  height: 2px;
+  border: 0;
+  border-radius: 2px;
+  box-shadow: none;
+  transform: translateY(-50%);
+  transition: transform 180ms ease-out, background-color 180ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__rail { left: min(100%, calc(var(--dsh-range-progress) * 100% + 8px)); right: 0; background: var(--dsh-range-rail); }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__fill { left: 0; width: max(0px, calc(var(--dsh-range-progress) * 100% - 8px)); background: var(--dsh-range-accent); }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__ticks { position: absolute; left: 0; right: 0; top: calc(50% + 7px); height: 5px; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__ticks i {
+  position: absolute;
+  width: 1px;
+  height: 3px;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: .6;
+  transform: translateX(-50%);
+  transform-origin: center top;
+  transition: transform 200ms ease-out, opacity 200ms ease-out, background-color 200ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__ticks i:is(:first-child, :last-child) { height: 5px; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__thumb {
+  position: absolute;
+  left: calc(var(--dsh-range-progress) * 100%);
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__thumb::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  background: var(--dsh-range-accent);
+  transform: scale(1);
+  transition: transform 220ms cubic-bezier(.2, .8, .2, 1.3), border-radius 180ms ease-out;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange__thumb::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 9px;
+  background: var(--dsh-range-accent);
+  opacity: 0;
+  transform: scale(.45);
+  transition: transform 220ms cubic-bezier(.2, .8, .2, 1), opacity 180ms ease-out;
+}
+@media (hover: hover) {
+  html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:hover:enabled ~ .dshSettingRange__visual :is(.dshSettingRange__rail, .dshSettingRange__fill) { transform: translateY(-50%) scaleY(1.4); }
+  html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:hover:enabled ~ .dshSettingRange__visual .dshSettingRange__thumb::before { transform: scale(1.4); border-radius: 4px; }
+  html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:hover:enabled ~ .dshSettingRange__visual .dshSettingRange__thumb::after { transform: scale(1); opacity: .16; }
+  html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:hover:enabled ~ .dshSettingRange__visual .dshSettingRange__ticks i { transform: translateX(-50%) scaleY(1.4); opacity: 1; background: var(--dsh-range-accent); }
+}
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:active:enabled { cursor: grabbing; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:active:enabled ~ .dshSettingRange__visual .dshSettingRange__thumb::before { transform: scale(1.2); }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:active:enabled ~ .dshSettingRange__visual .dshSettingRange__thumb::after { transform: scale(.85); opacity: .25; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:focus-visible { outline: none; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:focus-visible ~ .dshSettingRange__visual .dshSettingRange__thumb::before { outline: 2px solid var(--dsh-range-accent); outline-offset: 4px; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:disabled { cursor: not-allowed; }
+html:not([data-dsh-ui='vanilla']) body .dshSettingRange > input:disabled ~ .dshSettingRange__visual { opacity: .4; }
+html[data-dsh-desktop-animation='off'] body .dshSettingRange__visual *,
+html[data-dsh-desktop-animation='off'] body .dshSettingRange__thumb::before,
+html[data-dsh-desktop-animation='off'] body .dshSettingRange__thumb::after { transition: none; }
+@media (forced-colors: active) {
+  html:not([data-dsh-ui='vanilla']) body .dshSettingRange__visual { forced-color-adjust: none; --dsh-range-accent: Highlight; --dsh-range-rail: GrayText; --dsw-alias-label-tertiary: GrayText; }
+}
 .dshAppearance__materialTuning p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--dsw-alias-label-tertiary); }
 .dshAppearance__backgroundRegion { border-top: 1px solid var(--dsw-alias-border-l3); padding-top: 12px; }
 .dshAppearance__backgroundRegion > label { font-size: 13px; }
@@ -3095,8 +3275,8 @@ html:not([data-dsh-ui='vanilla'])[data-dsh-background-right] body :is([data-side
 /* Put the label and value above the track when the settings content is narrow. */
 @container (max-width: 440px) {
   :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 8px 12px; }
-  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) span { min-width: 0; }
-  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) input { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; box-sizing: border-box; margin: 0; }
+  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) > span:first-child { min-width: 0; }
+  :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) > .dshSettingRange { grid-column: 1 / -1; grid-row: 2; width: 100%; min-width: 0; box-sizing: border-box; margin: 0; }
   :is(.dshAppearance__backgroundSlider, .dshAppearance__materialSlider) output { grid-column: 2; grid-row: 1; }
 }
 /* A fixed-width settings sidebar leaves too little room for controls on small
@@ -4385,6 +4565,28 @@ html[data-dsh-desktop-animation='off'] .dshChanges button { transition: none; }
 .dshHistory__message { margin: 0; font: inherit; font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .dshHistory__more { padding: 10px 0; text-align: center; }
 .dshHistory__expanded .dshChanges__placeholder { min-height: 96px; padding: 12px; }
+
+/* Sound reminders share the settings page's spacing, surfaces and switches. */
+.dshSound { max-width: 640px; color: var(--dsw-alias-label-primary); font-size: 14px; }
+.dshSound__row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.dshSound__row > :last-child { flex-shrink: 0; }
+.dshSound__label { font-size: 14px; font-weight: 500; line-height: 22px; }
+.dshSound__hint { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.7; }
+.dshSound__effects { min-width: 0; margin: 24px 0 0; padding: 0; border: 0; }
+.dshSound__effects legend { margin-bottom: 12px; padding: 0; }
+.dshSound__options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.dshSound__option { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 14px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.dshSound__option small { font-size: 11px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+.dshSound__option[aria-pressed=true] { border-color: var(--dsw-alias-link); background: var(--dsw-alias-interactive-bg-active); }
+.dshSound__actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 12px; }
+.dshSound__actions button { padding: 6px 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; color: inherit; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.dshSound button:enabled:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dshSound button:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: 2px; }
+.dshSound__effects:disabled { opacity: .5; }
+.dshSound button:disabled { cursor: default; }
+.dshSound__filename { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.dshSound__error { color: var(--dsw-alias-state-error-primary, #d74d64); font-size: 12px; line-height: 1.7; }
+@media (max-width: 560px) { .dshSound__options { grid-template-columns: 1fr; } }
 @container (max-width: 280px) {
   .dshHistory__refs { max-width: 38%; }
 }

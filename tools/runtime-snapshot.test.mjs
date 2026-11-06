@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, symlink, access } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -60,6 +60,33 @@ test('closure omits an optional peer that only resolves outside the installation
   assert.equal(manifest.edges.length,0)
   assert.equal((await inspectRuntimeTree(frozen)).externalDependencies.length,0)
 })
+test('an identical dependency closure reuses its snapshot without copying another tree',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'dsh-reuse-')),source=join(root,'install/node_modules/@fixture/app')
+  await mkdir(source,{recursive:true});await mkdir(join(source,'lib'))
+  await writeFile(join(source,'package.json'),'{"name":"@fixture/app","version":"1.0.0"}')
+  await writeFile(join(source,'lib/bin.js'),'original runtime')
+  const original=await freezeRuntimeClosure(source,join(root,'original'))
+  const candidate={id:'verified-original',fingerprint:original.fingerprint,entry:original.packagePath+'/lib/bin.js',
+    fileCount:original.files.length,totalBytes:original.totalBytes}
+  const destination=join(root,'duplicate')
+  const reused=await freezeRuntimeClosure(source,destination,{reuseCandidates:[candidate]})
+  assert.equal(reused.reusedId,candidate.id);assert.equal(reused.fingerprint,original.fingerprint)
+  assert.equal(await access(destination).then(()=>true,()=>false),false)
+  await writeFile(join(source,'lib/bin.js'),'changed runtime')
+  const changed=await freezeRuntimeClosure(source,join(root,'changed'),{reuseCandidates:[candidate]})
+  assert.equal(changed.reusedId,undefined);assert.notEqual(changed.fingerprint,original.fingerprint)
+  assert.equal(await readFile(join(root,'changed',candidate.entry),'utf8'),'changed runtime')
+})
+
+test('a matching file digest cannot reuse a snapshot with different layout or size bindings',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'dsh-reuse-')),source=join(root,'install/node_modules/@fixture/app')
+  await mkdir(source,{recursive:true});await writeFile(join(source,'package.json'),'{"name":"@fixture/app","version":"1"}')
+  const original=await freezeRuntimeClosure(source,join(root,'original'))
+  const wrong={id:'wrong-layout',fingerprint:original.fingerprint,entry:'wrong/lib/bin.js',fileCount:original.files.length,totalBytes:original.totalBytes}
+  const result=await freezeRuntimeClosure(source,join(root,'new'),{reuseCandidates:[wrong]})
+  assert.equal(result.reusedId,undefined);assert.equal(await readFile(join(root,'new',original.packagePath,'package.json'),'utf8'),'{"name":"@fixture/app","version":"1"}')
+})
+
 test('bounded traversal and streaming copies preserve all files across batches',async()=>{
   const root=await mkdtemp(join(tmpdir(),'dsh-stream-copy-')),source=join(root,'source')
   await mkdir(source)

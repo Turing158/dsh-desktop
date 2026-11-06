@@ -71,6 +71,7 @@ pub enum ChildEvent {
     Ready(String),
     /// A notification the host plugin reported.
     Notify(NotifyPayload),
+    NotificationSettings(crate::notify::sound::Preferences),
     /// The app's appearance preference, reported by the UI overlay plugin.
     Theme(ThemeReport),
     /// Complete live agent activity from the title-bar host, independent of the UI.
@@ -159,6 +160,10 @@ pub fn parse_line(line: &str) -> Option<ChildEvent> {
 
     // The notification marker is checked first: a notification body could in
     // principle contain the readiness prefix, and the reverse is not possible.
+    if let Some(rest) = trimmed.strip_prefix("__DSH_NOTIFICATION_SETTINGS__ ") {
+        return serde_json::from_str::<crate::notify::sound::Preferences>(rest).ok()
+            .filter(|prefs| prefs.valid()).map(ChildEvent::NotificationSettings);
+    }
     if let Some(rest) = trimmed
         .find(NOTIFY_MARKER)
         .map(|at| &trimmed[at + NOTIFY_MARKER.len()..])
@@ -939,6 +944,13 @@ mod tests {
             }
             other => panic!("expected a notification, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn notification_settings_parse_without_leaking_audio_into_logs() {
+        let report = parse_line(r#"__DSH_NOTIFICATION_SETTINGS__ {"enabled":false,"soundEnabled":false,"sound":"default"}"#);
+        assert!(matches!(report, Some(ChildEvent::NotificationSettings(prefs)) if !prefs.enabled && !prefs.sound_enabled && prefs.sound == "default"));
+        assert!(parse_line(r#"__DSH_NOTIFICATION_SETTINGS__ {"sound":"custom","customAudio":"private-bad-audio"}"#).is_none());
     }
 
     #[test]
