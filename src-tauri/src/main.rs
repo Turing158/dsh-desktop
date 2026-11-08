@@ -28,6 +28,7 @@ mod dsh_upgrade;
 mod update_checkpoint;
 mod update_io;
 mod startup_cache;
+mod startup_perf;
 mod diagnostics;
 mod data_inventory;
 mod compatibility;
@@ -79,6 +80,11 @@ const EVENT_INSTALL_PROGRESS: &str = "install-progress";
 const EVENT_STATUS_CHANGED: &str = "status-changed";
 
 fn main() {
+    startup_perf::mark("process-start");
+    #[allow(unused_mut)]
+    let mut context = tauri::generate_context!();
+    #[cfg(debug_assertions)]
+    lifecycle_smoke::isolate(&mut context);
     let maintenance_coordinator = maintenance::MaintenanceCoordinator::default();
     #[cfg(feature = "single")]
     if !embedded_plugins::check_webview() {
@@ -190,9 +196,19 @@ fn main() {
             handler(invoke)
         })
         .setup(|app| {
+            startup_perf::mark("setup");
             diagnostics::record(app.handle(), "desktop", "starting");
+            // Runtime discovery and verification overlap native/WebView2 setup.
+            // A disconnected gate cancels launch if any setup step fails. The
+            // UI thread never joins the worker, so WebView2 can keep pumping.
+            let (setup_ready, ready) = std::sync::mpsc::channel();
+            let handle = app.handle().clone();
+            std::thread::spawn(move || boot(handle, Some(ready)));
             notify::initialize(app.handle());
+            #[cfg(debug_assertions)]
+            lifecycle_smoke::before_window()?;
             create_main_window(app.handle(), false)?;
+            startup_perf::mark("window-created");
             // The tray icon exists from launch, not from the first close: it is
             // the way back into a hidden window, and a control that only
             // appears after it is needed would be a poor one.
@@ -204,13 +220,11 @@ fn main() {
             deep_link::capture_startup_args(app.handle());
             #[cfg(debug_assertions)]
             lifecycle_smoke::install(app.handle());
-            let handle = app.handle().clone();
-            // The window must paint immediately, so probing and the child
-            // process stay off this thread.
-            std::thread::spawn(move || boot(handle));
+            startup_perf::mark("setup-ready");
+            let _ = setup_ready.send(());
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building the dsh desktop app")
         .run(|app, event| match event {
             tauri::RunEvent::ExitRequested {
@@ -578,6 +592,7 @@ fn set_phase(app: &AppHandle, state: &Shared, phase: Phase) {
         if guard.ui.phase == ui_snapshot::UiPhase::Exiting {
             return;
         }
+        if matches!(phase,Phase::Probing | Phase::Starting {..} | Phase::Failed {..}) {diagnostics::invalidate_checks(app);}
         guard.phase = phase;
     }
     publish(app, state);
@@ -597,10 +612,12 @@ fn fail(app: &AppHandle, state: &Shared, message: impl Into<String>, hint: impl 
             manual_install: false,
         },
     );
+    diagnostics::check_failed_runtime(app);
 }
 
 /// The startup sequence: probe, offer to install if needed, then start.
-fn boot(app: AppHandle) {
+fn boot(app: AppHandle, setup_ready: Option<std::sync::mpsc::Receiver<()>>) {
+    startup_perf::mark("boot-start");
     let Ok(_maintenance_lease) = app.state::<maintenance::MaintenanceCoordinator>().begin(maintenance::Kind::Install) else { return };
     let state = app.state::<Shared>().inner().clone();
     {
@@ -632,6 +649,29 @@ fn boot(app: AppHandle) {
         }
     }
     let _boot_guard = BootGuard { state: state.clone(), app: app.clone() };
+    let preparation = prepare_boot(&app, &state);
+    startup_perf::mark("boot-prepared");
+    // Readiness is persistent even when the window wins the race. Early probe
+    // failures stay in AppState for the boot page's first refresh. Retrying an
+    // already initialized app needs no gate and keeps the same boot owner.
+    if setup_ready.is_some_and(|ready| ready.recv().is_err()) || exiting(&state) {
+        return;
+    }
+    match preparation {
+        Some(BootPreparation::Runtime(runtime)) => launch(&app, &state, runtime),
+        Some(BootPreparation::Install(node)) => auto_install(&app, &state, node),
+        None => publish(&app, &state),
+    }
+}
+
+enum BootPreparation {
+    Runtime(Runtime),
+    Install(PathBuf),
+}
+
+/// Prepare under the boot lease without creating a backend or navigating a
+/// window. Recovery must finish before selecting/verifying the runtime.
+fn prepare_boot(app: &AppHandle, state: &Shared) -> Option<BootPreparation> {
     // Audit once per launch/retry on the boot worker. Interrupted legacy
     // updates have no data checkpoint, so never infer an automatic rollback.
     if let Ok(directory) = maintenance::directory(&app) {
@@ -648,10 +688,11 @@ fn boot(app: AppHandle) {
                 required_major: dsh::MIN_NODE_MAJOR,
             },
         );
-        return;
+        return None;
     };
 
     let major = dsh::node_major(&node_exe);
+    startup_perf::mark("node-probed");
     match major {
         Some(major) if major >= dsh::MIN_NODE_MAJOR => {}
         other => {
@@ -664,7 +705,7 @@ fn boot(app: AppHandle) {
                     required_major: dsh::MIN_NODE_MAJOR,
                 },
             );
-            return;
+            return None;
         }
     }
 
@@ -674,17 +715,30 @@ fn boot(app: AppHandle) {
 
     if let Err(error) = runtime_cleanup::acquire(&app) {
         fail(&app, &state, format!("运行时目录暂不可用：{error}"), "请等待使用同一运行时目录的其他实例退出后重试。");
-        return;
+        return None;
     }
     match dsh_upgrade::recover_interrupted(&app) {
-        Ok(Some(runtime))=>{launch(&app,&state,runtime);return},
+        Ok(Some(mut runtime))=>{
+            startup_perf::mark("runtime-resolved");
+            runtime.refresh_version();
+            startup_perf::mark("version-resolved");
+            return Some(BootPreparation::Runtime(runtime));
+        },
         Ok(None)=>{},
-        Err(error)=>{fail(&app,&state,format!("更新恢复未完成：{error}"),"旧数据与更新材料均已保留，请查看故障诊断。");return},
+        Err(error)=>{fail(&app,&state,format!("更新恢复未完成：{error}"),"旧数据与更新材料均已保留，请查看故障诊断。");return None},
     }
     match runtime_store::resolve(&app,&node_exe) {
-        Ok(Some(runtime)) => launch(&app,&state,runtime),
-        Ok(None) => auto_install(&app,&state,node_exe),
-        Err(error) => fail(&app,&state,format!("运行时选择失败：{error}"),"已保留运行时目录，请打开故障诊断后重新检测。"),
+        Ok(Some(mut runtime)) => {
+            startup_perf::mark("runtime-resolved");
+            runtime.refresh_version();
+            startup_perf::mark("version-resolved");
+            Some(BootPreparation::Runtime(runtime))
+        }
+        Ok(None) => Some(BootPreparation::Install(node_exe)),
+        Err(error) => {
+            fail(&app,&state,format!("运行时选择失败：{error}"),"已保留运行时目录，请打开故障诊断后重新检测。");
+            None
+        }
     }
 }
 
@@ -904,8 +958,8 @@ fn exiting(state: &Shared) -> bool {
         .unwrap_or(true)
 }
 
-fn launch(app: &AppHandle, state: &Shared, mut runtime: Runtime) {
-    runtime.version = dsh::dsh_version(&runtime.node_exe, &runtime.dsh_bin);
+fn launch(app: &AppHandle, state: &Shared, runtime: Runtime) {
+    if exiting(state) { return; }
     if let Err(code)=backup::recover_interrupted(app,&runtime) {
         diagnostics::record(app,"backup","cold-rollback-blocked");
         fail(app,state,format!("配置检查点恢复未完成：{code}"),"当前文件和恢复材料均已保留。请检查配置冲突后重新检测。");
@@ -1043,6 +1097,7 @@ fn start_backend_once(
         .unwrap_or(changes_dir);
     let process = dsh::DshProcess::spawn(&runtime, &patch, config, &changes_dir)
         .map_err(|e| format!("无法启动 dsh：{e}"))?;
+    startup_perf::mark("backend-spawned");
 
     // Take the event receiver out of the process so the readiness wait and the
     // ongoing stream are served by one owner.
@@ -1105,6 +1160,7 @@ fn wait_then_stream(
     desktop_update::authorize_backend(&app, instance, &url)?;
     remote_control::authorize_backend(&app, instance, &url)?;
     debug_log(&format!("[ready] {}", public_origin(&url)));
+    startup_perf::mark("backend-ready");
     {
         let mut guard = state.lock().map_err(|_| "后台状态不可用")?;
         if guard.ui.backend_instance != instance || guard.ui.phase == ui_snapshot::UiPhase::Exiting
@@ -1176,6 +1232,7 @@ fn backend_exited(app: &AppHandle, state: &Shared, instance: u64, code: i32) {
             return;
         }
         s.push_log(format!("dsh 输出流已结束（代码 {code}）"));
+        diagnostics::invalidate_checks(app);
         s.remote.active = None;
         s.remote.error = Some(remote_control::Error::new(
             "backend-exited",
@@ -1193,6 +1250,7 @@ fn backend_exited(app: &AppHandle, state: &Shared, instance: u64, code: i32) {
     if app.state::<dsh_upgrade::ManagerState>().is_updating() { dsh_upgrade::failure(app, &format!("新版后台提前退出：{code}")); }
     if dsh_upgrade::rollback_pending(app) {return;}
     debug_log(&format!("[backend] ended instance={instance} code={code}"));
+    diagnostics::check_failed_runtime(app);
     terminal::suspend(app);
     publish(app, state);
     if ui_phase == ui_snapshot::UiPhase::Capturing {
@@ -1556,7 +1614,7 @@ fn retry_boot(
     }
 
     let handle = app.clone();
-    std::thread::spawn(move || boot(handle));
+    std::thread::spawn(move || boot(handle, None));
     Ok(())
 }
 

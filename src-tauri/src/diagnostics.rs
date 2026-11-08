@@ -1,6 +1,6 @@
 //! Diagnostics remain available on the local boot page. Exports contain only
 //! structured host facts; raw output is omitted and counted.
-use std::{io::{self, Write}, path::{Path, PathBuf}, sync::Mutex};
+use std::{io::{self, Write}, path::{Path, PathBuf}, sync::{Mutex, atomic::{AtomicU64, Ordering}}};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -50,7 +50,59 @@ pub struct Report {
 #[derive(Clone, Default)]
 struct Cache { checked_at: Option<u64>, backend_instance: u64, checks: Vec<Check>, inventory: Option<crate::data_inventory::DataInventory>, runtime: Option<RuntimeDescriptor>, incomplete_operations: Vec<crate::maintenance::OperationJournal>, unreadable_journals: usize }
 #[derive(Default)]
-pub struct Diagnostics { cache: Mutex<Cache>, check: Mutex<()>, log: Mutex<()>, dialog_requested: Mutex<bool> }
+pub struct Diagnostics { cache: Mutex<Cache>, check: Mutex<()>, log: Mutex<()>, dialog_requested: Mutex<bool>, revision: AtomicU64 }
+
+pub fn invalidate_checks(app:&AppHandle) {
+    let service=app.state::<Diagnostics>();
+    // Serialize invalidation with result publication, including retries that
+    // fail before a new backend instance is allocated.
+    if let Ok(mut cache)=service.cache.lock() {
+        service.revision.fetch_add(1,Ordering::SeqCst);
+        cache.checked_at=None;
+    };
+}
+
+fn integrity_check(result:Result<crate::runtime_store::Integrity,String>) -> Check {
+    use crate::runtime_store::Integrity;
+    let (status,reason_code)=match result {
+        Ok(Integrity::Verified)=>("available","runtime-integrity-verified"),
+        Ok(Integrity::NodeChanged)=>("limited","runtime-integrity-node-changed"),
+        Ok(Integrity::Unmanaged)=>("unknown","runtime-integrity-unmanaged"),
+        Err(_)=>("unavailable","runtime-integrity-failed"),
+    };
+    Check {id:"runtime-integrity",status,reason_code}
+}
+
+fn store_checks(service:&Diagnostics, revision:u64, cache:Cache) -> Result<bool,String> {
+    let mut stored=service.cache.lock().map_err(|_|"diagnostics-cache")?;
+    if service.revision.load(Ordering::SeqCst)!=revision {return Ok(false)}
+    *stored=cache;
+    Ok(true)
+}
+
+/// The error page is already visible. Diagnose on a worker without owning a
+/// maintenance lease, so the user can retry while this read-only scan finishes.
+pub fn check_failed_runtime(app:&AppHandle) {
+    let (instance,runtime,revision)={
+        let shared=app.state::<crate::state::Shared>();
+        let Ok(state)=shared.lock() else {return};
+        if !matches!(state.phase,crate::state::Phase::Failed {..}) || state.ui.phase==crate::ui_snapshot::UiPhase::Exiting {return}
+        (state.ui.backend_instance,state.runtime.clone(),app.state::<Diagnostics>().revision.load(Ordering::SeqCst))
+    };
+    let app=app.clone();
+    std::thread::spawn(move || {
+        let service=app.state::<Diagnostics>();
+        let Ok(_check)=service.check.lock() else {return};
+        if service.revision.load(Ordering::SeqCst)!=revision {return}
+        record(&app,"runtime","failure-integrity-started");
+        let check=integrity_check(crate::runtime_store::check_integrity(&app,runtime.as_ref()));
+        let code=check.reason_code;
+        let cache=Cache {checked_at:Some(crate::maintenance::now_ms()),backend_instance:instance,checks:vec![check],..Cache::default()};
+        if store_checks(&service,revision,cache)==Ok(true) {
+            record(&app,"runtime",code);
+        }
+    });
+}
 
 fn data_root(app: &AppHandle) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
@@ -185,6 +237,7 @@ pub async fn desktop_diagnostics_check(window: WebviewWindow, identity: Option<c
         // must remain possible while Node/npm probes are waiting for a timeout.
         let service = app.state::<Diagnostics>();
         let _check = service.check.try_lock().map_err(|_| "diagnostics-check-busy")?;
+        let revision=service.revision.load(Ordering::SeqCst);
         let mut initial = summary(&app)?;
         let runtime = &mut initial.runtime;
         runtime.node_path = runtime.node_path.take().or_else(crate::dsh::resolve_node);
@@ -199,6 +252,12 @@ pub async fn desktop_diagnostics_check(window: WebviewWindow, identity: Option<c
         runtime.webview_path = std::env::var_os("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER").map(PathBuf::from);
         let mut cache = Cache { checked_at: Some(crate::maintenance::now_ms()), backend_instance: initial.runtime.backend_instance, ..Cache::default() };
         let mut checks = vec![];
+        let integrity_runtime=match (&initial.runtime.node_path,&initial.runtime.dsh_entry,initial.runtime.dsh_source) {
+            (Some(node),Some(entry),Some(source))=>Some(crate::dsh::Runtime {node_exe:node.clone(),dsh_bin:entry.clone(),source,
+                version:initial.runtime.dsh_version.clone(),managed:initial.runtime.managed_runtime.clone()}),
+            _=>None,
+        };
+        checks.push(integrity_check(crate::runtime_store::check_integrity(&app,integrity_runtime.as_ref())));
         if let Some(node) = &initial.runtime.node_path {
             let mut cmd = std::process::Command::new(node);
             cmd.arg("--version");
@@ -228,7 +287,7 @@ pub async fn desktop_diagnostics_check(window: WebviewWindow, identity: Option<c
         cache.checked_at = Some(crate::maintenance::now_ms());
         cache.runtime = Some(initial.runtime);
         read_journals(data_root(&app).as_deref(), &mut cache);
-        *app.state::<Diagnostics>().cache.lock().map_err(|_| "diagnostics-cache")? = cache;
+        store_checks(&service,revision,cache)?;
         record(&app, "diagnostics", "checks-complete");
         summary(&app)
     }).await.map_err(|_| "diagnostics-worker")?
@@ -308,6 +367,25 @@ pub fn record(app: &AppHandle, source: &str, code: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retry_invalidates_in_flight_checks_even_without_a_new_backend() {
+        let service=Diagnostics::default();
+        let cache=Cache {checked_at:Some(1),backend_instance:0,..Cache::default()};
+        assert!(store_checks(&service,0,cache.clone()).unwrap());
+        service.revision.fetch_add(1,Ordering::SeqCst);
+        assert!(!store_checks(&service,0,Cache::default()).unwrap());
+        assert_eq!(service.cache.lock().unwrap().checked_at,Some(1));
+        assert!(store_checks(&service,1,Cache::default()).unwrap());
+        assert_eq!(service.cache.lock().unwrap().checked_at,None);
+    }
+    #[test]
+    fn changed_node_and_unmanaged_runtime_do_not_claim_file_corruption() {
+        use crate::runtime_store::Integrity;
+        assert_eq!(integrity_check(Ok(Integrity::Verified)).status,"available");
+        assert_eq!(integrity_check(Ok(Integrity::NodeChanged)).status,"limited");
+        assert_eq!(integrity_check(Ok(Integrity::Unmanaged)).status,"unknown");
+        assert_eq!(integrity_check(Err("private path".into())).reason_code,"runtime-integrity-failed");
+    }
     #[test]
     fn archive_is_parseable_and_default_export_has_no_raw_log_or_paths() {
         let directory = tempfile::tempdir().unwrap();

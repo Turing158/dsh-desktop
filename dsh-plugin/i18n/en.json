@@ -1,4 +1,9 @@
 {
+  "运行时完整性": "Runtime integrity",
+  "运行时文件已通过完整内容校验。": "Runtime files passed full content verification.",
+  "运行时文件完整；Node 已更换，以实际启动结果判断兼容性。": "Runtime files are intact. Node has changed; actual startup determines compatibility.",
+  "当前安装没有受管文件清单，无法校验完整性。": "This installation has no managed file inventory for integrity verification.",
+  "运行时文件或安装记录缺失、改变或无法读取，请修复或重新安装。": "Runtime files or installation records are missing, changed, or unreadable. Repair or reinstall.",
   "正在保存界面并更新 dsh…": "Saving the interface and updating dsh…",
   "正在下载并安装，完成后将自动启动，请稍候…": "Downloading and installing. The app will start automatically when finished…",
   "打开 ": "Open ",

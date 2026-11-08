@@ -12,7 +12,7 @@ export const featureLabels = {
   'plugin-management': '插件管理', 'ui-recovery': '草稿与界面恢复', 'lan-mobile': '局域网与手机',
   'session-links-export': '会话引用与导出', 'backup-restore': '备份与恢复', 'runtime-rollback': '运行时回退',
 }
-export const checkLabels = {node:'Node.js',npm:'npm','dsh-entry':'dsh 安装','data-roots':'数据目录',webview:'WebView2'}
+export const checkLabels = {node:'Node.js',npm:'npm','dsh-entry':'dsh 安装','runtime-integrity':'运行时完整性','data-roots':'数据目录',webview:'WebView2'}
 export const verificationLabels = {
   'settings-zh-en':'中英文设置', 'vanilla-navigation':'原版外观入口', 'local-error-page':'本地故障页', 'light-dark':'明暗主题', 'mobile-host-restrictions':'手机宿主权限限制',
   'native-diagnostics-acl':'原生诊断权限', 'feature-contract-reporting':'实际功能接口报告', 'stale-page-rejection':'旧页面身份拒绝',
@@ -98,6 +98,10 @@ export const reasons = {
   'node-supported': 'Node 版本符合要求。', 'node-missing': '未找到 Node.js。',
   'node-version-unsupported': 'Node 版本不符合要求或检查超时。',
   'npm-probed': 'npm 检查通过。', 'npm-unavailable': 'npm 不可用或检查超时。',
+  'runtime-integrity-verified': '运行时文件已通过完整内容校验。',
+  'runtime-integrity-node-changed': '运行时文件完整；Node 已更换，以实际启动结果判断兼容性。',
+  'runtime-integrity-unmanaged': '当前安装没有受管文件清单，无法校验完整性。',
+  'runtime-integrity-failed': '运行时文件或安装记录缺失、改变或无法读取，请修复或重新安装。',
   'runtime-entry-found': '已找到实际运行入口。', 'runtime-entry-missing': '未找到 dsh 入口。',
   'roots-resolved-consistency-unverified': '已解析数据根；一致性与备份范围待验证。',
   'inventory-resolver-unavailable': '该运行时没有可验证的只读目录解析接口。',

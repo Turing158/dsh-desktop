@@ -1,0 +1,418 @@
+{
+  "date": "2026-11-08",
+  "platform": "win32-x64",
+  "buildProfile": "dev",
+  "baseline": "Previous cache optimization; serial window and boot preparation",
+  "measurement": "New processes with warm caches; same isolated profile, WebView2 data and managed runtime",
+  "before": {
+    "schema": 1,
+    "label": "parallel-before",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 708,
+        "backendMs": 12595,
+        "uiMs": 12818,
+        "stages": {
+          "process-start": 0,
+          "setup": 9,
+          "window-created": 515,
+          "boot-start": 527,
+          "node-probed": 614,
+          "runtime-resolved": 6946,
+          "version-resolved": 6947,
+          "backend-spawned": 6990,
+          "backend-ready": 12436
+        },
+        "verificationMs": 6298,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 651,
+        "backendMs": 10978,
+        "uiMs": 11259,
+        "stages": {
+          "process-start": 0,
+          "setup": 6,
+          "window-created": 455,
+          "boot-start": 467,
+          "node-probed": 549,
+          "runtime-resolved": 5913,
+          "version-resolved": 5914,
+          "backend-spawned": 5951,
+          "backend-ready": 10859
+        },
+        "verificationMs": 5333,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 638,
+        "backendMs": 10926,
+        "uiMs": 11160,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 468,
+          "boot-start": 478,
+          "node-probed": 585,
+          "runtime-resolved": 5843,
+          "version-resolved": 5843,
+          "backend-spawned": 5877,
+          "backend-ready": 10773
+        },
+        "verificationMs": 5226,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 651,
+      "backendMs": 10978,
+      "uiMs": 11259,
+      "verificationMs": 5333
+    }
+  },
+  "after": {
+    "schema": 1,
+    "label": "parallel-after",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 639,
+        "backendMs": 10377,
+        "uiMs": 10577,
+        "stages": {
+          "process-start": 0,
+          "setup": 6,
+          "boot-start": 7,
+          "node-probed": 86,
+          "window-created": 447,
+          "setup-ready": 454,
+          "runtime-resolved": 5336,
+          "version-resolved": 5336,
+          "boot-prepared": 5337,
+          "backend-spawned": 5371,
+          "backend-ready": 10202
+        },
+        "verificationMs": 5222,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 691,
+        "backendMs": 10064,
+        "uiMs": 10411,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "boot-start": 10,
+          "node-probed": 89,
+          "window-created": 476,
+          "setup-ready": 487,
+          "runtime-resolved": 5096,
+          "version-resolved": 5097,
+          "boot-prepared": 5105,
+          "backend-spawned": 5137,
+          "backend-ready": 10014
+        },
+        "verificationMs": 4979,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 636,
+        "backendMs": 10506,
+        "uiMs": 10730,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "boot-start": 9,
+          "node-probed": 88,
+          "window-created": 471,
+          "setup-ready": 483,
+          "runtime-resolved": 5462,
+          "version-resolved": 5462,
+          "boot-prepared": 5472,
+          "backend-spawned": 5511,
+          "backend-ready": 10369
+        },
+        "verificationMs": 5344,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 636,
+        "backendMs": 9953,
+        "uiMs": 10248,
+        "stages": {
+          "process-start": 0,
+          "setup": 6,
+          "boot-start": 7,
+          "node-probed": 85,
+          "window-created": 452,
+          "setup-ready": 465,
+          "runtime-resolved": 5191,
+          "version-resolved": 5191,
+          "boot-prepared": 5192,
+          "backend-spawned": 5222,
+          "backend-ready": 9890
+        },
+        "verificationMs": 5075,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 644,
+        "backendMs": 10271,
+        "uiMs": 10558,
+        "stages": {
+          "process-start": 0,
+          "setup": 9,
+          "boot-start": 9,
+          "node-probed": 89,
+          "window-created": 457,
+          "setup-ready": 469,
+          "runtime-resolved": 5437,
+          "version-resolved": 5437,
+          "boot-prepared": 5446,
+          "backend-spawned": 5486,
+          "backend-ready": 10168
+        },
+        "verificationMs": 5318,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 639,
+      "backendMs": 10271,
+      "uiMs": 10558,
+      "verificationMs": 5222
+    }
+  },
+  "baselineRecheck": {
+    "schema": 1,
+    "label": "parallel-before-recheck",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 574,
+        "backendMs": 10641,
+        "uiMs": 10929,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 415,
+          "boot-start": 423,
+          "node-probed": 529,
+          "runtime-resolved": 5713,
+          "version-resolved": 5713,
+          "backend-spawned": 5757,
+          "backend-ready": 10534
+        },
+        "verificationMs": 5155,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 640,
+        "backendMs": 10572,
+        "uiMs": 10792,
+        "stages": {
+          "process-start": 0,
+          "setup": 6,
+          "window-created": 435,
+          "boot-start": 444,
+          "node-probed": 524,
+          "runtime-resolved": 5590,
+          "version-resolved": 5591,
+          "backend-spawned": 5628,
+          "backend-ready": 10393
+        },
+        "verificationMs": 5038,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 643,
+        "backendMs": 10710,
+        "uiMs": 10929,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "window-created": 455,
+          "boot-start": 472,
+          "node-probed": 559,
+          "runtime-resolved": 5793,
+          "version-resolved": 5794,
+          "backend-spawned": 5833,
+          "backend-ready": 10538
+        },
+        "verificationMs": 5205,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 652,
+        "backendMs": 10570,
+        "uiMs": 10812,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 435,
+          "boot-start": 447,
+          "node-probed": 529,
+          "runtime-resolved": 5545,
+          "version-resolved": 5546,
+          "backend-spawned": 5586,
+          "backend-ready": 10406
+        },
+        "verificationMs": 4986,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 635,
+        "backendMs": 10763,
+        "uiMs": 11050,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "window-created": 429,
+          "boot-start": 441,
+          "node-probed": 573,
+          "runtime-resolved": 5848,
+          "version-resolved": 5848,
+          "backend-spawned": 5883,
+          "backend-ready": 10641
+        },
+        "verificationMs": 5242,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 640,
+      "backendMs": 10641,
+      "uiMs": 10929,
+      "verificationMs": 5155
+    }
+  },
+  "comparison": {
+    "savedMs": 371,
+    "reductionPercent": 3.4
+  },
+  "validation": {
+    "rust": {
+      "passed": 261,
+      "ignored": 5
+    },
+    "startupPlugin": {
+      "passed": 111
+    },
+    "native": {
+      "root": "D:\\EducationalData\\rust\\DeepseekHarness-desktop\\src-tauri\\target\\native-diagnostics-nceNZ1",
+      "checks": [
+        "preparation-first",
+        "window-first",
+        "early-error-retry",
+        "setup-failed",
+        "setup-failed-during-probe"
+      ],
+      "timings": {
+        "preparation-first": {
+          "process-start": 0,
+          "setup": 11,
+          "boot-start": 12,
+          "node-probed": 92,
+          "runtime-resolved": 94,
+          "version-resolved": 249,
+          "boot-prepared": 249,
+          "window-created": 3167,
+          "setup-ready": 3174,
+          "backend-spawned": 3205,
+          "backend-ready": 8947
+        },
+        "window-first": {
+          "process-start": 0,
+          "setup": 10,
+          "boot-start": 12,
+          "node-probed": 93,
+          "runtime-resolved": 95,
+          "window-created": 710,
+          "setup-ready": 727,
+          "version-resolved": 1870,
+          "boot-prepared": 1871,
+          "backend-spawned": 1911,
+          "backend-ready": 8151
+        },
+        "early-error": {
+          "process-start": 0,
+          "setup": 10,
+          "boot-start": 11,
+          "node-probed": 15,
+          "boot-prepared": 16,
+          "window-created": 3177,
+          "setup-ready": 3188
+        },
+        "early-error-retry": {
+          "process-start": 0,
+          "setup": 10,
+          "boot-start": 3388,
+          "node-probed": 3708,
+          "boot-prepared": 3866,
+          "window-created": 3177,
+          "setup-ready": 3188,
+          "runtime-resolved": 3709,
+          "version-resolved": 3865,
+          "backend-spawned": 3898,
+          "backend-ready": 9409
+        },
+        "setup-failed": {
+          "process-start": 0,
+          "setup": 11,
+          "boot-start": 13,
+          "node-probed": 92,
+          "runtime-resolved": 94,
+          "version-resolved": 247,
+          "boot-prepared": 248
+        },
+        "setup-failed-during-probe": {
+          "process-start": 0,
+          "setup": 10,
+          "boot-start": 11,
+          "node-probed": 92,
+          "runtime-resolved": 94
+        }
+      }
+    }
+  }
+}

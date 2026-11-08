@@ -2087,7 +2087,7 @@ mod tests {
         let fixture = tempfile::tempdir().unwrap();
         std::fs::create_dir(fixture.path().join("plugin-control")).unwrap();
         std::fs::write(fixture.path().join("plugin-control/prepare-boot.mjs"),
-            "import { readFileSync } from 'node:fs'; JSON.parse(readFileSync(process.argv[3], 'utf8'));" ).unwrap();
+            "import { readFileSync } from 'node:fs'; JSON.parse(readFileSync(process.env.DSH_DESKTOP_BOOT_PATCH, 'utf8')); delete process.env.DSH_DESKTOP_BOOT_PATCH; delete process.env.DSH_DESKTOP_BOOT_OVERLAY;" ).unwrap();
         for _ in 0..2 {
             let mut process = crate::dsh::DshProcess::spawn(
                 &runtime,

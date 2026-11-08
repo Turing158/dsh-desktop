@@ -31,7 +31,7 @@
     "backup-restore": "\u5907\u4EFD\u4E0E\u6062\u590D",
     "runtime-rollback": "\u8FD0\u884C\u65F6\u56DE\u9000"
   };
-  var checkLabels = { node: "Node.js", npm: "npm", "dsh-entry": "dsh \u5B89\u88C5", "data-roots": "\u6570\u636E\u76EE\u5F55", webview: "WebView2" };
+  var checkLabels = { node: "Node.js", npm: "npm", "dsh-entry": "dsh \u5B89\u88C5", "runtime-integrity": "\u8FD0\u884C\u65F6\u5B8C\u6574\u6027", "data-roots": "\u6570\u636E\u76EE\u5F55", webview: "WebView2" };
   var verificationLabels = {
     "settings-zh-en": "\u4E2D\u82F1\u6587\u8BBE\u7F6E",
     "vanilla-navigation": "\u539F\u7248\u5916\u89C2\u5165\u53E3",
@@ -156,6 +156,10 @@
     "node-version-unsupported": "Node \u7248\u672C\u4E0D\u7B26\u5408\u8981\u6C42\u6216\u68C0\u67E5\u8D85\u65F6\u3002",
     "npm-probed": "npm \u68C0\u67E5\u901A\u8FC7\u3002",
     "npm-unavailable": "npm \u4E0D\u53EF\u7528\u6216\u68C0\u67E5\u8D85\u65F6\u3002",
+    "runtime-integrity-verified": "\u8FD0\u884C\u65F6\u6587\u4EF6\u5DF2\u901A\u8FC7\u5B8C\u6574\u5185\u5BB9\u6821\u9A8C\u3002",
+    "runtime-integrity-node-changed": "\u8FD0\u884C\u65F6\u6587\u4EF6\u5B8C\u6574\uFF1BNode \u5DF2\u66F4\u6362\uFF0C\u4EE5\u5B9E\u9645\u542F\u52A8\u7ED3\u679C\u5224\u65AD\u517C\u5BB9\u6027\u3002",
+    "runtime-integrity-unmanaged": "\u5F53\u524D\u5B89\u88C5\u6CA1\u6709\u53D7\u7BA1\u6587\u4EF6\u6E05\u5355\uFF0C\u65E0\u6CD5\u6821\u9A8C\u5B8C\u6574\u6027\u3002",
+    "runtime-integrity-failed": "\u8FD0\u884C\u65F6\u6587\u4EF6\u6216\u5B89\u88C5\u8BB0\u5F55\u7F3A\u5931\u3001\u6539\u53D8\u6216\u65E0\u6CD5\u8BFB\u53D6\uFF0C\u8BF7\u4FEE\u590D\u6216\u91CD\u65B0\u5B89\u88C5\u3002",
     "runtime-entry-found": "\u5DF2\u627E\u5230\u5B9E\u9645\u8FD0\u884C\u5165\u53E3\u3002",
     "runtime-entry-missing": "\u672A\u627E\u5230 dsh \u5165\u53E3\u3002",
     "roots-resolved-consistency-unverified": "\u5DF2\u89E3\u6790\u6570\u636E\u6839\uFF1B\u4E00\u81F4\u6027\u4E0E\u5907\u4EFD\u8303\u56F4\u5F85\u9A8C\u8BC1\u3002",

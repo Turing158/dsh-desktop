@@ -3,6 +3,33 @@
 use std::time::Duration;
 use tauri::Manager;
 
+// Debug smoke instances must not focus/exit into a user's running desktop.
+// Derive a separate single-instance identity from their explicit fixture root.
+pub fn isolate(context: &mut tauri::Context<tauri::Wry>) {
+    use sha2::{Digest, Sha256};
+    let Some(root) = std::env::var_os("DSH_DESKTOP_SMOKE_DIR").map(std::path::PathBuf::from) else { return };
+    if !root.is_absolute() || !root.is_dir() { return; }
+    let Ok(root) = root.canonicalize() else { return };
+    let suffix = format!("{:x}", Sha256::digest(root.to_string_lossy().as_bytes()));
+    context.config_mut().identifier.push_str(&format!(".smoke.{}", &suffix[..16]));
+}
+
+// Only explicit isolated checks can delay setup to force the preparation-first
+// ordering. Never inherited by a release build or an ordinary development run.
+pub fn before_window() -> Result<(), Box<dyn std::error::Error>> {
+    let isolated = std::env::var_os("DSH_DESKTOP_SMOKE_DIR")
+        .map(std::path::PathBuf::from).is_some_and(|root| root.is_absolute() && root.is_dir());
+    if !isolated { return Ok(()); }
+    if let Some(delay) = std::env::var("DSH_DESKTOP_SMOKE_SETUP_DELAY_MS").ok()
+        .and_then(|value| value.parse::<u64>().ok()).filter(|delay| *delay <= 5000) {
+        std::thread::sleep(Duration::from_millis(delay));
+    }
+    if std::env::var("DSH_DESKTOP_SMOKE_SETUP_FAIL").as_deref() == Ok("1") {
+        return Err(std::io::Error::other("smoke-setup-failed").into());
+    }
+    Ok(())
+}
+
 pub fn install(app: &tauri::AppHandle) {
     let Some(dir) = std::env::var_os("DSH_DESKTOP_SMOKE_DIR").map(std::path::PathBuf::from) else {
         return;

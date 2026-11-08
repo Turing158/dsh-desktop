@@ -5,7 +5,9 @@
 //! owns three concerns: finding `node` and `dsh`, speaking the child's stdout
 //! protocol, and shutting the child tree down cleanly.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
+#[cfg(test)]
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -58,10 +60,22 @@ pub struct Runtime {
     pub node_exe: PathBuf,
     pub dsh_bin: PathBuf,
     pub source: DshSource,
-    /// Version reported by `node bin.js --version`, when it could be read.
+    /// Version from a verified managed manifest, or `node bin.js --version`.
     pub version: Option<String>,
     #[serde(skip_serializing_if="Option::is_none")]
     pub managed: Option<crate::runtime_store::ManagedRuntime>,
+}
+
+impl Runtime {
+    pub fn refresh_version(&mut self) {
+        // The managed manifest was checked during resolution; the dependency
+        // tree was verified at installation/update, not on every launch.
+        // Re-running the CLI imports its boot module just to report the same
+        // version. Mutable/global/custom runtimes still need a fresh probe.
+        if self.source != DshSource::Managed || self.managed.is_none() || self.version.is_none() {
+            self.version = dsh_version(&self.node_exe, &self.dsh_bin);
+        }
+    }
 }
 
 /// One parsed line of child stdout.
@@ -378,48 +392,15 @@ pub fn dsh_version(node_exe: &Path, dsh_bin: &Path) -> Option<String> {
 
 /// Run `<node> <script> --version` with a timeout, returning the trimmed output.
 ///
-/// The child is always reaped, including on timeout, so a wedged probe cannot
-/// become an orphan process.
+/// The shared command runner drains output and owns the process tree in a Job
+/// Object. A probe that overlaps window setup must also die if setup fails and
+/// the desktop exits before its timeout.
 pub fn probe_version(node_exe: &Path, script: &Path) -> Option<String> {
-    let mut child = Command::new(node_exe)
-        .arg(script)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .creation_flags_no_window()
-        .spawn()
-        .ok()?;
-
-    let deadline = std::time::Instant::now() + VERSION_PROBE_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                if !status.success() {
-                    return None;
-                }
-                let mut text = String::new();
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = stdout.read_to_string(&mut text);
-                }
-                let version = text.trim().to_string();
-                return (!version.is_empty()).then_some(version);
-            }
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
+    let version = crate::dsh_update::output(
+        Command::new(node_exe).arg(script).arg("--version"),
+        "dsh-version", VERSION_PROBE_TIMEOUT,
+    ).ok()?;
+    (!version.is_empty()).then_some(version)
 }
 
 /// The request-header budget, in bytes, given to the `dsh` child.
@@ -511,7 +492,7 @@ impl DshProcess {
 
         let plugin_file = changes_dir.parent().unwrap_or(changes_dir).join("desktop-plugins.json");
         let plugin_boot = crate::builtin_plugins::boot_patch(&plugin_file)?;
-        prepare_profile_plugins(runtime, patch_file, plugin_boot.path())?;
+        let preload = profile_preload(patch_file)?;
         let mut args = web_args(patch_file, config);
         // Both launcher overlays must precede the first web-app option.
         args.splice(3..3, ["--patch".into(), plugin_boot.path().as_os_str().to_os_string()]);
@@ -526,8 +507,19 @@ impl DshProcess {
 
         let update_control = tempfile::Builder::new().prefix("dsh-update-control-").tempdir()?;
         let mut child = Command::new(&runtime.node_exe)
+            // Prepare the temporary overlay before the entry script, sharing
+            // Node and the upstream boot module cache with the real backend.
+            .arg("--import")
+            .arg(preload)
             .arg(&runtime.dsh_bin)
             .args(args)
+            .env("DSH_DESKTOP_BOOT_OVERLAY", node_script_path(patch_file))
+            .env("DSH_DESKTOP_BOOT_PATCH", node_script_path(plugin_boot.path()))
+            // Node invalidates bytecode when source or engine versions change.
+            // Keep it outside immutable runtime trees and honor user overrides
+            // (including NODE_DISABLE_COMPILE_CACHE, inherited as usual).
+            .env("NODE_COMPILE_CACHE", std::env::var_os("NODE_COMPILE_CACHE")
+                .unwrap_or_else(|| changes_dir.parent().unwrap_or(changes_dir).join("node-compile-cache").into_os_string()))
             .env("DSH_DESKTOP_DSH_BIN", &runtime.dsh_bin)
             .env("DSH_DESKTOP_PLUGINS_FILE", &plugin_file)
             .env("DSH_DESKTOP_CHANGES_DIR", changes_dir)
@@ -661,40 +653,13 @@ impl DshProcess {
 
 /// Resolve saved profile switches before any target plugin mounts. The helper
 /// writes only the process-owned temporary patch, never a watched profile file.
-fn prepare_profile_plugins(runtime: &Runtime, patch_file: &Path, boot_file: &Path) -> std::io::Result<()> {
-    let helper = node_script_path(&patch_file.parent().unwrap().join("plugin-control").join("prepare-boot.mjs"));
-    let mut child = Command::new(&runtime.node_exe)
-        .arg(helper).arg(node_script_path(patch_file)).arg(node_script_path(boot_file))
-        .env("DSH_DESKTOP_DSH_BIN", &runtime.dsh_bin)
-        .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())
-        .creation_flags_no_window().spawn()?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    // Drain diagnostics while waiting so many stale entries cannot fill a pipe.
-    let mut stderr = child.stderr.take().unwrap();
-    let reader = thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stderr.read_to_string(&mut text);
-        text
-    });
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let diagnostic = reader.join().unwrap_or_default();
-                if !status.success() {
-                    return Err(std::io::Error::other(format!("无法准备 DSH 插件设置：{diagnostic}")));
-                }
-                if !diagnostic.is_empty() { eprintln!("{diagnostic}"); }
-                return Ok(());
-            }
-            Ok(None) if std::time::Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
-            result => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
-                return Err(result.err().unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::TimedOut, "准备 DSH 插件设置超时")));
-            }
-        }
-    }
+fn profile_preload(patch_file: &Path) -> std::io::Result<String> {
+    let helper = node_script_path(&patch_file.parent().ok_or_else(|| std::io::Error::other("插件目录不可用"))?
+        .join("plugin-control").join("prepare-boot.mjs"));
+    // --import accepts a URL, not a Windows drive-letter specifier. URL encoding
+    // also keeps spaces, # and non-ASCII installation directories intact.
+    tauri::Url::from_file_path(helper).map(|url| url.to_string())
+        .map_err(|_| std::io::Error::other("插件预加载路径无效"))
 }
 
 // Tauri resource paths can carry Windows verbatim prefixes. Node's main-script
@@ -832,6 +797,42 @@ pub fn read_to_string(mut reader: impl Read) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_version_comes_from_verified_manifest_but_mutable_versions_are_probed() {
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("bin.cjs");
+        std::fs::write(&script, "process.stdout.write('0.2.2')").unwrap();
+        let mut runtime = Runtime {
+            node_exe: resolve_node().expect("Node required for version probe"), dsh_bin: script,
+            source: DshSource::Managed, version: Some("0.2.1".into()),
+            managed: Some(crate::runtime_store::ManagedRuntime {id:"verified".into(),fingerprint:"verified".into(),committed:true}),
+        };
+        runtime.refresh_version();
+        assert_eq!(runtime.version.as_deref(), Some("0.2.1"));
+        runtime.version = None;
+        runtime.refresh_version();
+        assert_eq!(runtime.version.as_deref(), Some("0.2.2"));
+        for source in [DshSource::Configured, DshSource::Private, DshSource::Global] {
+            runtime.source = source;
+            runtime.version = Some("stale".into());
+            runtime.refresh_version();
+            assert_eq!(runtime.version.as_deref(), Some("0.2.2"));
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn preload_url_preserves_windows_installation_paths() {
+        for directory in [r"D:\应用 # 1", r"\\?\D:\应用 # 1", r"\\server\share\应用 # 1"] {
+            let patch = Path::new(directory).join("desktop-notify.patch.yml");
+            let url = profile_preload(&patch).unwrap();
+            assert!(url.starts_with("file://"));
+            assert!(!url.contains('#'));
+            assert_eq!(tauri::Url::parse(&url).unwrap().to_file_path().unwrap(),
+                node_script_path(&Path::new(directory).join("plugin-control/prepare-boot.mjs")));
+        }
+    }
     #[test]
     #[cfg(windows)]
     fn cached_node_probe_detects_changed_executable_with_restored_time() {

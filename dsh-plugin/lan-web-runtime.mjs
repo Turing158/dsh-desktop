@@ -3,11 +3,20 @@
  * the shared web surface still advertises the selected LAN address.
  */
 import { runtimeImport } from './runtime-import.mjs'
+import * as nodeModule from 'node:module'
 const upstream = await runtimeImport('@deepseek-ai/dsh-web-app')
 export const Config = upstream.Config
 export const name = upstream.name
 export const inject = upstream.inject
 export function apply(ctx, config) {
+  // The native host terminates the process tree on exit, so Node's normal
+  // exit-time cache flush cannot be relied on. Flush after startup settles,
+  // outside the readiness announcement; older Node versions simply skip it.
+  ctx.inject(['connection'], c => {
+    c.get('loader')?.await()?.then(() => {
+      setImmediate(() => { try { nodeModule.flushCompileCache?.() } catch { /* Optional cache. */ } })
+    }, () => {})
+  })
   if (ctx.webServer.host === '127.0.0.1') return upstream.apply(ctx, config)
   upstream.apply(ctx, { ...config, printUrl: false, openBrowser: false, surfaceContext: false })
   const origin = () => `http://${ctx.webServer.host}:${ctx.webServer.port}`

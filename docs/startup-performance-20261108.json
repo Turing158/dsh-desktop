@@ -1,0 +1,338 @@
+{
+  "date": "2026-11-08",
+  "platform": "win32-x64",
+  "buildProfile": "dev",
+  "baseCommit": "a4bab15dcbbe4a91385403e0b8a8f42a143cfb6b",
+  "measurement": "Fresh processes after warmup; managed runtime; UI state bridge and mounted React root",
+  "baseline": {
+    "schema": 1,
+    "label": "baseline",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 640,
+        "backendMs": 14258,
+        "uiMs": 14610,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 454,
+          "boot-start": 467,
+          "node-probed": 544,
+          "runtime-resolved": 7837,
+          "version-resolved": 7993,
+          "backend-spawned": 8174,
+          "backend-ready": 14162
+        },
+        "verificationMs": 5854,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 638,
+        "backendMs": 14230,
+        "uiMs": 14618,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 464,
+          "boot-start": 477,
+          "node-probed": 558,
+          "runtime-resolved": 8027,
+          "version-resolved": 8181,
+          "backend-spawned": 8362,
+          "backend-ready": 14147
+        },
+        "verificationMs": 5976,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 640,
+        "backendMs": 14333,
+        "uiMs": 14647,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 453,
+          "boot-start": 468,
+          "node-probed": 547,
+          "runtime-resolved": 7835,
+          "version-resolved": 7992,
+          "backend-spawned": 8174,
+          "backend-ready": 14165
+        },
+        "verificationMs": 5800,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 639,
+        "backendMs": 14543,
+        "uiMs": 14886,
+        "stages": {
+          "process-start": 0,
+          "setup": 9,
+          "window-created": 469,
+          "boot-start": 485,
+          "node-probed": 565,
+          "runtime-resolved": 8041,
+          "version-resolved": 8197,
+          "backend-spawned": 8380,
+          "backend-ready": 14423
+        },
+        "verificationMs": 6009,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 639,
+        "backendMs": 14356,
+        "uiMs": 14679,
+        "stages": {
+          "process-start": 0,
+          "setup": 9,
+          "window-created": 475,
+          "boot-start": 485,
+          "node-probed": 563,
+          "runtime-resolved": 7975,
+          "version-resolved": 8131,
+          "backend-spawned": 8290,
+          "backend-ready": 14215
+        },
+        "verificationMs": 5927,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 639,
+      "backendMs": 14333,
+      "uiMs": 14647,
+      "verificationMs": 5927
+    }
+  },
+  "optimized": {
+    "schema": 1,
+    "label": "optimized",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 639,
+        "backendMs": 10667,
+        "uiMs": 10952,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "window-created": 458,
+          "boot-start": 469,
+          "node-probed": 550,
+          "runtime-resolved": 5889,
+          "version-resolved": 5890,
+          "backend-spawned": 5921,
+          "backend-ready": 10572
+        },
+        "verificationMs": 5310,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 636,
+        "backendMs": 10500,
+        "uiMs": 10814,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 478,
+          "boot-start": 487,
+          "node-probed": 571,
+          "runtime-resolved": 5692,
+          "version-resolved": 5693,
+          "backend-spawned": 5724,
+          "backend-ready": 10413
+        },
+        "verificationMs": 5092,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 643,
+        "backendMs": 10705,
+        "uiMs": 10966,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "window-created": 456,
+          "boot-start": 465,
+          "node-probed": 544,
+          "runtime-resolved": 5813,
+          "version-resolved": 5813,
+          "backend-spawned": 5844,
+          "backend-ready": 10565
+        },
+        "verificationMs": 5237,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 636,
+        "backendMs": 10768,
+        "uiMs": 11021,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 433,
+          "boot-start": 445,
+          "node-probed": 524,
+          "runtime-resolved": 5894,
+          "version-resolved": 5895,
+          "backend-spawned": 5925,
+          "backend-ready": 10624
+        },
+        "verificationMs": 5339,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 694,
+        "backendMs": 10703,
+        "uiMs": 10939,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 482,
+          "boot-start": 491,
+          "node-probed": 596,
+          "runtime-resolved": 5831,
+          "version-resolved": 5832,
+          "backend-spawned": 5863,
+          "backend-ready": 10542
+        },
+        "verificationMs": 5206,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 639,
+      "backendMs": 10703,
+      "uiMs": 10952,
+      "verificationMs": 5237
+    }
+  },
+  "baselineRecheck": {
+    "schema": 1,
+    "label": "baseline-recheck",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 649,
+        "backendMs": 12532,
+        "uiMs": 12749,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 456,
+          "boot-start": 467,
+          "node-probed": 546,
+          "runtime-resolved": 7159,
+          "version-resolved": 7314,
+          "backend-spawned": 7471,
+          "backend-ready": 12359
+        },
+        "verificationMs": 5135,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 646,
+        "backendMs": 12395,
+        "uiMs": 12681,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 461,
+          "boot-start": 472,
+          "node-probed": 551,
+          "runtime-resolved": 6982,
+          "version-resolved": 7139,
+          "backend-spawned": 7297,
+          "backend-ready": 12294
+        },
+        "verificationMs": 4971,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 640,
+        "backendMs": 12533,
+        "uiMs": 12816,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "window-created": 465,
+          "boot-start": 477,
+          "node-probed": 582,
+          "runtime-resolved": 7276,
+          "version-resolved": 7431,
+          "backend-spawned": 7586,
+          "backend-ready": 12430
+        },
+        "verificationMs": 5229,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 646,
+      "backendMs": 12532,
+      "uiMs": 12749,
+      "verificationMs": 5135
+    }
+  },
+  "comparison": {
+    "savedMs": 1797,
+    "reductionPercent": 14.1
+  },
+  "checks": {
+    "plugin": {
+      "passed": 774
+    },
+    "rust": {
+      "passed": 261,
+      "ignored": 5
+    },
+    "realProfileRestart": [
+      "inventory exposes exact versions and protects manager and desktop controls",
+      "real host/client browser plugin unloads and re-registers without duplicates; deferred plugin stays running",
+      "reconnect retains pending state and reverting the switch cancels the restart",
+      "restart applies disabled/enabled intent before mount and never modifies native profile patches"
+    ]
+  }
+}

@@ -1,7 +1,9 @@
 // Runs before DSH starts. Only the temporary --patch is written; the profile's
 // watched configuration is never modified by deferred desktop switches.
 import { readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { isMainThread } from 'node:worker_threads'
 import { runtimeImport } from '../runtime-import.mjs'
 import { PROFILE_SWITCH_FILE, parseSwitches, startupSwitches } from './profile-model.mjs'
 
@@ -25,7 +27,23 @@ export async function prepareBoot(overlayPath, bootPath) {
   writeFileSync(bootPath, JSON.stringify([...builtin, ...patches]))
 }
 
-if (process.argv[2] && process.argv[3]) {
+// Node also applies --import to workers. Consume these one-shot parameters
+// before loading upstream modules so neither workers nor child processes can
+// prepare the overlay a second time. Keep the actual DSH entrypoint/argv intact.
+const overlay = process.env.DSH_DESKTOP_BOOT_OVERLAY, patch = process.env.DSH_DESKTOP_BOOT_PATCH
+if (isMainThread && (overlay !== undefined || patch !== undefined)) {
+  delete process.env.DSH_DESKTOP_BOOT_OVERLAY
+  delete process.env.DSH_DESKTOP_BOOT_PATCH
+  const started = performance.now()
+  try {
+    if (!overlay || !patch) throw Error('缺少插件启动参数')
+    await prepareBoot(overlay, patch)
+  } catch (error) {
+    // Reject the preload so Node never executes DSH with a partial overlay.
+    throw new Error('无法准备 DSH 插件开关：' + error.message, { cause: error })
+  }
+  if (process.env.DSH_DESKTOP_DEBUG) process.stderr.write(`[startup-perf] plugin-preparation_ms=${Math.round(performance.now() - started)}\n`)
+} else if (isMainThread && process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url && process.argv[2] && process.argv[3]) {
   try { await prepareBoot(process.argv[2], process.argv[3]) }
   catch (error) { process.stderr.write('无法准备 DSH 插件开关：' + error.message + '\n'); process.exitCode = 1 }
 }

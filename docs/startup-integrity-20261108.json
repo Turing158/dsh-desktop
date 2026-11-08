@@ -1,0 +1,462 @@
+{
+  "schema": 1,
+  "date": "2026-11-08",
+  "environment": {
+    "os": "Windows",
+    "architecture": "x86_64",
+    "build": "Debug",
+    "node": "v24.18.0",
+    "runtime": "0.2.1-rc.2",
+    "runtimeFiles": 63598,
+    "profile": "same isolated profile and WebView2 data; warmed caches; fresh process per round"
+  },
+  "before": {
+    "schema": 1,
+    "label": "integrity-before",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 657,
+        "backendMs": 9656,
+        "uiMs": 9937,
+        "stages": {
+          "process-start": 0,
+          "setup": 9,
+          "boot-start": 10,
+          "node-probed": 87,
+          "window-created": 433,
+          "setup-ready": 441,
+          "runtime-resolved": 4071,
+          "version-resolved": 4071,
+          "boot-prepared": 4081,
+          "backend-spawned": 4112,
+          "backend-ready": 9507
+        },
+        "selectionMode": "full",
+        "verificationMs": 3956,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 640,
+        "backendMs": 9346,
+        "uiMs": 9676,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 87,
+          "window-created": 435,
+          "setup-ready": 447,
+          "runtime-resolved": 3924,
+          "version-resolved": 3924,
+          "boot-prepared": 3933,
+          "backend-spawned": 3963,
+          "backend-ready": 9271
+        },
+        "selectionMode": "full",
+        "verificationMs": 3808,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 638,
+        "backendMs": 9540,
+        "uiMs": 9835,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "boot-start": 9,
+          "node-probed": 87,
+          "window-created": 432,
+          "setup-ready": 441,
+          "runtime-resolved": 3953,
+          "version-resolved": 3954,
+          "boot-prepared": 3954,
+          "backend-spawned": 3985,
+          "backend-ready": 9392
+        },
+        "selectionMode": "full",
+        "verificationMs": 3838,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 639,
+        "backendMs": 9541,
+        "uiMs": 9903,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 7,
+          "node-probed": 86,
+          "window-created": 428,
+          "setup-ready": 436,
+          "runtime-resolved": 4040,
+          "version-resolved": 4040,
+          "boot-prepared": 4049,
+          "backend-spawned": 4080,
+          "backend-ready": 9462
+        },
+        "selectionMode": "full",
+        "verificationMs": 3924,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 640,
+        "backendMs": 9339,
+        "uiMs": 9689,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 87,
+          "window-created": 438,
+          "setup-ready": 450,
+          "runtime-resolved": 3811,
+          "version-resolved": 3811,
+          "boot-prepared": 3812,
+          "backend-spawned": 3844,
+          "backend-ready": 9274
+        },
+        "selectionMode": "full",
+        "verificationMs": 3698,
+        "hashed": 0,
+        "files": 63598,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 640,
+      "backendMs": 9540,
+      "uiMs": 9835,
+      "verificationMs": 3838
+    }
+  },
+  "after": {
+    "schema": 1,
+    "label": "integrity-after",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 639,
+        "backendMs": 6091,
+        "uiMs": 6366,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 86,
+          "runtime-resolved": 89,
+          "version-resolved": 89,
+          "boot-prepared": 90,
+          "window-created": 441,
+          "setup-ready": 450,
+          "backend-spawned": 479,
+          "backend-ready": 5961
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 636,
+        "backendMs": 6133,
+        "uiMs": 6405,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 7,
+          "node-probed": 88,
+          "runtime-resolved": 92,
+          "version-resolved": 92,
+          "boot-prepared": 92,
+          "window-created": 439,
+          "setup-ready": 449,
+          "backend-spawned": 483,
+          "backend-ready": 5997
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 639,
+        "backendMs": 6092,
+        "uiMs": 6318,
+        "stages": {
+          "process-start": 0,
+          "setup": 6,
+          "boot-start": 7,
+          "node-probed": 86,
+          "runtime-resolved": 88,
+          "version-resolved": 88,
+          "boot-prepared": 88,
+          "window-created": 429,
+          "setup-ready": 440,
+          "backend-spawned": 470,
+          "backend-ready": 5930
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 638,
+        "backendMs": 6143,
+        "uiMs": 6377,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 89,
+          "runtime-resolved": 92,
+          "version-resolved": 92,
+          "boot-prepared": 93,
+          "window-created": 448,
+          "setup-ready": 460,
+          "backend-spawned": 491,
+          "backend-ready": 5949
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 653,
+        "backendMs": 6031,
+        "uiMs": 6316,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 87,
+          "runtime-resolved": 90,
+          "version-resolved": 90,
+          "boot-prepared": 90,
+          "window-created": 437,
+          "setup-ready": 447,
+          "backend-spawned": 478,
+          "backend-ready": 5870
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 639,
+      "backendMs": 6092,
+      "uiMs": 6366,
+      "verificationMs": 0
+    }
+  },
+  "native": {
+    "schema": 1,
+    "version": "0.2.1-rc.2",
+    "files": 63598,
+    "checks": [
+      "missing verification receipt does not trigger a startup scan",
+      "corrupt verification receipt does not trigger a startup scan",
+      "manual diagnostics rehash every file and repair the receipt",
+      "manual diagnostics detect an unexpected file while the backend remains usable",
+      "actual backend startup fails and triggers full integrity diagnostics",
+      "repair and retry start successfully and discard stale diagnostic results",
+      "missing entry fails before spawn without switching to another installation"
+    ]
+  },
+  "validation": {
+    "rust": {
+      "passed": 265,
+      "ignored": 5
+    },
+    "relatedJavaScript": {
+      "passed": 18
+    },
+    "nodeReceiptRegression": {
+      "passed": 1
+    }
+  },
+  "policy": {
+    "normal": "lightweight metadata and entry validation, Node version probe, actual backend startup",
+    "installation": "complete inventory validation retained for freeze, candidates, update commit and uncommitted first install",
+    "diagnostics": "force content hashes on manual checks or failed managed startup; asynchronous failure scan; stale results discarded",
+    "changedNode": "supported Node replacements may run; complete diagnostic reports replacement separately",
+    "invalidSelection": "fail visibly and preserve selection instead of silently choosing a legacy installation"
+  },
+  "afterRecheck": {
+    "schema": 1,
+    "label": "integrity-after-recheck",
+    "node": "v24.18.0",
+    "rounds": [
+      {
+        "round": 1,
+        "windowMs": 639,
+        "backendMs": 6019,
+        "uiMs": 6282,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 89,
+          "runtime-resolved": 92,
+          "version-resolved": 92,
+          "boot-prepared": 92,
+          "window-created": 446,
+          "setup-ready": 454,
+          "backend-spawned": 487,
+          "backend-ready": 5866
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 2,
+        "windowMs": 639,
+        "backendMs": 6082,
+        "uiMs": 6411,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 7,
+          "node-probed": 86,
+          "runtime-resolved": 88,
+          "version-resolved": 88,
+          "boot-prepared": 89,
+          "window-created": 438,
+          "setup-ready": 450,
+          "backend-spawned": 481,
+          "backend-ready": 5981
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 3,
+        "windowMs": 637,
+        "backendMs": 6031,
+        "uiMs": 6314,
+        "stages": {
+          "process-start": 0,
+          "setup": 7,
+          "boot-start": 8,
+          "node-probed": 88,
+          "runtime-resolved": 92,
+          "version-resolved": 92,
+          "boot-prepared": 92,
+          "window-created": 439,
+          "setup-ready": 447,
+          "backend-spawned": 477,
+          "backend-ready": 5914
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 4,
+        "windowMs": 657,
+        "backendMs": 6101,
+        "uiMs": 6385,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "boot-start": 9,
+          "node-probed": 89,
+          "runtime-resolved": 91,
+          "version-resolved": 92,
+          "boot-prepared": 92,
+          "window-created": 437,
+          "setup-ready": 447,
+          "backend-spawned": 477,
+          "backend-ready": 5974
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      },
+      {
+        "round": 5,
+        "windowMs": 638,
+        "backendMs": 6140,
+        "uiMs": 6426,
+        "stages": {
+          "process-start": 0,
+          "setup": 8,
+          "boot-start": 8,
+          "node-probed": 91,
+          "runtime-resolved": 94,
+          "version-resolved": 94,
+          "boot-prepared": 94,
+          "window-created": 449,
+          "setup-ready": 457,
+          "backend-spawned": 486,
+          "backend-ready": 6004
+        },
+        "selectionMode": "lightweight",
+        "selectionMs": 1,
+        "verificationMs": 0,
+        "hashed": 0,
+        "runtimeVersion": "0.2.1-rc.2"
+      }
+    ],
+    "median": {
+      "windowMs": 639,
+      "backendMs": 6082,
+      "uiMs": 6385,
+      "verificationMs": 0
+    }
+  },
+  "improvement": {
+    "baselineUiMs": 9835,
+    "optimizedUiMs": 6385,
+    "savedMs": 3450,
+    "percent": 35.1
+  },
+  "cleanup": {
+    "command": "npm run clean:target",
+    "attempts": 2,
+    "status": "deferred",
+    "reason": "Existing user tauri dev / cargo run processes and desktop remain active. Test processes have exited; cleanup guard refused deletion.",
+    "retainedTemporaryRoots": [
+      "src-tauri/target/perf-investigation",
+      "src-tauri/target/perf-baseline"
+    ],
+    "developmentOutputsPreserved": true
+  }
+}

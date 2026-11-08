@@ -68,6 +68,36 @@ fn file_hash(path: &Path) -> io::Result<String> {
     loop {let n=file.read(&mut buffer)?;if n==0 {break;}hash.update(&buffer[..n]);}
     Ok(format!("{:x}",hash.finalize()))
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerifiedNode {
+    schema: u32, path: PathBuf, stamp: crate::update_io::Stamp, hash: String,
+}
+
+// The executable gets the same authenticated, handle-based change checks as
+// runtime files. A missing/invalid receipt or unsupported identity hashes it in
+// full; changing content while restoring mtime still changes ChangeTime.
+fn verified_node_hash(root: &Path, node: &Path) -> io::Result<String> {
+    let started = Instant::now();
+    let (mut file, stamp) = crate::update_io::Stamp::inspect(node, false)?;
+    let receipt = root.join("verified/node.bin");
+    let cached = plain_ancestors(receipt.parent().unwrap()).ok()
+        .and_then(|_| crate::startup_cache::load::<VerifiedNode>(&receipt).ok())
+        .filter(|value| value.schema == 1 && value.path == node && Some(&value.stamp) == stamp.as_ref() && is_digest(&value.hash));
+    if let Some(cached) = cached {
+        crate::debug_log(&format!("[startup-perf] node-hash cached=true elapsed_ms={}", started.elapsed().as_millis()));
+        return Ok(cached.hash);
+    }
+    let (_, hash) = crate::update_io::hash_reader(&mut file)?;
+    if let Some(stamp) = stamp {
+        let value = VerifiedNode { schema: 1, path: node.into(), stamp, hash: hash.clone() };
+        // Cache publication is optional, never a reason to reject the runtime.
+        let _ = crate::startup_cache::save(&receipt, &value);
+    }
+    crate::debug_log(&format!("[startup-perf] node-hash cached=false elapsed_ms={}", started.elapsed().as_millis()));
+    Ok(hash)
+}
 fn id_valid(value: &str) -> bool { !value.is_empty() && value.len()<=180 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.+".contains(&b)) && value!="." && value!=".." }
 fn relative_valid(value: &str) -> bool {
     !value.is_empty() && value.len()<2048 && !value.contains(['\\', ':']) && value.split('/').all(|p|!p.is_empty() && p!="." && p!=".." && !p.ends_with(['.', ' ']))
@@ -133,6 +163,9 @@ fn manifest(root: &Path, id: &str) -> io::Result<Manifest> {
 }
 pub(crate) fn owned_version_bytes(root: &Path, id: &str) -> io::Result<u64> { manifest(root, id).map(|m| m.total_bytes) }
 fn verify(root: &Path, m: &Manifest) -> io::Result<PathBuf> {
+    verify_tree(root, m, false)
+}
+fn verify_tree(root: &Path, m: &Manifest, force: bool) -> io::Result<PathBuf> {
     let started=Instant::now();
     let directory=root.join("versions").join(&m.id);
     let raw=read(&directory.join("inventory.json"),MAX_INVENTORY)?;
@@ -147,7 +180,7 @@ fn verify(root: &Path, m: &Manifest) -> io::Result<PathBuf> {
         .or_else(|| {
             plain_ancestors(receipt_path.parent()?).ok()?;
             crate::startup_cache::load::<VerifiedTree>(&receipt_path).ok().map(Arc::new)
-        }).filter(|value|value.schema==1 && value.directory==directory && value.manifest_hash==manifest_hash
+        }).filter(|value|!force && value.schema==1 && value.directory==directory && value.manifest_hash==manifest_hash
             && value.inventory_hash==m.inventory_hash && value.stamps.len()==inventory.files.len()
             && value.directories.len()<=MAX_FILES && value.directories.first().is_some_and(|dir|dir.path.is_empty()));
     let mut expected=HashMap::new(); let mut total=0u64;
@@ -267,12 +300,55 @@ fn load_selection(root: &Path) -> io::Result<Option<Selection>> {
     Ok(Some(s))
 }
 pub fn selected(root: &Path, node: &Path) -> io::Result<Option<Runtime>> {
+    let started=Instant::now();
     let Some(s)=load_selection(root)? else {return Ok(None)};
     let m=manifest(root,&s.active)?;
-    if file_hash(node)?!=m.node_hash {return Err(invalid("runtime-node-changed"));}
     if s.fingerprint!=m.fingerprint {return Err(invalid("runtime-selection-changed"));}
-    let entry=verify(root,&m)?;
+    // Installation/update already verified this committed tree and observed
+    // backend + UI readiness. Normal launches only inspect the selected entry;
+    // Node's version probe and actual backend startup establish usability.
+    plain(node,false)?;
+    let entry=root.join("versions").join(&m.id).join("tree").join(&m.entry);
+    plain_ancestors(entry.parent().ok_or_else(||invalid("runtime-entry-missing"))?)?;
+    plain(&entry,false)?;
+    crate::debug_log(&format!("[startup-perf] selection mode=lightweight elapsed_ms={}",started.elapsed().as_millis()));
     Ok(Some(runtime(node,entry,&m,true)))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Integrity { Verified, NodeChanged, Unmanaged }
+
+/// Explicit diagnostics and failed startup only. Rehash all contents even when
+/// an authenticated verification receipt exists. This never changes selection.
+pub fn check_integrity(app:&tauri::AppHandle, runtime:Option<&Runtime>) -> Result<Integrity,String> {
+    integrity_at(&directory(app)?,runtime).map_err(|e|e.to_string())
+}
+fn integrity_at(root:&Path, current:Option<&Runtime>) -> io::Result<Integrity> {
+    let m=if let Some(current)=current {
+        let Some(managed)=&current.managed else {return Ok(Integrity::Unmanaged)};
+        let m=manifest(root,&managed.id)?;
+        if m.fingerprint!=managed.fingerprint || current.version.as_deref()!=Some(&m.version)
+            || current.dsh_bin!=root.join("versions").join(&m.id).join("tree").join(&m.entry) {
+            return Err(invalid("runtime-selection-changed"));
+        }
+        if managed.committed {
+            let selection=load_selection(root)?.ok_or_else(||invalid("runtime-selection-invalid"))?;
+            if selection.active!=m.id || selection.fingerprint!=m.fingerprint {return Err(invalid("runtime-selection-changed"));}
+        }
+        m
+    } else {
+        let Some(selection)=load_selection(root)? else {return Ok(Integrity::Unmanaged)};
+        let m=manifest(root,&selection.active)?;
+        if selection.fingerprint!=m.fingerprint {return Err(invalid("runtime-selection-changed"));}
+        m
+    };
+    verify_tree(root,&m,true)?;
+    // A supported replacement Node is allowed to boot. A changed binary is
+    // diagnostic information, not evidence that the dependency tree is corrupt.
+    if let Some(current)=current {
+        if file_hash(&current.node_exe)?!=m.node_hash {return Ok(Integrity::NodeChanged)}
+    }
+    Ok(Integrity::Verified)
 }
 fn runtime(node: &Path, entry: PathBuf, m: &Manifest, committed: bool) -> Runtime {
     Runtime {node_exe:node.into(),dsh_bin:entry,source:DshSource::Managed,version:Some(m.version.clone()),
@@ -292,7 +368,7 @@ fn resolve_at(root: &Path, node: &Path, rejected: impl FnOnce()) -> Result<Optio
     match selected(root,node) {
         Ok(Some(runtime))=>return Ok(Some(runtime)),
         Ok(None)=>{},
-        Err(_)=>rejected(),
+        Err(_)=>{rejected();return Err("runtime-selection-invalid".into());},
     }
     if let Some((entry,source))=crate::dsh::resolve_dsh(false) {return Ok(Some(Runtime {node_exe:node.into(),dsh_bin:entry,source,version:None,managed:None}));}
     pending(root,node).map_err(|_|"runtime-pending-invalid".into())
@@ -302,7 +378,7 @@ fn pending(root: &Path, node: &Path) -> io::Result<Option<Runtime>> {
     if !path.try_exists()? {return Ok(None);}
     let id: String=serde_json::from_slice(&read(&path,1024)?)?;
     let m=manifest(root,&id)?;
-    if file_hash(node)?!=m.node_hash {return Err(invalid("runtime-node-changed"));}
+    if verified_node_hash(root,node)?!=m.node_hash {return Err(invalid("runtime-node-changed"));}
     let entry=verify(root,&m)?;
     Ok(Some(runtime(node,entry,&m,false)))
 }
@@ -605,6 +681,49 @@ pub async fn desktop_runtime_ready(window: tauri::WebviewWindow, identity: crate
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn node_receipt_reuses_unchanged_files_and_repairs_corruption() {
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join("node.exe");
+        fs::write(&node, b"node fixture").unwrap();
+        let expected = file_hash(&node).unwrap();
+        let receipt = tmp.path().join("verified/node.bin");
+        assert_eq!(verified_node_hash(tmp.path(), &node).unwrap(), expected);
+        let original = fs::read(&receipt).unwrap();
+        assert_eq!(verified_node_hash(tmp.path(), &node).unwrap(), expected);
+        assert_eq!(fs::read(&receipt).unwrap(), original, "cache hit must not rewrite the receipt");
+        let mut damaged = original.clone();
+        let middle = damaged.len() / 2; damaged[middle] ^= 1;
+        fs::write(&receipt, damaged).unwrap();
+        assert_eq!(verified_node_hash(tmp.path(), &node).unwrap(), expected);
+        assert_eq!(crate::startup_cache::load::<VerifiedNode>(&receipt).unwrap().hash, expected);
+        fs::write(&receipt, b"{\"hash\":\"untrusted\"}").unwrap();
+        assert_eq!(verified_node_hash(tmp.path(), &node).unwrap(), expected);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn cached_node_hash_detects_rewrites_without_blocking_committed_startup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join("node.exe");
+        let root = tmp.path().join("runtime");
+        fs::write(&node, b"original").unwrap();
+        let runtime = fixture(&root, "node-check", &node);
+        select(&root, &runtime);
+        assert!(selected(&root, &node).unwrap().is_some());
+        assert_eq!(verified_node_hash(&root,&node).unwrap(),file_hash(&node).unwrap());
+        let modified = fs::metadata(&node).unwrap().modified().unwrap();
+        {
+            let mut file = fs::OpenOptions::new().write(true).open(&node).unwrap();
+            file.write_all(b"modified").unwrap();
+            file.set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
+        }
+        assert!(selected(&root, &node).unwrap().is_some());
+        assert_eq!(integrity_at(&root,Some(&runtime)).unwrap(),Integrity::NodeChanged);
+        assert_eq!(verified_node_hash(&root, &node).unwrap(), file_hash(&node).unwrap());
+    }
     fn fixture(root: &Path, id: &str, node: &Path) -> Runtime {
         let dir=root.join("versions").join(id); let tree=dir.join("tree");
         fs::create_dir_all(tree.join("node_modules/@deepseek-ai/dsh/lib")).unwrap();
@@ -623,6 +742,56 @@ mod tests {
         let m=r.managed.as_ref().unwrap();
         crate::maintenance::atomic_json(&root.join("selection.json"),&Selection {schema:1,active:m.id.clone(),previous:None,fingerprint:m.fingerprint.clone(),verified_at:1,backend_ready:true,ui_ready:true,configured_source:None}).unwrap();
     }
+    // Exercise the cached full verifier separately from normal selection.
+    fn verified_selection(root:&Path,node:&Path)->io::Result<Option<Runtime>> {
+        let result=selected(root,node)?;
+        if let Some(runtime)=&result {
+            let m=manifest(root,&runtime.managed.as_ref().unwrap().id)?;
+            if verified_node_hash(root,node)?!=m.node_hash {return Err(invalid("runtime-node-changed"));}
+            verify(root,&m)?;
+        }
+        Ok(result)
+    }
+    #[test]
+    fn committed_startup_skips_inventory_and_receipts_but_diagnostics_rehashes() {
+        let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
+        let a=fixture(&root,"fast",&node);select(&root,&a);
+        assert!(selected(&root,&node).unwrap().is_some());
+        assert!(!root.join("verified").exists(),"startup must not create verification receipts");
+        assert_eq!(integrity_at(&root,Some(&a)).unwrap(),Integrity::Verified);
+        assert_eq!(integrity_at(&root,Some(&a)).unwrap(),Integrity::Verified);
+        assert_eq!(verification_cache().lock().unwrap().get(&root.join("versions/fast")).unwrap().hashed_files,1,"manual checks ignore cached file stamps");
+        fs::write(root.join("verified/fast.bin"),b"invalid receipt").unwrap();
+        fs::write(&a.dsh_bin,b"changed").unwrap();
+        assert!(selected(&root,&node).unwrap().is_some(),"actual startup detects unusable code");
+        assert!(integrity_at(&root,Some(&a)).is_err());
+        fs::write(&a.dsh_bin,b"fixture").unwrap();
+        fs::write(root.join("versions/fast/inventory.json"),b"{}").unwrap();
+        assert!(selected(&root,&node).unwrap().is_some());
+        assert!(integrity_at(&root,Some(&a)).is_err());
+        fs::remove_file(&a.dsh_bin).unwrap();
+        assert!(selected(&root,&node).is_err(),"missing entry is rejected immediately");
+    }
+    #[test]
+    fn lightweight_selection_rejects_invalid_metadata_and_missing_node() {
+        let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
+        let a=fixture(&root,"fast",&node);select(&root,&a);
+        assert!(selected(&root,&tmp.path().join("missing-node.exe")).is_err());
+        let mut selection=load_selection(&root).unwrap().unwrap();
+        selection.ui_ready=false;
+        crate::maintenance::atomic_json(&root.join("selection.json"),&selection).unwrap();
+        assert!(selected(&root,&node).is_err());select(&root,&a);
+        selection.ui_ready=true;selection.fingerprint="a".repeat(64);
+        crate::maintenance::atomic_json(&root.join("selection.json"),&selection).unwrap();
+        assert!(selected(&root,&node).is_err());select(&root,&a);
+        let original=manifest(&root,"fast").unwrap();
+        for field in ["architecture","entry","version"] {
+            let mut m=original.clone();
+            match field {"architecture"=>m.architecture="unsupported".into(),"entry"=>m.entry="../outside/lib/bin.js".into(),_=>m.version="invalid".into()}
+            crate::maintenance::atomic_json(&root.join("versions/fast/manifest.json"),&m).unwrap();
+            assert!(selected(&root,&node).is_err());
+        }
+    }
     #[test]
     fn pending_first_install_requires_commit_and_preserves_other_versions() {
         let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
@@ -638,36 +807,36 @@ mod tests {
         assert!(commit_first(&root,&b).is_err());
     }
     #[test]
-    fn selection_rejects_changed_tree_inventory_node_and_unconfirmed_health() {
+    fn full_verification_rejects_changed_tree_inventory_node_and_unconfirmed_health() {
         let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
         let a=fixture(&root,"fixture-a",&node);select(&root,&a);
-        let path=a.dsh_bin.clone();fs::write(&path,b"changed").unwrap();assert!(selected(&root,&node).is_err());
+        let path=a.dsh_bin.clone();fs::write(&path,b"changed").unwrap();assert!(verified_selection(&root,&node).is_err());
         fs::write(&path,b"fixture").unwrap();
-        fs::write(path.parent().unwrap().join("extra.js"),b"extra").unwrap();assert!(selected(&root,&node).is_err());
+        fs::write(path.parent().unwrap().join("extra.js"),b"extra").unwrap();assert!(verified_selection(&root,&node).is_err());
         fs::remove_file(path.parent().unwrap().join("extra.js")).unwrap();
-        assert!(selected(&root,&node).unwrap().is_some());
-        let other=tmp.path().join("different-node.exe");fs::write(&other,b"different").unwrap();assert!(selected(&root,&other).is_err());
-        let mut s=load_selection(&root).unwrap().unwrap();s.ui_ready=false;crate::maintenance::atomic_json(&root.join("selection.json"),&s).unwrap();assert!(selected(&root,&node).is_err());
+        assert!(verified_selection(&root,&node).unwrap().is_some());
+        let other=tmp.path().join("different-node.exe");fs::write(&other,b"different").unwrap();assert!(verified_selection(&root,&other).is_err());
+        let mut s=load_selection(&root).unwrap().unwrap();s.ui_ready=false;crate::maintenance::atomic_json(&root.join("selection.json"),&s).unwrap();assert!(verified_selection(&root,&node).is_err());
         select(&root,&a);
-        fs::write(root.join("versions/fixture-a/inventory.json"),b"{}").unwrap();assert!(selected(&root,&node).is_err());
+        fs::write(root.join("versions/fixture-a/inventory.json"),b"{}").unwrap();assert!(verified_selection(&root,&node).is_err());
     }
     #[test]
     fn cached_hashes_reject_same_size_edits_with_restored_modified_time() {
         let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
         let a=fixture(&root,"fixture-cache",&node);select(&root,&a);
-        assert!(selected(&root,&node).unwrap().is_some());
-        assert!(selected(&root,&node).unwrap().is_some());
+        assert!(verified_selection(&root,&node).unwrap().is_some());
+        assert!(verified_selection(&root,&node).unwrap().is_some());
         let modified=fs::metadata(&a.dsh_bin).unwrap().modified().unwrap();
         fs::write(&a.dsh_bin,b"changed").unwrap();
         File::options().write(true).open(&a.dsh_bin).unwrap().set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
         assert_eq!(fs::metadata(&a.dsh_bin).unwrap().len(),7);
-        assert!(selected(&root,&node).is_err());
+        assert!(verified_selection(&root,&node).is_err());
         fs::write(&a.dsh_bin,b"fixture").unwrap();
-        assert!(selected(&root,&node).unwrap().is_some());
+        assert!(verified_selection(&root,&node).unwrap().is_some());
         let replaced=a.dsh_bin.with_extension("replaced");fs::write(&replaced,b"changed").unwrap();
         fs::remove_file(&a.dsh_bin).unwrap();fs::rename(replaced,&a.dsh_bin).unwrap();
         File::options().write(true).open(&a.dsh_bin).unwrap().set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
-        assert!(selected(&root,&node).is_err());
+        assert!(verified_selection(&root,&node).is_err());
     }
     #[test]
     #[cfg(windows)]
@@ -675,7 +844,7 @@ mod tests {
         const CHILD:&str="DSH_STARTUP_RECEIPT_TEST";
         if let Some(root)=std::env::var_os(CHILD) {
             let root=PathBuf::from(root);let node=std::env::current_exe().unwrap();
-            let runtime=selected(&root,&node).unwrap().unwrap();
+            let runtime=verified_selection(&root,&node).unwrap().unwrap();
             let directory=root.join("versions/fixture-durable");
             let verified=verification_cache().lock().unwrap().get(&directory).cloned().unwrap();
             assert!(verified.reused_layout);assert_eq!(verified.hashed_files,0);
@@ -684,14 +853,14 @@ mod tests {
             use std::os::windows::fs::OpenOptionsExt;
             let handle=fs::OpenOptions::new().access_mode(0x100).custom_flags(0x02000000).open(parent).unwrap();
             handle.set_times(fs::FileTimes::new().set_modified(modified)).unwrap();drop(handle);
-            assert!(selected(&root,&node).is_err());
+            assert!(verified_selection(&root,&node).is_err());
             fs::remove_file(parent.join("unexpected.js")).unwrap();
-            assert!(selected(&root,&node).is_ok());
+            assert!(verified_selection(&root,&node).is_ok());
             return;
         }
         let tmp=tempfile::tempdir().unwrap();let root=tmp.path().join("runtime");let node=std::env::current_exe().unwrap();
         let runtime=fixture(&root,"fixture-durable",&node);select(&root,&runtime);
-        selected(&root,&node).unwrap();
+        verified_selection(&root,&node).unwrap();
         assert!(root.join("verified/fixture-durable.bin").is_file());
         let output=Command::new(node).args(["--exact","runtime_store::tests::durable_receipt_survives_a_new_process_and_detects_added_files","--nocapture"])
             .env(CHILD,&root).output().unwrap();
@@ -699,7 +868,7 @@ mod tests {
         // An invalid authenticated-cache file falls back to actual content.
         verification_cache().lock().unwrap().remove(&root.join("versions/fixture-durable"));
         fs::write(root.join("verified/fixture-durable.bin"),b"invalid receipt").unwrap();
-        selected(&root,&std::env::current_exe().unwrap()).unwrap();
+        verified_selection(&root,&std::env::current_exe().unwrap()).unwrap();
         assert!(verification_cache().lock().unwrap().get(&root.join("versions/fixture-durable")).unwrap().hashed_files>0);
     }
     #[test]
@@ -719,6 +888,10 @@ mod tests {
             let pin=PathBuf::from(std::env::var_os(crate::dsh::ENV_DSH).unwrap());fs::write(&pin,b"pin").unwrap();
             assert_eq!(resolve_at(&store,&node,||panic!("pin must bypass selection")).unwrap().unwrap().source,DshSource::Configured);
             fs::remove_file(pin).unwrap();fs::write(&managed.dsh_bin,b"bad").unwrap();
+            assert_eq!(resolve_at(&store,&node,||{}).unwrap().unwrap().source,DshSource::Managed);
+            fs::remove_file(&managed.dsh_bin).unwrap();
+            assert!(resolve_at(&store,&node,||{}).is_err(),"a damaged selection must not silently switch installations");
+            fs::remove_file(store.join("selection.json")).unwrap();
             assert_eq!(resolve_at(&store,&node,||{}).unwrap().unwrap().dsh_bin,global);
             return;
         }

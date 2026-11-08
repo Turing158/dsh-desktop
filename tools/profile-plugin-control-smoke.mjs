@@ -33,9 +33,11 @@ const report = { root, checks: [] }, pageErrors = []
 const pass = name => { report.checks.push(name); console.log('PASS: ' + name) }
 async function start() {
   await writeFile(bootPath, JSON.stringify(bootPatches(catalog, core, JSON.parse(await readFile(builtinFile, 'utf8')).enabled)))
-  execFileSync(process.execPath, [resolve('dsh-plugin/plugin-control/prepare-boot.mjs'), patchPath, bootPath], { env, windowsHide: true })
   output = ''; generation++
-  child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--patch', bootPath, '--no-open', '--port', '0'], { cwd: root, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  child = spawn(process.execPath, ['--import', pathToFileURL(resolve('dsh-plugin/plugin-control/prepare-boot.mjs')).href,
+    dshBin, 'web', '--patch', patchPath, '--patch', bootPath, '--no-open', '--port', '0'], {
+    cwd: root, env: { ...env, DSH_DESKTOP_BOOT_OVERLAY: patchPath, DSH_DESKTOP_BOOT_PATCH: bootPath },
+    windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
   for (let i = 0; i < 400; i++) {
     const url = output.match(/dsh web: (http:\/\/[^\s\u001b]+)/)?.[1]

@@ -376,6 +376,9 @@ pub fn authorize_backend(app: &AppHandle, instance: u64, url: &str) -> Result<()
 
 /// Register the scheme in the per-user registry. See the module docs.
 pub fn register(app: &AppHandle) {
+    // Isolated startup checks must not replace the user's protocol handler.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("DSH_DESKTOP_SMOKE_DIR").is_some() { return; }
     use tauri_plugin_deep_link::DeepLinkExt;
     if let Err(error) = app.deep_link().register(SCHEME) {
         crate::debug_log(&format!("[deep-link/register] {error}"));
