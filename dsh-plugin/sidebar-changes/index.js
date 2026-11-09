@@ -4,10 +4,12 @@ import { installRecorder } from './host/session-recorder.mjs'
 import { ChangesApi, resolveScope, explain } from './host/api.mjs'
 import { contribution, REASONS } from './shared/change-model.mjs'
 import { createCommitMessageGenerator } from './host/commit-message.mjs'
+import { SETTINGS_NAMESPACE, SettingsSchema } from './settings-schema.mjs'
 
 export const name = 'desktop-sidebar-changes'
 export const inject = ['tools', 'sessions', 'typert']
 export async function apply(ctx, config = {}) {
+  ctx.inject(['settings'], child => child.settings.register(SETTINGS_NAMESPACE, SettingsSchema))
   const directory = process.env.DSH_DESKTOP_CHANGES_DIR
   if (!directory) { ctx.logger.warn('desktop-sidebar-changes: snapshot directory unavailable'); return }
   const { TypertRemoteService, RemoteError } = await runtimeImport('@deepseek-ai/dsh-typert-protocol')

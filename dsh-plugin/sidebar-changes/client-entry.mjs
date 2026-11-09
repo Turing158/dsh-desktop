@@ -8,6 +8,8 @@ import { createFileMenu } from './file-menu.mjs'
 import { createFileView } from './file-view.mjs'
 import { FILE_KIND, FILE_PREFIX, parseChangeAddress, changeTitle } from './file-resource.mjs'
 import { changesContract, watchChanges } from '../compatibility/selectors.mjs'
+import { SETTINGS_NAMESPACE } from './settings-schema.mjs'
+import { createChangesPreferences, createChangesSettingsRow, settingsStyles } from './preferences.mjs'
 
 const ID = '@dsh-desktop/sidebar-changes', KIND = 'desktop-changes', PREFIX = 'dsh-resource://desktop-changes/'
 const STATUS = { get added() { return t('新增') }, get deleted() { return t('删除') }, get renamed() { return t('重命名') }, get modified() { return t('修改') }, get restored() { return t('已恢复原状') }, get conflict() { return t('合并冲突') }, get submodule() { return t('子模块') }, get symlink() { return t('符号链接') } }
@@ -284,6 +286,16 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     const offCapability = watchChanges(ctx,window.__DSH_CAPABILITIES__,window)
     if (!changesContract(ctx)) return offCapability
     const states = new Map(), addresses = new WeakMap()
+    const preferences = createChangesPreferences(ctx.slots)
+    const settingsFibers = [
+      ctx.inject(['configForms'], child => preferences.bind(child.configForms.get(SETTINGS_NAMESPACE))),
+      ctx.inject(['settingsScope'], child => preferences.bind(child.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }))),
+    ]
+    const SettingsRow = createChangesSettingsRow(React, primitives.Switch, preferences)
+    const offSettings = ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+      name: 'settings.general.item', id: 'desktop-changes-enabled', order: 82,
+    }, SettingsRow))
+    const style = document.createElement('style'); style.textContent = settingsStyles; document.head.appendChild(style)
     function Body(props) {
       useLocale(React)
       const tab = props.useTabInfo().tab
@@ -298,23 +310,49 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
     const offFileBody = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
       name: 'sidebar.right.pane.tab', key: ID + '/file', inject: sessionId => ({ sessionId }),
     }, props => h(FileView, { ctx, tab: props.useTabInfo().tab, sessionId: props.sessionId, states })))
-    const offFileType = ctx.sidebarRightTabs.register({ id: ID + '/file', kind: FILE_KIND, patterns: [FILE_PREFIX + '**'],
-      canOpen: address => Boolean(parseChangeAddress(address)), title: changeTitle })
-    let offType, mode
+    let offType, offFileType, mode, enabled, syncing = false
+    const closeDisabledTabs = () => {
+      const state = preferences.getSnapshot()
+      if (!state.ready || state.enabled || syncing) return
+      syncing = true
+      try {
+        // These are read-only previews. Close their UI records without changing
+        // files, session recording, or any of Forge's own tabs.
+        for (const tab of ctx.sidebarRight.openTabs.getSnapshot()) {
+          if (tab.kind === KIND || tab.kind === FILE_KIND) ctx.sidebarRight.closeIn(tab.sessionId, tab.tabId)
+        }
+      } finally { syncing = false }
+    }
     const sync = () => {
+      const state = preferences.getSnapshot()
+      // Wait for persisted intent before withdrawing any restored previews.
+      if (!state.ready) return
       const next = document.documentElement.getAttribute('data-dsh-ui') !== 'vanilla'
-      if (next === mode) return
-      mode = next; offType?.()
+      const active = state.enabled
+      if (next === mode && active === enabled) return
+      mode = next; enabled = active; offType?.(); offFileType?.(); offType = null; offFileType = null
+      closeDisabledTabs()
+      if (!enabled) return
+      offFileType = ctx.sidebarRightTabs.register({ id: ID + '/file', kind: FILE_KIND, patterns: [FILE_PREFIX + '**'],
+        canOpen: address => Boolean(parseChangeAddress(address)), title: changeTitle })
       offType = ctx.sidebarRightTabs.register({ id: ID, kind: KIND, patterns: [PREFIX + '**'], canOpen: address => address.startsWith(PREFIX), title: () => t('更改'),
         ...(mode ? { guide: [{ order: 30, title: () => t('更改'), description: () => t('查看文件修改前后的差异'), icon: props => h(ChangesIcon, { size: props.size || 22 }) }] } : {}) })
     }
+    const offPreferences = preferences.subscribe(sync)
+    const offTabs = ctx.sidebarRight.openTabs.subscribe(closeDisabledTabs)
     sync(); document.addEventListener('dsh-desktop:ui-mode', sync)
     const observer = new MutationObserver(sync); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-ui'] })
     const provider = createStateProvider(ctx, states)
     const offState = window.__DSH_UI_STATE__?.registerProvider('desktop-changes', provider)
-    return () => { offCapability(); observer.disconnect(); document.removeEventListener('dsh-desktop:ui-mode', sync); offType?.(); offFileType(); offFileBody(); offBody(); offState?.(); states.clear() }
+    return async () => {
+      offPreferences(); offTabs(); offSettings()
+      await Promise.all(settingsFibers.map(fiber => fiber.dispose()))
+      preferences.dispose(); style.remove(); offCapability(); observer.disconnect()
+      document.removeEventListener('dsh-desktop:ui-mode', sync)
+      offType?.(); offFileType?.(); offFileBody(); offBody(); offState?.(); states.clear()
+    }
   }
-  return { inject: ['slots', 'sidebarRightTabs', 'sessions', 'remote', 'remote.session'], async apply(ctx) {
+  return { inject: ['slots', 'sidebarRightTabs', 'sidebarRight', 'sessions', 'remote', 'remote.session'], async apply(ctx) {
     const offRemote = await ctx.remote.$mount(contribution)
     const fiber = ctx.inject(['remote.desktopChanges'], installUI)
     return async () => { await fiber.dispose(); await offRemote() }

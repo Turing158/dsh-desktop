@@ -10,7 +10,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/平台-Windows_x64-0078D4?style=flat-square" alt="Windows x64" />
-  <img src="https://img.shields.io/badge/桌面版本-1.0.2-4C8BF5?style=flat-square" alt="桌面版本 1.0.2" />
+  <img src="https://img.shields.io/badge/桌面版本-1.0.3-4C8BF5?style=flat-square" alt="桌面版本 1.0.3" />
   <img src="https://img.shields.io/badge/技术-Rust_%2B_Tauri_2-DEA584?style=flat-square" alt="Rust + Tauri 2" />
   <img src="https://img.shields.io/badge/界面-中文_%2F_English-2EA043?style=flat-square" alt="中文 / English" />
 </p>
@@ -59,7 +59,7 @@ dsh desktop 就是围绕这些日常操作做的增强。它启动 dsh 的 Web �
 | **缺少桌面提醒、托盘和本机会话链接** | 由桌面宿主与插件补充，无需旧版先实现这些桌面功能。 | 仍依赖可用的 dsh 事件与会话接口，具体行为以运行时能力为准。 |
 | **新旧设置、导航接口不一致** | 适配旧版设置注册方式与新版配置方式，兼容两代会话导航接口，保存桌面外观及终端偏好。 | 恢复草稿、附件和布局前检查所需接口；缺少必要能力时提示原因并取消操作。 |
 
-版本需要分开看：**`1.0.2` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
+版本需要分开看：**`1.0.3` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
 
 ## 日常使用体验优化了什么？
 
@@ -84,6 +84,8 @@ dsh desktop 就是围绕这些日常操作做的增强。它启动 dsh 的 Web �
 | **提交记录** | 仓库有哪些提交、分支与标签？某次提交具体改了什么？ |
 
 没有 Git 仓库时，仍可查看已经采集的会话更改；Git 相关视图会说明不可用原因。会话累计行数按前后内容重新比较，不简单叠加每次操作的增删行数。
+
+启用 dsh 的 **变更请求与工作树** 插件后，桌面 **更改** 功能默认隐藏。可在 **设置 → 通用设置 → 更改功能** 中手动开启或关闭；选择立即生效并在重启后保留。
 
 右键更改列表中的文件，可打开文件、在独立标签页查看更改，或展开 / 收起行内差异；也可通过 **打开** 子菜单选择本机应用，或在资源管理器中定位文件。独立更改标签页保留打开时的范围（当前会话、未提交或暂存区）。
 
@@ -249,7 +251,7 @@ Windows 原生通知可单独验证（会发送一条测试通知，临时开始
 cargo test --manifest-path src-tauri/Cargo.toml --features single live_windows_notification -- --ignored --nocapture --test-threads=1
 ```
 
-关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v1.0.2-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
+关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v1.0.3-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
 
 设置环境变量 `DSH_DESKTOP_DEBUG` 为日志文件路径后启动 EXE，可查看通知注册、提交与失败记录。`[notify/registration] unchanged` 表示复用了已有注册，`[notify/submitted]` 表示系统接受了提交；是否显示横幅仍由 Windows 决定。
 

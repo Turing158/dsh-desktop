@@ -1705,6 +1705,118 @@
     };
   }
 
+  // dsh-plugin/sidebar-changes/settings-schema.mjs
+  var SETTINGS_NAMESPACE = "desktop-changes";
+  function normalize(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+    if (value.enabled !== void 0 && typeof value.enabled !== "boolean") return void 0;
+    return value.enabled === void 0 ? {} : { enabled: value.enabled };
+  }
+  function SettingsSchema(value) {
+    return normalize(value) ?? {};
+  }
+  SettingsSchema.validate = normalize;
+  SettingsSchema.toJSON = () => ({ uid: 1, refs: {
+    1: { type: "object", meta: { default: {} }, dict: { enabled: 2 } },
+    2: { type: "boolean" }
+  } });
+  SettingsSchema["~standard"] = { version: 1, vendor: "dsh-desktop", validate(value) {
+    const resolved = normalize(value);
+    return resolved ? { value: resolved } : { issues: [{ message: "Invalid changes preference", path: ["enabled"] }] };
+  } };
+
+  // dsh-plugin/sidebar-changes/preferences.mjs
+  var FORGE_ID = "@deepseek-ai/dsh-experimental-client-ui-forge";
+  function createChangesPreferences(slots) {
+    let scope, offScope, local, dead = false;
+    let state = { ready: true, enabled: true, forge: false, saving: false, error: "" };
+    const listeners = /* @__PURE__ */ new Set();
+    function publish(patch) {
+      if (dead || Object.entries(patch).every(([key, value]) => state[key] === value)) return;
+      state = { ...state, ...patch };
+      listeners.forEach((fn) => fn());
+    }
+    function read() {
+      const forge = slots.entriesOfSlot("sidebar.right.pane.tab").some((entry) => entry.options.key === FORGE_ID || entry.options.key === FORGE_ID + "/changes");
+      const snap = scope?.getSnapshot();
+      const ready = !scope || snap.status === "ready" || snap.status === "unavailable";
+      const explicit = local ?? (snap?.status === "ready" ? snap.value?.enabled : void 0);
+      publish({ ready, forge, enabled: typeof explicit === "boolean" ? explicit : !forge });
+    }
+    const offSlots = slots.subscribe("sidebar.right.pane.tab", read);
+    read();
+    return {
+      getSnapshot: () => state,
+      subscribe: (fn) => (listeners.add(fn), () => listeners.delete(fn)),
+      bind(next) {
+        offScope?.();
+        scope = next;
+        local = void 0;
+        offScope = next.subscribe(read);
+        read();
+        return () => {
+          if (scope !== next) return;
+          offScope?.();
+          offScope = null;
+          scope = null;
+          read();
+        };
+      },
+      async setEnabled(enabled) {
+        if (typeof enabled !== "boolean" || !state.ready || state.saving || dead) return;
+        publish({ saving: true, error: "" });
+        let failed = false;
+        if (!scope || scope.getSnapshot().status === "unavailable") local = enabled;
+        else {
+          try {
+            failed = await scope.set("enabled", enabled) === false;
+          } catch {
+            failed = true;
+          }
+        }
+        if (dead) return;
+        if (!failed) read();
+        publish({ saving: false, error: failed ? t("\u66F4\u6539\u529F\u80FD\u8BBE\u7F6E\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002") : "" });
+      },
+      dispose() {
+        dead = true;
+        offScope?.();
+        offSlots();
+        listeners.clear();
+      }
+    };
+  }
+  function createChangesSettingsRow(React, Switch, preferences) {
+    const h = React.createElement;
+    return function ChangesSettingsRow() {
+      useLocale(React);
+      const state = React.useSyncExternalStore(preferences.subscribe, preferences.getSnapshot);
+      return h(
+        "div",
+        { className: "dshChangesSettings", "data-dsh-changes-setting": true },
+        h(
+          "div",
+          { className: "dshChangesSettings__text" },
+          h("div", { className: "dshChangesSettings__title" }, t("\u66F4\u6539\u529F\u80FD")),
+          h("div", { className: "dshChangesSettings__hint" }, t("\u663E\u793A\u684C\u9762\u66F4\u6539\u9762\u677F\uFF1B\u542F\u7528\u300C\u53D8\u66F4\u8BF7\u6C42\u4E0E\u5DE5\u4F5C\u6811\u300D\u65F6\u9ED8\u8BA4\u9690\u85CF\u3002")),
+          state.error && h("div", { role: "alert", className: "dshChangesSettings__hint" }, state.error)
+        ),
+        h(Switch, {
+          checked: state.enabled,
+          disabled: !state.ready || state.saving,
+          label: t("\u66F4\u6539\u529F\u80FD"),
+          onChange: (enabled) => preferences.setEnabled(enabled)
+        })
+      );
+    };
+  }
+  var settingsStyles = `
+.dshChangesSettings { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:16px 0; border-bottom:1px solid var(--dsw-alias-border-l3); }
+.dshChangesSettings__text { flex:1; min-width:0; }
+.dshChangesSettings__title { color:var(--dsw-alias-label-primary); font-size:14px; line-height:1.5; }
+.dshChangesSettings__hint { color:var(--dsw-alias-label-secondary); font-size:12px; line-height:1.5; margin-top:4px; }
+`;
+
   // dsh-plugin/sidebar-changes/client-entry.mjs
   var ID = "@dsh-desktop/sidebar-changes";
   var KIND = "desktop-changes";
@@ -2236,6 +2348,20 @@
       const offCapability = watchChanges(ctx, window.__DSH_CAPABILITIES__, window);
       if (!changesContract(ctx)) return offCapability;
       const states = /* @__PURE__ */ new Map(), addresses = /* @__PURE__ */ new WeakMap();
+      const preferences = createChangesPreferences(ctx.slots);
+      const settingsFibers = [
+        ctx.inject(["configForms"], (child) => preferences.bind(child.configForms.get(SETTINGS_NAMESPACE))),
+        ctx.inject(["settingsScope"], (child) => preferences.bind(child.settingsScope.bind({ namespace: SETTINGS_NAMESPACE })))
+      ];
+      const SettingsRow = createChangesSettingsRow(React, primitives.Switch, preferences);
+      const offSettings = ctx.slots.inject("settings.general.item", () => ctx.slots.register({
+        name: "settings.general.item",
+        id: "desktop-changes-enabled",
+        order: 82
+      }, SettingsRow));
+      const style = document.createElement("style");
+      style.textContent = settingsStyles;
+      document.head.appendChild(style);
       function Body(props) {
         useLocale(React);
         const tab = props.useTabInfo().tab;
@@ -2252,19 +2378,40 @@
         key: ID + "/file",
         inject: (sessionId) => ({ sessionId })
       }, (props) => h(FileView, { ctx, tab: props.useTabInfo().tab, sessionId: props.sessionId, states })));
-      const offFileType = ctx.sidebarRightTabs.register({
-        id: ID + "/file",
-        kind: FILE_KIND,
-        patterns: [FILE_PREFIX + "**"],
-        canOpen: (address) => Boolean(parseChangeAddress(address)),
-        title: changeTitle
-      });
-      let offType, mode;
+      let offType, offFileType, mode, enabled, syncing = false;
+      const closeDisabledTabs = () => {
+        const state = preferences.getSnapshot();
+        if (!state.ready || state.enabled || syncing) return;
+        syncing = true;
+        try {
+          for (const tab of ctx.sidebarRight.openTabs.getSnapshot()) {
+            if (tab.kind === KIND || tab.kind === FILE_KIND) ctx.sidebarRight.closeIn(tab.sessionId, tab.tabId);
+          }
+        } finally {
+          syncing = false;
+        }
+      };
       const sync = () => {
+        const state = preferences.getSnapshot();
+        if (!state.ready) return;
         const next = document.documentElement.getAttribute("data-dsh-ui") !== "vanilla";
-        if (next === mode) return;
+        const active = state.enabled;
+        if (next === mode && active === enabled) return;
         mode = next;
+        enabled = active;
         offType?.();
+        offFileType?.();
+        offType = null;
+        offFileType = null;
+        closeDisabledTabs();
+        if (!enabled) return;
+        offFileType = ctx.sidebarRightTabs.register({
+          id: ID + "/file",
+          kind: FILE_KIND,
+          patterns: [FILE_PREFIX + "**"],
+          canOpen: (address) => Boolean(parseChangeAddress(address)),
+          title: changeTitle
+        });
         offType = ctx.sidebarRightTabs.register({
           id: ID,
           kind: KIND,
@@ -2274,25 +2421,33 @@
           ...mode ? { guide: [{ order: 30, title: () => t("\u66F4\u6539"), description: () => t("\u67E5\u770B\u6587\u4EF6\u4FEE\u6539\u524D\u540E\u7684\u5DEE\u5F02"), icon: (props) => h(ChangesIcon, { size: props.size || 22 }) }] } : {}
         });
       };
+      const offPreferences = preferences.subscribe(sync);
+      const offTabs = ctx.sidebarRight.openTabs.subscribe(closeDisabledTabs);
       sync();
       document.addEventListener("dsh-desktop:ui-mode", sync);
       const observer = new MutationObserver(sync);
       observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-dsh-ui"] });
       const provider = createStateProvider(ctx, states);
       const offState = window.__DSH_UI_STATE__?.registerProvider("desktop-changes", provider);
-      return () => {
+      return async () => {
+        offPreferences();
+        offTabs();
+        offSettings();
+        await Promise.all(settingsFibers.map((fiber) => fiber.dispose()));
+        preferences.dispose();
+        style.remove();
         offCapability();
         observer.disconnect();
         document.removeEventListener("dsh-desktop:ui-mode", sync);
         offType?.();
-        offFileType();
+        offFileType?.();
         offFileBody();
         offBody();
         offState?.();
         states.clear();
       };
     }
-    return { inject: ["slots", "sidebarRightTabs", "sessions", "remote", "remote.session"], async apply(ctx) {
+    return { inject: ["slots", "sidebarRightTabs", "sidebarRight", "sessions", "remote", "remote.session"], async apply(ctx) {
       const offRemote = await ctx.remote.$mount(contribution);
       const fiber = ctx.inject(["remote.desktopChanges"], installUI);
       return async () => {

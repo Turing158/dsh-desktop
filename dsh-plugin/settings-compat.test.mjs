@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname, basename, resolve } from 'node:path'
 import { SettingsSchema as appearance } from './ui-client/index.js'
 import { SettingsSchema as terminal } from './sidebar-terminal/index.js'
+import { SETTINGS_NAMESPACE as changesNamespace, SettingsSchema as changes } from './sidebar-changes/settings-schema.mjs'
 
 const bin = process.env.DSH_DESKTOP_DSH_BIN
   || (process.env.APPDATA && join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js'))
@@ -43,10 +44,11 @@ async function fixture(t, seed) {
   const settings = new runtime.Settings(ctx)
   settings.register('desktop-appearance', appearance)
   settings.register('desktop-terminal-dock', terminal)
+  settings.register(changesNamespace, changes)
   return { settings, home, file: join(home, 'desktop-settings.json'), ctx }
 }
 
-test('simultaneous namespace writes preserve both sections and publish only accepted values', async t => {
+test('simultaneous namespace writes preserve desktop sections and publish only accepted values', async t => {
   const h = await fixture(t); if (!h) return
   const events = []
   h.ctx.on('settings/document-updated', ns => events.push([ns, h.settings.get(ns)]))
@@ -61,6 +63,21 @@ test('simultaneous namespace writes preserve both sections and publish only acce
   assert.equal(events[0][1].animation, 'off')
   assert.equal(events[1][1].profileId, 'cmd')
   assert.equal(h.settings.describe().find(row => row.ns === 'desktop-appearance').revision, 1)
+})
+
+test('changes visibility persists explicit choices while an absent choice keeps automatic defaults', async t => {
+  const h = await fixture(t); if (!h) return
+  assert.deepEqual(h.settings.get(changesNamespace), {})
+  await h.settings.update(changesNamespace, { enabled: true }, 0)
+  await h.settings.update('desktop-appearance', { animation: 'off' })
+  const saved = await readFile(h.file, 'utf8')
+  const restored = await fixture(t, { name: 'desktop-settings.json', text: saved }); if (!restored) return
+  assert.deepEqual(restored.settings.get(changesNamespace), { enabled: true })
+  await restored.settings.update(changesNamespace, { enabled: false }, 0)
+  assert.deepEqual(restored.settings.get(changesNamespace), { enabled: false })
+  await assert.rejects(restored.settings.update(changesNamespace, { enabled: 'false' }, 1), /Invalid desktop settings/)
+  await restored.settings.mutate(changesNamespace, [{ op: 'unset', path: ['enabled'] }], 1)
+  assert.deepEqual(restored.settings.get(changesNamespace), {})
 })
 
 test('stale, invalid and unknown-field mutations cannot overwrite saved preferences', async t => {

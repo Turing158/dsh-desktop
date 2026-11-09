@@ -1,4 +1,4 @@
-/** DSH 0.2 settings compatibility for the two desktop-owned namespaces.
+/** DSH 0.2 settings compatibility for the desktop-owned namespaces.
  * CLI overlays are applied after profile patches, so Config forms for entries
  * inserted only by --patch cannot persist through the native config editor.
  * Keep their values in one desktop-settings.json, using the upstream describe,
@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { runtimeImport } from './runtime-import.mjs'
 import { SettingsSchema as appearanceSchema } from './ui-client/index.js'
 import { SettingsSchema as terminalSchema } from './sidebar-terminal/index.js'
+import { SETTINGS_NAMESPACE as changesNamespace, SettingsSchema as changesSchema } from './sidebar-changes/settings-schema.mjs'
 
 const upstream = await runtimeImport('@deepseek-ai/dsh-settings')
 const Base = upstream.default
@@ -18,6 +19,7 @@ const yaml = legacy ? null : await runtimeImport('js-yaml')
 const schemas = new Map([
   ['desktop-appearance', appearanceSchema],
   ['desktop-terminal-dock', terminalSchema],
+  [changesNamespace, changesSchema],
 ])
 
 function readOptional(file, parse) {

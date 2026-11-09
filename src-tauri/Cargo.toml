@@ -1,6 +1,6 @@
 [package]
 name = "deepseek-harness-desktop"
-version = "1.0.2"
+version = "1.0.3"
 description = "dsh desktop shell with Windows notifications"
 edition = "2021"
 rust-version = "1.77"

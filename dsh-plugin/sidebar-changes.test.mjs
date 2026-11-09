@@ -16,6 +16,66 @@ import { layoutCommits } from './sidebar-changes/shared/commit-graph.mjs'
 import { createViewStates, isChanges } from './sidebar-changes/client-state.mjs'
 import { changeAddress, parseChangeAddress, fileAddress, absoluteFilePath, FILE_KIND } from './sidebar-changes/file-resource.mjs'
 import { parseFile } from './file-editor/protocol.mjs'
+import { createChangesPreferences } from './sidebar-changes/preferences.mjs'
+import { SettingsSchema as changesSettings } from './sidebar-changes/settings-schema.mjs'
+
+function preferencesFixture(t, value = {}) {
+  let entries = [], snapshot = { status: 'ready', value }
+  const slotListeners = new Set(), scopeListeners = new Set(), writes = []
+  const slots = { entriesOfSlot: () => entries,
+    subscribe: (_, fn) => (slotListeners.add(fn), () => slotListeners.delete(fn)) }
+  const scope = { getSnapshot: () => snapshot,
+    subscribe: fn => (scopeListeners.add(fn), () => scopeListeners.delete(fn)),
+    async set(field, enabled) {
+      writes.push([field, enabled]); snapshot = { status: 'ready', value: { enabled } }
+      scopeListeners.forEach(fn => fn()); return true
+    } }
+  const preferences = createChangesPreferences(slots)
+  preferences.bind(scope); t.after(() => preferences.dispose())
+  return { preferences, scope, writes, slotListeners, scopeListeners,
+    forge(active) {
+      entries = active ? [{ options: { key: '@deepseek-ai/dsh-experimental-client-ui-forge' } }] : []
+      slotListeners.forEach(fn => fn())
+    },
+    unrelated() { entries = [{ options: { key: '@deepseek-ai/dsh-experimental-tool-worktree' } }]; slotListeners.forEach(fn => fn()) },
+  }
+}
+
+test('desktop changes default to hidden only while the live Forge UI is enabled', t => {
+  const f = preferencesFixture(t)
+  assert.equal(f.preferences.getSnapshot().enabled, true)
+  f.unrelated(); assert.equal(f.preferences.getSnapshot().enabled, true)
+  f.forge(true); assert.equal(f.preferences.getSnapshot().enabled, false)
+  f.forge(false); assert.equal(f.preferences.getSnapshot().enabled, true)
+  assert.deepEqual(f.writes, [])
+  f.preferences.dispose()
+  assert.equal(f.slotListeners.size, 0); assert.equal(f.scopeListeners.size, 0)
+})
+
+test('a manual changes choice wins over automatic defaults and survives remounting', async t => {
+  const f = preferencesFixture(t)
+  f.forge(true); await f.preferences.setEnabled(true)
+  assert.equal(f.preferences.getSnapshot().enabled, true)
+  f.forge(false); f.forge(true); assert.equal(f.preferences.getSnapshot().enabled, true)
+  const restored = preferencesFixture(t, f.scope.getSnapshot().value)
+  restored.forge(true); assert.equal(restored.preferences.getSnapshot().enabled, true)
+  await restored.preferences.setEnabled(false)
+  restored.forge(false); assert.equal(restored.preferences.getSnapshot().enabled, false)
+  assert.deepEqual(f.writes, [['enabled', true]])
+})
+
+test('refused changes settings preserve the active value and can be retried', async t => {
+  const f = preferencesFixture(t), write = f.scope.set
+  f.forge(true); f.scope.set = async () => false
+  await f.preferences.setEnabled(true)
+  assert.equal(f.preferences.getSnapshot().enabled, false)
+  assert.match(f.preferences.getSnapshot().error, /保存失败/)
+  f.scope.set = write; await f.preferences.setEnabled(true)
+  assert.equal(f.preferences.getSnapshot().enabled, true)
+  assert.equal(f.preferences.getSnapshot().error, '')
+  assert.deepEqual(changesSettings({}), {})
+  for (const enabled of [null, 'true', 1]) assert.equal(changesSettings.validate({ enabled }), undefined)
+})
 
 test('file review addresses preserve the session, scope and unusual path through tab restoration', () => {
   const entry = { fileId: 'file-one', path: 'folder/中文 # % 文件.ts', absolutePath: 'D:\\project\\folder\\中文 # % 文件.ts' }
