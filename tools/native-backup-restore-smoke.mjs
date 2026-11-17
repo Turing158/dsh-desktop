@@ -1,3 +1,4 @@
+import {recoveryFiles} from './recovery-package-files.mjs'
 // Native partial restore, UI ACK, rollback and cold interruption in an isolated
 // profile. Only offline fixtures; no model request, npm install or user data.
 import assert from 'node:assert/strict'
@@ -223,7 +224,7 @@ try {
     assert.equal(await readFile(profilePatch,'utf8'),profileSourcePatch)
     await assert.rejects(readFile(join(profileDir,'package.json.lock')),{code:'ENOENT'})
   }
-  assert.equal((await readdir(join(root,'maintenance/recovery'))).filter(n=>n.endsWith('.json')).length,0)
+  assert.equal((await recoveryFiles(join(root,'maintenance/recovery'))).filter(n=>n.endsWith('.json')).length,0)
   pass(profileCheck?'reviewed three-component UI restore applies protected Profile intent, requires matching UI ACK and preserves unrelated local fields':
     'reviewed UI restore commits preferences, restarts DSH, requires matching UI ACK and retains unrelated local settings')
   }
@@ -234,12 +235,12 @@ try {
     pass('independent backup dialog reopens after the native configuration restart')
   } else {
   if(!report.checks.includes('configuration changes after preview are rejected before stopping the active backend')) {
-  const recoveryBefore=(await readdir(join(root,'maintenance/recovery'))).filter(n=>n.endsWith('.json'))
+  const recoveryBefore=(await recoveryFiles(join(root,'maintenance/recovery'))).filter(n=>n.endsWith('.json'))
   const preview=await inspect(),oldScheme=JSON.parse(await readFile(preferences,'utf8')).namespaces['desktop-appearance'].colorScheme
   const changedScheme=oldScheme==='blue'?'rose':'blue';await setCurrent(changedScheme)
   await assert.rejects(restore(preview),/backup-target-changed/)
   current=JSON.parse(await readFile(preferences,'utf8'));assert.equal(current.namespaces['desktop-appearance'].colorScheme,changedScheme)
-  assert.deepEqual((await readdir(join(root,'maintenance/recovery'))).filter(n=>n.endsWith('.json')),recoveryBefore)
+  assert.deepEqual((await recoveryFiles(join(root,'maintenance/recovery'))).filter(n=>n.endsWith('.json')),recoveryBefore)
   pass('configuration changes after preview are rejected before stopping the active backend')
   }
   // An injected post-commit failure must roll back and restore the same UI package.
@@ -281,7 +282,7 @@ try {
   assert.equal(await readFile(preferences,'utf8'),before)
   if(profileCheck)assert.equal(await readFile(profileSwitches,'utf8'),profileBefore)
   const recovered=await records();assert.ok(recovered.filter(r=>r.stage==='rolled-back').length>=2)
-  assert.ok((await readdir(join(root,'maintenance/recovery'))).some(n=>n.endsWith('.json')))
+  assert.ok((await recoveryFiles(join(root,'maintenance/recovery'))).some(n=>n.endsWith('.json')))
   pass('forced exit before UI ACK triggers cold configuration rollback and retains the unsaved-content package')
   }
   if(!report.checks.includes('cold rollback preserves conflicting external edits and quarantines their bytes without booting the backend')) {
@@ -306,7 +307,7 @@ try {
   assert.equal(await readFile(preferences,'utf8'),external)
   if(profileCheck)assert.equal(await readFile(profileSwitches,'utf8'),externalProfile)
   assert.ok((await readdir(conflicting.directory)).some(n=>n.endsWith('.quarantine')))
-  assert.ok((await readdir(join(root,'maintenance/recovery'))).some(n=>n.endsWith('.json')))
+  assert.ok((await recoveryFiles(join(root,'maintenance/recovery'))).some(n=>n.endsWith('.json')))
   pass('cold rollback preserves conflicting external edits and quarantines their bytes without booting the backend')
   }
   await page.screenshot({path:join(root,'restored.png')})

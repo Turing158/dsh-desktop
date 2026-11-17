@@ -289,6 +289,23 @@ test('candidate installation failure keeps the current version and can be retrie
   assert.equal(f.calls.some(call=>call.command==='capture'),false)
 })
 
+for (const phase of ['prepare','install']) {
+  for (const [code,message] of [['recovery-transition-capacity','升级恢复快照空间已满'],
+    ['recovery-save-failed','无法保存升级恢复快照'],['recovery-capacity-unverified','无法安全访问恢复目录']]) {
+    test(`${phase} ${code} explains recovery failures and leaves the original page usable`,async()=>{
+      const fail=async()=>{throw Error(code)}
+      const f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true}),
+        prepare:phase==='prepare'?fail:async()=>({id:'ready',version:tags.preview,switchAvailable:true}),install:fail})
+      f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush();await flush()
+      assert.equal(f.button('最新预览版').props.disabled,false)
+      assert.ok(f.render().some(node=>node.props.role==='alert'&&String(node.props.children).includes(message)))
+      assert.equal(f.calls.some(call=>call.command==='capture'),phase==='install')
+      assert.equal(f.calls.some(call=>call.command==='unfreeze'),phase==='install')
+      assert.equal(f.calls.some(call=>call.command==='cancel_dsh_candidate'),phase==='install')
+    })
+  }
+}
+
 for (const channel of ['latest','preview']) {
   test(`${channel} staged update prepares before capture and hands the exact candidate to native switching`, async () => {
     const pending=deferred(),f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true,candidateOnly:false}),prepare:()=>pending.promise})

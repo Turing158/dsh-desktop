@@ -1,5 +1,5 @@
 .dshArchive__toggleMount { display:inline-flex; flex:none; }
-[data-dsh-archive-filter-hidden] { display:none !important; }
+[data-dsh-archive-filter-hidden], [data-dsh-archive-fork-hidden] { display:none !important; }
 /* React rewrites the action group's classes when search opens or closes. */
 [class*='_headerActions']:not([class*='_headerActionsHidden']):has(> .dshArchive__toggleMount) { max-width:92px; }
 .dshArchive__toggle { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; padding:0; border:0; border-radius:var(--dsw-radius-sm,8px); background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }

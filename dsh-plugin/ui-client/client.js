@@ -1401,17 +1401,21 @@ var React = require('react')
             mounted.forEach(function (value, key) { if (chosen.get(key) !== value.entry) { value.remove(); mounted.delete(key) } })
             chosen.forEach(function (entry, key) {
               if (mounted.has(key)) return
+              var delegate = window.__DSH_SLOT_CHILDREN__?.(React, ctx.slots, entry, 'desktop.viewport.' + key)
               function ViewportBody(props) {
                 var root = React.useRef(null)
                 return React.createElement('div', { ref: root, 'data-dsh-chat-viewport': '', style: { display: 'flow-root', contentVisibility: 'auto', containIntrinsicBlockSize: 'auto 80px' } },
-                  React.createElement(entry.component, props))
+                  React.createElement(delegate ? delegate.component : entry.component, props))
               }
               ViewportBody.__dshTranscriptViewport = true
               wrappers.add(ViewportBody)
-              mounted.set(key, { entry: entry, remove: ctx.slots.register(Object.assign({}, entry.options, {
+              var unregister = ctx.slots.register(Object.assign({}, entry.options, {
                 name: slot, priority: (entry.options.priority || 0) - 10,
-                inject: entry.inject, store: entry.store, locale: entry.locale,
-              }), ViewportBody) })
+                inject: entry.inject, store: entry.store, locale: entry.locale, select: entry.select, children: delegate?.children,
+              }), ViewportBody)
+              var unmount
+              try { unmount = delegate?.mount() } catch (error) { unregister(); throw error }
+              mounted.set(key, { entry: entry, remove: function () { unmount?.(); unregister() } })
             })
           } finally { syncing = false }
         }
@@ -1431,7 +1435,7 @@ var React = require('react')
       if (!IconSettings || typeof ctx.slots.entries !== 'function' || typeof ctx.slots.subscribe !== 'function') return
       var slot = 'settings.launcher'
       ctx.slots.inject(slot, function () {
-        var original, remove, syncing = false, disposed = false
+        var original, delegate, remove, syncing = false, disposed = false
         function SettingsLauncher(props) {
           useLocale(React)
           var button = h('button', {
@@ -1444,7 +1448,7 @@ var React = require('react')
             onClick: props.openSettings,
           }, h(IconSettings, { size: 18 }))
           return h(React.Fragment, null,
-            h(original.component, Object.assign({}, props, { hasDesktopSettingsLauncher: !!props.wide })),
+            h(delegate ? delegate.component : original.component, Object.assign({}, props, { hasDesktopSettingsLauncher: !!props.wide })),
             props.wide && h('span', { className: 'dshSidebarSettings' }, Tooltip
               ? h(Tooltip, { label: t('设置'), shortcutKeys: props.settingsShortcut?.keys, disabled: props.settingsOpen }, button)
               : button))
@@ -1460,11 +1464,17 @@ var React = require('react')
             if (next === original) return
             if (remove) { var off = remove; remove = undefined; off() }
             original = next
+            delegate = undefined
             if (!next) return
-            remove = ctx.slots.register(Object.assign({}, next.options, {
+            delegate = window.__DSH_SLOT_CHILDREN__?.(React, ctx.slots, next, 'desktop.settings')
+            var unregister = ctx.slots.register(Object.assign({}, next.options, {
               name: slot, priority: (next.options.priority || 0) - 1,
               inject: next.inject, locale: next.locale, store: next.store,
+              children: delegate?.children,
             }), SettingsLauncher)
+            var unmount
+            try { unmount = delegate?.mount() } catch (error) { unregister(); throw error }
+            remove = function () { unmount?.(); unregister() }
           } finally { syncing = false }
         }
         var unsubscribe = ctx.slots.subscribe(slot, sync)

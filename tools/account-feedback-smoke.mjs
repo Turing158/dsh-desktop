@@ -28,6 +28,9 @@ const platform = createServer(async (req, res) => {
   }
   if (url.pathname.endsWith('/auth_exchange')) return json({ token: 'isolated-fixture-token', authorized_url: platformOrigin + '/dsh/authorized' })
   if (url.pathname.endsWith('/auth_cancel') || url.pathname.endsWith('/logout')) return json({})
+  if (url.pathname === '/auth-api/v0/users/current') return json({ id: 'fixture', email: 'fixture@example.test', id_profile: { name: 'Fixture account' } })
+  if (url.pathname === '/api/v0/users/get_user_summary') return json({ normal_wallets: [{ currency: 'CNY', balance: '12.34' }], bonus_wallets: [] })
+  if (url.pathname.includes('notification')) return json({ notifications: [], next_poll_after: 3600 })
   if (url.pathname === '/dsh/authorize') {
     const callback = new URL(authorization.redirect_uri)
     callback.searchParams.set('state', authorization.state); callback.searchParams.set('code', 'fixture-code')
@@ -47,7 +50,7 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({id:'@ds
 })})`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8'))
   .replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
-  + offlineModelPatch + `\n- id: deepseek-account\n  config:\n    platformOrigin: ${platformOrigin}\n    allowLoopbackHttp: true\n- insert:\n    - id: feedback-smoke\n      name: ${pathToFileURL(join(probe, 'index.js')).href}\n`
+  + offlineModelPatch + `\n- id: deepseek-account\n  config:\n    platformOrigin: ${platformOrigin}\n    harnessOrigin: ${platformOrigin}\n    allowLoopbackHttp: true\n- insert:\n    - id: feedback-smoke\n      name: ${pathToFileURL(join(probe, 'index.js')).href}\n`
 const patchPath = join(root, 'desktop.patch.yml'); await writeFile(patchPath, patch)
 const dshBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA, 'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
 const child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--no-open', '--port', '0'], {
@@ -133,11 +136,15 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1280, height: 850 } })
   page.on('pageerror', error => report.errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) report.errors.push(message.text()) })
   await page.addInitScript(() => {
     window.__DSH_UI_BOOT__ = { smoke: true }
     window.__TAURI__ = { core: { Channel: class {}, invoke: async () => null }, event: { listen: async () => () => {} } }
   })
   await handleOnboarding(page); await page.goto(url); await page.waitForFunction(() => window.feedbackContext)
+  report.launchers = await page.evaluate(() => window.feedbackContext.slots.entries('settings.launcher').map(entry => ({
+    options: entry.options, locale: entry.locale, component: entry.component?.name, children: entry.children,
+  })))
   await dismissInitialWelcome(page)
   if (await page.locator('[data-shortcut-modal="settings"]').count()) await page.keyboard.press('Escape')
   await sidebar(false)

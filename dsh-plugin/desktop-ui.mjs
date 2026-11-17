@@ -391,7 +391,7 @@ function apply(ctx, rawConfig) {
       })()),
     })
     // LAN HTTP lacks secure-context-only helpers required by upstream clients.
-    for (const [file, kind] of [['ui-overlay/browser-compat.js', 'script'], ['ui-overlay/mobile.css', 'style'], ['ui-remote/style.css', 'style']]) {
+    for (const [file, kind] of [['ui-overlay/browser-compat.js', 'script'], ['ui-overlay/slot-compat.js', 'script'], ['ui-overlay/mobile.css', 'style'], ['ui-remote/style.css', 'style']]) {
       const asset = readAsset(join(HERE, file), ctx)
       if (asset !== undefined) table.push({ kind, placement: 'head', text: neutralise(asset, kind) })
     }

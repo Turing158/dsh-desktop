@@ -9,6 +9,9 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 const SCHEMA: u32 = 1;
 const MAX_BYTES: usize = MAX_SNAPSHOT_BYTES + 8192;
 const MAX_PACKAGES: usize = 64;
+// Lifecycle snapshots have their own bounded space. Background drafts must
+// never consume the last slot needed to safely update or restart the backend.
+const MAX_TRANSITION_PACKAGES: usize = 8;
 const MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -89,20 +92,22 @@ impl RecoveryStore {
         let package = Package { schema: SCHEMA, recovery_id: uuid::Uuid::new_v4(), created_at: crate::maintenance::now_ms(), binding, payload_hash, payload, drafts_only:false, restore_frontend_version: None };
         let bytes = serde_json::to_vec(&package)?;
         if bytes.len() > MAX_BYTES { return Err(invalid("recovery-size")); }
-        std::fs::create_dir_all(&self.root)?;
-        // Unresolved packages are never evicted to make room. Include malformed
-        // JSON files in the budget so corrupt materials remain bounded too.
-        self.ensure_capacity(bytes.len() as u64, MAX_PACKAGES, MAX_TOTAL_BYTES)?;
-        let mut file = tempfile::NamedTempFile::new_in(&self.root)?;
+        let directory = self.prepare_transition_directory()?;
+        Self::new(directory.clone()).ensure_capacity(bytes.len() as u64, MAX_TRANSITION_PACKAGES, MAX_TOTAL_BYTES)
+            .map_err(transition_error)?;
+        let mut file = tempfile::NamedTempFile::new_in(&directory)?;
         file.write_all(&bytes)?;
         file.as_file().sync_all()?;
-        file.persist_noclobber(self.path(package.recovery_id)).map_err(|e| e.error)?;
+        file.persist_noclobber(directory.join(format!("{}.json", package.recovery_id))).map_err(|e| e.error)?;
         Ok(package.recovery_id)
     }
     fn persist_drafts(&self,payload:UiPayload,binding:Binding,previous:Option<&Handle>)->io::Result<uuid::Uuid> {
         validate_drafts(&payload).map_err(invalid)?;
         if !binding.valid() || payload.frontend_version!=binding.runtime_version {return Err(invalid("recovery-binding"))}
-        let previous=previous.filter(|handle|self.path(handle.id).exists());
+        let previous=match previous {
+            Some(handle)=>match self.path(handle.id) {Ok(_)=>Some(handle),Err(e) if e.kind()==io::ErrorKind::NotFound=>None,Err(e)=>return Err(e)},
+            None=>None,
+        };
         if let Some(handle)=previous {
             let package=self.load(handle.id,&binding)?;
             if !package.drafts_only || handle.binding!=binding {return Err(invalid("recovery-checkpoint-conflict"))}
@@ -113,14 +118,14 @@ impl RecoveryStore {
         if bytes.len()>MAX_BYTES {return Err(invalid("recovery-size"))}
         std::fs::create_dir_all(&self.root)?;
         if previous.is_some() {
-            let old=std::fs::metadata(self.path(id))?.len();
+            let old=std::fs::metadata(self.path(id)?)?.len();
             self.ensure_capacity((bytes.len() as u64).saturating_sub(old),MAX_PACKAGES+1,MAX_TOTAL_BYTES)?;
-            crate::maintenance::atomic_json(&self.path(id),&package)?;
+            crate::maintenance::atomic_json(&self.path(id)?,&package)?;
         } else {
             self.ensure_capacity(bytes.len() as u64,MAX_PACKAGES,MAX_TOTAL_BYTES)?;
             let mut file=tempfile::NamedTempFile::new_in(&self.root)?;
             file.write_all(&bytes)?;file.as_file().sync_all()?;
-            file.persist_noclobber(self.path(id)).map_err(|e|e.error)?;
+            file.persist_noclobber(self.root.join(format!("{id}.json"))).map_err(|e|e.error)?;
         }
         Ok(id)
     }
@@ -130,7 +135,7 @@ impl RecoveryStore {
         Ok(package)
     }
     fn read(&self, id: uuid::Uuid) -> io::Result<Package> {
-        let path = self.path(id);
+        let path = self.path(id)?;
         let info = std::fs::symlink_metadata(&path)?;
         if !info.is_file() || info.file_type().is_symlink() || info.len() > MAX_BYTES as u64 { return Err(invalid("recovery-size")); }
         let mut bytes = Vec::new();
@@ -146,8 +151,9 @@ impl RecoveryStore {
     }
     pub fn list(&self, expected: Option<&Binding>) -> io::Result<Listing> {
         let mut result = Listing::default();
-        let entries = match std::fs::read_dir(&self.root) { Ok(entries) => entries, Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(result), Err(e) => return Err(e) };
-        for entry in entries {
+        for directory in [&self.root, &self.root.join("transitions")] {
+          match plain_directory(directory) { Ok(())=>{}, Err(e) if e.kind()==io::ErrorKind::NotFound=>continue, Err(e)=>return Err(e) }
+          for entry in std::fs::read_dir(directory)? {
             let Ok(entry) = entry else { result.unreadable += 1; continue };
             let path = entry.path();
             if path.extension().and_then(|v| v.to_str()) != Some("json") { continue; }
@@ -164,6 +170,7 @@ impl RecoveryStore {
                 }
                 Err(_) => result.unreadable += 1,
             }
+          }
         }
         result.entries.sort_by_key(|e| std::cmp::Reverse(e.created_at));
         Ok(result)
@@ -175,15 +182,48 @@ impl RecoveryStore {
         if semver::Version::parse(version).is_err() { return Err(invalid("recovery-version")); }
         let mut package = self.load(handle.id, &handle.binding)?;
         package.restore_frontend_version = Some(version.into());
-        crate::maintenance::atomic_json(&self.path(handle.id), &package)
+        crate::maintenance::atomic_json(&self.path(handle.id)?, &package)
     }
     // The caller must first receive the necessary restore acknowledgement with
     // its new identity. Failed or incomplete restores retain the sole package.
     pub fn acknowledge(&self, id: uuid::Uuid, binding: &Binding) -> io::Result<()> {
         self.load(id, binding)?;
-        std::fs::remove_file(self.path(id))
+        std::fs::remove_file(self.path(id)?)
     }
-    fn path(&self, id: uuid::Uuid) -> PathBuf { self.root.join(format!("{id}.json")) }
+    // Legacy packages retain their paths and IDs. Refuse ambiguous IDs rather
+    // than reading one copy and acknowledging a different recovery package.
+    fn path(&self, id: uuid::Uuid) -> io::Result<PathBuf> {
+        plain_directory(&self.root)?;
+        let mut found = None;
+        for directory in [&self.root, &self.root.join("transitions")] {
+            match plain_directory(directory) { Ok(())=>{}, Err(e) if e.kind()==io::ErrorKind::NotFound=>continue, Err(e)=>return Err(e) }
+            let path=directory.join(format!("{id}.json"));
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) if found.is_some()=>return Err(invalid("recovery-duplicate")),
+                Ok(_)=>found=Some(path),
+                Err(e) if e.kind()==io::ErrorKind::NotFound=>{},
+                Err(e)=>return Err(e),
+            }
+        }
+        found.ok_or_else(||io::Error::new(io::ErrorKind::NotFound,"recovery-missing"))
+    }
+    fn prepare_transition_directory(&self) -> io::Result<PathBuf> {
+        std::fs::create_dir_all(&self.root)?;
+        plain_directory(&self.root)?;
+        let directory=self.root.join("transitions");
+        match std::fs::symlink_metadata(&directory) {
+            Ok(_)=>{},
+            Err(e) if e.kind()==io::ErrorKind::NotFound=>std::fs::create_dir(&directory)?,
+            Err(e)=>return Err(e),
+        }
+        plain_directory(&directory)?;
+        Ok(directory)
+    }
+    fn preflight_transition(&self) -> io::Result<()> {
+        let directory=self.prepare_transition_directory()?;
+        // Advisory early check; persist repeats it with the actual payload size.
+        Self::new(directory).ensure_capacity(1,MAX_TRANSITION_PACKAGES,MAX_TOTAL_BYTES).map_err(transition_error)
+    }
     fn ensure_capacity(&self, incoming: u64, max_packages: usize, max_total: u64) -> io::Result<()> {
         let mut count = 0;
         let mut total = incoming;
@@ -199,6 +239,22 @@ impl RecoveryStore {
         if total > max_total { return Err(invalid("recovery-capacity")); }
         Ok(())
     }
+}
+fn plain_directory(path:&Path)->io::Result<()> {
+    let info=std::fs::symlink_metadata(path)?;
+    if !info.is_dir() || info.file_type().is_symlink() {return Err(invalid("recovery-capacity-unverified"));}
+    Ok(())
+}
+fn transition_error(error:io::Error)->io::Error {
+    if error.to_string()=="recovery-capacity" {invalid("recovery-transition-capacity")} else {error}
+}
+fn save_error(error:io::Error)->String {
+    match error.to_string().as_str() {
+        "recovery-capacity"=>"recovery-capacity",
+        "recovery-transition-capacity"=>"recovery-transition-capacity",
+        "recovery-capacity-unverified"=>"recovery-capacity-unverified",
+        _=>"recovery-save-failed",
+    }.into()
 }
 fn hash(payload: &UiPayload) -> io::Result<String> { Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(payload)?))) }
 fn invalid(code: &'static str) -> io::Error { io::Error::new(io::ErrorKind::InvalidData, code) }
@@ -235,8 +291,11 @@ fn binding(state: &crate::state::AppState) -> Result<Binding, String> {
 pub fn persist(app: &AppHandle, snapshot: &UiSnapshot) -> Result<Handle, String> {
     let binding = { let shared = app.state::<crate::state::Shared>(); let state = shared.lock().map_err(|_| "recovery-state")?; binding(&state)? };
     if snapshot.payload.frontend_version != binding.runtime_version { return Err("recovery-version".into()); }
-    let id = store(app)?.persist(snapshot, binding.clone()).map_err(|_| "recovery-save-failed")?;
+    let id = store(app)?.persist(snapshot, binding.clone()).map_err(save_error)?;
     Ok(Handle { id, binding })
+}
+pub fn preflight_transition(app:&AppHandle)->Result<(),String> {
+    store(app)?.preflight_transition().map_err(save_error)
 }
 #[tauri::command]
 pub async fn desktop_draft_checkpoint(window:WebviewWindow,identity:crate::remote_control::Identity,payload:UiPayload)->Result<CheckpointResult,String> {
@@ -262,9 +321,9 @@ pub async fn desktop_draft_checkpoint(window:WebviewWindow,identity:crate::remot
         let store=store(&app)?;
         let has_content=payload.drafts.iter().any(|draft|!draft.text.is_empty() || draft.semantic.is_some() || !draft.attachment_keys.is_empty());
         let id=if has_content {
-            Some(store.persist_drafts(payload,current.clone(),same.map(|s|&s.handle)).map_err(|_|"recovery-save-failed")?)
+            Some(store.persist_drafts(payload,current.clone(),same.map(|s|&s.handle)).map_err(save_error)?)
         } else {
-            if let Some(previous)=same {if store.path(previous.handle.id).exists() {
+            if let Some(previous)=same {if store.path(previous.handle.id).is_ok() {
                 let package=store.load(previous.handle.id,&current).map_err(|_|"recovery-save-failed")?;
                 if !package.drafts_only {return Err("recovery-checkpoint-conflict".into())}
                 store.acknowledge(previous.handle.id,&current).map_err(|_|"recovery-save-failed")?;
@@ -362,13 +421,13 @@ mod tests {
         payload.dialogs.push(crate::ui_snapshot::Dialog {id:"desktop-terminal".into(),version:1,data:serde_json::json!({"sessions":[{"terminalId":"old"}],"dock":{},"sidebar":[]})});
         payload.dialogs.push(crate::ui_snapshot::Dialog {id:"desktop-file-editor".into(),version:1,data:serde_json::json!({"drafts":[]})});
         let snapshot=UiSnapshot::capture(payload.clone(),crate::ui_snapshot::Identity {operation_id:1,window_generation:1,document_generation:1,backend_instance:1}).unwrap();
-        let id=store.persist(&snapshot,binding.clone()).unwrap();let original=std::fs::read(store.path(id)).unwrap();
+        let id=store.persist(&snapshot,binding.clone()).unwrap();let original=std::fs::read(store.path(id).unwrap()).unwrap();
         assert!(store.list(Some(&binding)).unwrap().entries[0].has_terminal_state);
         assert_eq!(cold_payload(payload.clone(),false).unwrap_err(),"snapshot-terminal-cold-unavailable");
         let (partial,retained)=cold_payload(payload,true).unwrap();assert!(retained);
         assert_eq!(partial.drafts[0].text,"saved draft");assert_eq!(partial.dialogs.len(),1);
         assert_eq!(partial.dialogs[0].id,"desktop-file-editor");assert_eq!(partial.layout.panel,None);assert_eq!(partial.layout.rightbar,None);
-        assert_eq!(std::fs::read(store.path(id)).unwrap(),original);
+        assert_eq!(std::fs::read(store.path(id).unwrap()).unwrap(),original);
         assert!(store.read(id).unwrap().payload.dialogs.iter().any(|dialog|dialog.id=="desktop-terminal"));
         assert!(!cold_payload(draft_payload("only draft"),true).unwrap().1);
     }
@@ -389,7 +448,7 @@ mod tests {
         let incompatible=Handle {id:other,binding:binding.clone()};
         assert!(store.persist_drafts(draft_payload("bad"),binding.clone(),Some(&incompatible)).is_err());
         let new_page=store.persist_drafts(draft_payload("new page"),binding.clone(),None).unwrap();assert_ne!(new_page,first);
-        store.acknowledge(new_page,&binding).unwrap();assert!(store.path(first).exists());assert!(store.path(other).exists());
+        store.acknowledge(new_page,&binding).unwrap();assert!(store.path(first).unwrap().exists());assert!(store.path(other).unwrap().exists());
         let mut layout=draft_payload("invalid");layout.layout.sidebar=300.0;
         assert!(store.persist_drafts(layout,binding.clone(),Some(&handle)).is_err());assert_eq!(store.read(first).unwrap().payload.drafts[0].text,"second");
         let listing=serde_json::to_string(&store.list(Some(&binding)).unwrap()).unwrap();assert!(listing.contains("draftsOnly"));assert!(!listing.contains("maintenance"));
@@ -403,6 +462,69 @@ mod tests {
         assert!(store.ensure_capacity(4, 2, 9).is_err());
         assert!(store.ensure_capacity(4, 2, 10).is_ok());
         assert_eq!(std::fs::read_to_string(dir.path().join("broken.json")).unwrap(), "broken");
+    }
+    #[test]
+    fn sixty_four_legacy_drafts_do_not_block_upgrade_recovery_or_acknowledgement() {
+        let dir=tempfile::tempdir().unwrap();let store=RecoveryStore::new(dir.path().join("recovery"));
+        let binding=Binding::new(dir.path(),"web","0.2.1-rc.2");
+        let mut retained=Vec::new();
+        for n in 0..64 {
+            let id=store.persist_drafts(draft_payload(&format!("historical draft {n}")),binding.clone(),None).unwrap();
+            retained.push((id,std::fs::read(store.path(id).unwrap()).unwrap()));
+        }
+        assert_eq!(save_error(store.persist_drafts(draft_payload("new page"),binding.clone(),None).unwrap_err()),"recovery-capacity");
+        store.preflight_transition().unwrap();
+        let snapshot=UiSnapshot::capture(draft_payload("upgrading draft"),crate::ui_snapshot::Identity {operation_id:1,window_generation:1,document_generation:1,backend_instance:1}).unwrap();
+        let id=store.persist(&snapshot,binding.clone()).unwrap();
+        assert_eq!(store.path(id).unwrap().parent().unwrap(),store.root.join("transitions"));
+        drop(store);
+        let store=RecoveryStore::new(dir.path().join("recovery"));
+        assert_eq!(store.load(id,&binding).unwrap().payload.drafts[0].text,"upgrading draft");
+        store.permit_version(&Handle {id,binding:binding.clone()},"0.2.2-rc.3").unwrap();
+        let mut target=binding.clone();target.runtime_version="0.2.2-rc.3".into();
+        let listing=store.list(Some(&target)).unwrap();
+        assert_eq!(listing.entries.len(),65);
+        assert!(listing.entries.iter().find(|entry|entry.recovery_id==id).unwrap().can_restore);
+        store.acknowledge(id,&binding).unwrap();
+        assert_eq!(store.list(None).unwrap().entries.len(),64);
+        for (id,bytes) in retained {assert_eq!(std::fs::read(store.path(id).unwrap()).unwrap(),bytes);}
+    }
+    #[test]
+    fn lifecycle_capacity_is_bounded_and_independent_of_draft_writes() {
+        let dir=tempfile::tempdir().unwrap();let store=RecoveryStore::new(dir.path().join("recovery"));
+        let binding=Binding::new(dir.path(),"web","0.2.1-rc.2");
+        let snapshot=UiSnapshot::capture(draft_payload("pending"),crate::ui_snapshot::Identity {operation_id:1,window_generation:1,document_generation:1,backend_instance:1}).unwrap();
+        let ids=(0..MAX_TRANSITION_PACKAGES).map(|_|store.persist(&snapshot,binding.clone()).unwrap()).collect::<Vec<_>>();
+        assert_eq!(save_error(store.preflight_transition().unwrap_err()),"recovery-transition-capacity");
+        assert_eq!(save_error(store.persist(&snapshot,binding.clone()).unwrap_err()),"recovery-transition-capacity");
+        let id=store.persist_drafts(draft_payload("draft"),binding.clone(),None).unwrap();
+        store.persist_drafts(draft_payload("changed draft"),binding.clone(),Some(&Handle {id,binding:binding.clone()})).unwrap();
+        assert_eq!(store.load(id,&binding).unwrap().payload.drafts[0].text,"changed draft");
+        store.acknowledge(ids[0],&binding).unwrap();store.preflight_transition().unwrap();
+        for id in &ids[1..] {assert!(store.load(*id,&binding).is_ok());}
+    }
+    #[test]
+    fn legacy_full_snapshots_remain_readable_and_duplicate_ids_are_never_deleted() {
+        let dir=tempfile::tempdir().unwrap();let store=RecoveryStore::new(dir.path().join("recovery"));
+        let binding=Binding::new(dir.path(),"web","0.2.1-rc.2");
+        let snapshot=UiSnapshot::capture(draft_payload("legacy UI"),crate::ui_snapshot::Identity {operation_id:1,window_generation:1,document_generation:1,backend_instance:1}).unwrap();
+        let old=store.persist(&snapshot,binding.clone()).unwrap();let nested=store.path(old).unwrap();let legacy=store.root.join(format!("{old}.json"));
+        std::fs::rename(&nested,&legacy).unwrap();
+        assert_eq!(store.load(old,&binding).unwrap().payload.drafts[0].text,"legacy UI");
+        store.permit_version(&Handle {id:old,binding:binding.clone()},"0.2.2-rc.3").unwrap();
+        let new=store.persist(&snapshot,binding.clone()).unwrap();assert_eq!(store.list(None).unwrap().entries.len(),2);
+        std::fs::copy(&legacy,&nested).unwrap();
+        assert_eq!(store.acknowledge(old,&binding).unwrap_err().to_string(),"recovery-duplicate");
+        assert!(legacy.exists() && nested.exists());assert!(store.load(new,&binding).is_ok());
+        std::fs::remove_file(&nested).unwrap();store.acknowledge(old,&binding).unwrap();assert!(!legacy.exists());
+    }
+    #[test]
+    fn preflight_refuses_an_unverified_recovery_directory_and_redacts_io_errors() {
+        let dir=tempfile::tempdir().unwrap();let store=RecoveryStore::new(dir.path().into());
+        std::fs::write(dir.path().join("transitions"),"keep").unwrap();
+        assert_eq!(save_error(store.preflight_transition().unwrap_err()),"recovery-capacity-unverified");
+        assert_eq!(std::fs::read_to_string(dir.path().join("transitions")).unwrap(),"keep");
+        assert_eq!(save_error(io::Error::new(io::ErrorKind::PermissionDenied,"private path")),"recovery-save-failed");
     }
     #[test]
     fn listing_redacts_payload_and_versions_require_explicit_permission() {
@@ -424,7 +546,7 @@ mod tests {
         assert!(!store.list(Some(&target)).unwrap().entries[0].can_restore);
         std::fs::write(store.root.join("bad.json"), "bad").unwrap();
         assert_eq!(store.list(None).unwrap().unreadable, 1);
-        assert!(store.path(id).is_file());
+        assert!(store.path(id).unwrap().is_file());
     }
     #[test]
     fn packages_survive_owner_drop_but_refuse_another_root_and_modified_text() {
@@ -441,12 +563,12 @@ mod tests {
         assert_eq!(store.load(id, &binding).unwrap().payload.drafts[0].text, "未保存的中文草稿");
         let wrong = Binding::new(&dir.path().join("other-home"), "web", "0.2.1-rc.2");
         assert!(store.load(id, &wrong).is_err());
-        let text = std::fs::read_to_string(store.path(id)).unwrap();
+        let text = std::fs::read_to_string(store.path(id).unwrap()).unwrap();
         assert!(!text.contains("backendInstance"));
-        std::fs::write(store.path(id), text.replace("未保存的中文草稿", "修改后的中文草稿")).unwrap();
+        std::fs::write(store.path(id).unwrap(), text.replace("未保存的中文草稿", "修改后的中文草稿")).unwrap();
         assert!(store.load(id, &binding).is_err());
         assert!(store.acknowledge(id, &binding).is_err());
-        assert!(store.path(id).is_file());
+        assert!(store.path(id).unwrap().is_file());
     }
     #[test]
     fn a_valid_acknowledgement_removes_only_the_named_package() {

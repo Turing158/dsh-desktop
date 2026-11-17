@@ -2,6 +2,56 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { formatBalance, balanceRows, platformHref } from './account-popover/model.mjs'
 import { mountAccountPopover } from './account-popover/mount.mjs'
+
+test('nested launcher adapters retain native child rendering and follow notification replacement', () => {
+  const window = {}
+  vm.runInNewContext(readFileSync(new URL('./ui-overlay/slot-compat.js', import.meta.url), 'utf8'), { window })
+  const React = { useCallback: fn => fn, createElement: (Component, props) => Component(props) }
+  const entries = new Map(), declarations = new Set(['launcher', 'notifications']), listeners = new Map()
+  const slots = {
+    entries: key => entries.get(key) || [],
+    subscribe(key, fn) { const rows = listeners.get(key) || new Set(); listeners.set(key, rows); rows.add(fn); return () => rows.delete(fn) },
+    register(options, component) {
+      assert.ok(declarations.has(options.name), 'registration targets a declared child')
+      for (const key of Object.keys(options.children || {})) { assert.ok(!declarations.has(key), 'child has one owner'); declarations.add(key) }
+      const entry = { options, component, children: options.children, select: options.select, inject: options.inject, locale: options.locale, store: options.store }
+      entries.set(options.name, [...slots.entries(options.name), entry])
+      return () => {
+        entries.set(options.name, slots.entries(options.name).filter(value => value !== entry))
+        for (const key of Object.keys(options.children || {})) declarations.delete(key)
+      }
+    },
+  }
+  const source = { options: {}, children: { notifications: { kind: 'single', scope: 'root' } },
+    component: props => props.renderSlot('notifications', { active: true }, { only: 'notice' }) }
+  const notice = { options: { priority: 3 }, component: () => 'notice', inject: () => ({ hooks: {} }), select: owner => owner }
+  entries.set('notifications', [notice])
+  const account = window.__DSH_SLOT_CHILDREN__(React, slots, source, 'account')
+  const offAccount = slots.register({ name: 'launcher', children: account.children }, account.component)
+  const unmountAccount = account.mount()
+  const accountEntry = slots.entries('launcher')[0]
+  const settings = window.__DSH_SLOT_CHILDREN__(React, slots, accountEntry, 'settings')
+  const offSettings = slots.register({ name: 'launcher', children: settings.children }, settings.component)
+  const unmountSettings = settings.mount()
+  const result = settings.component({ renderSlot: (key, owner, options) => {
+    assert.equal(key, 'settings.account.notifications')
+    assert.equal(owner.active, true); assert.equal(options.only, 'notice')
+    return slots.entries(key)[0].component({})
+  } })
+  assert.equal(result, 'notice')
+  assert.equal(slots.entries('account.notifications')[0].inject, notice.inject)
+  assert.equal(slots.entries('account.notifications')[0].select, notice.select)
+  entries.set('notifications', [{ ...notice, component: () => 'replacement' }])
+  for (const fn of listeners.get('notifications')) fn()
+  for (const fn of listeners.get('account.notifications')) fn()
+  assert.equal(slots.entries('settings.account.notifications').length, 1)
+  assert.equal(slots.entries('settings.account.notifications')[0].component({}), 'replacement')
+  unmountSettings(); offSettings(); unmountAccount(); offAccount()
+  assert.equal(slots.entries('notifications').length, 1)
+  assert.equal(slots.entries('account.notifications').length, 0)
+  assert.equal(slots.entries('settings.account.notifications').length, 0)
+  assert.ok([...listeners.values()].every(rows => rows.size === 0))
+})
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 
@@ -111,6 +161,7 @@ test('account and existing settings adapters converge in either load order witho
       const bindAccount = () => disposers.push(mountAccountPopover(slots, () => function Account() {}, root))
       const bindSettings = () => vm.runInNewContext(`(${settingsBinder})({ slots })`, {
         slots, primitives: { IconSettingsOutlineMedium() {} }, document: { documentElement: root },
+        window: {}, React: {},
         MODE_ATTRIBUTE: 'data-dsh-ui', VANILLA: 'vanilla', MutationObserver: globalThis.MutationObserver,
       })
       for (const bind of accountFirst ? [bindAccount, bindSettings] : [bindSettings, bindAccount]) { bind(); flush() }

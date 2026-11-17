@@ -1146,13 +1146,12 @@
    */
   function detachComposerTooltips() {
     if (isVanilla()) return false
-    var bubbles = document.querySelectorAll('[role="tooltip"]')
+    var bubbles = overlayQueryAll('[role="tooltip"]')
     var moved = false
     for (var i = 0; i < bubbles.length; i++) {
       // Only the composer's own bubbles: the card is what carries the blur that
-      // captures them. Expressed with `closest` rather than a descendant selector
-      // because the page-wide query is the honest one — a bubble this tier cannot
-      // place is worse than one it never moved.
+      // captures them. Inline bubbles are tracked as content surfaces, so the
+      // chrome lookup can stop at transcript boundaries without missing them.
       if (!bubbles[i].closest('[data-dsh-desktop="composer"]')) continue
       if (detachTooltip(bubbles[i])) moved = true
     }
@@ -2417,7 +2416,11 @@
           previous.rowKeys.length === this.props.rowKeys.length && previous.rowKeys.every((key, i) => key === this.props.rowKeys[i])) return null
       var list = this.list.current
       if (!list || !list.getClientRects().length) return null
-      var viewport = list.getBoundingClientRect()
+      var bounds = list.getBoundingClientRect()
+      // The native post-commit animator also checks a previous row against
+      // snapshot.viewport. Preserve that shape even when a row is offscreen.
+      var viewport = { top: Math.max(0, bounds.top), left: Math.max(0, bounds.left),
+        bottom: Math.min(window.innerHeight, bounds.bottom), right: Math.min(window.innerWidth, bounds.right) }
       var positions = this.readPositions(), next = new Set(this.props.rowKeys), removed = new Map()
       positions.forEach(function (row, key) {
         var rect = row.rect
@@ -2431,7 +2434,7 @@
         clone.style.setProperty('--dsh-workspace-indent', getComputedStyle(row.element).getPropertyValue('--dsh-workspace-indent'))
         removed.set(key, Object.assign({}, row, { element: clone }))
       })
-      return { positions: positions, removed: removed }
+      return { viewport: viewport, positions: positions, removed: removed }
     }
 
     function scan() {
@@ -2684,6 +2687,17 @@
     return null
   }
 
+  // CSS anchors are removed with their owning Menu. Remember the live geometry
+  // before React unmounts it so its exit copy cannot fall back to the body edge.
+  var anchoredMenuBounds = new WeakMap()
+
+  function rememberAnchoredMenu(node) {
+    if (!node.isConnected || node.getAttribute(GHOST_ATTRIBUTE) || !node.hasAttribute('data-anchor-side') ||
+        !node.style.positionAnchor || node.style.positionAnchor === 'none') return
+    var rect = node.getBoundingClientRect()
+    if (rect.width && rect.height) anchoredMenuBounds.set(node, rect)
+  }
+
   /**
    * Put a fading clone of a removed surface back where it was, then retire it.
    *
@@ -2713,6 +2727,19 @@
 
     var clone = node.cloneNode(true)
     if (!clone || clone.nodeType !== 1) return
+    if (kind === GHOST_MENU && node.hasAttribute('data-anchor-side') && node.style.positionAnchor) {
+      var bounds = anchoredMenuBounds.get(node)
+      // A menu mounted and removed in one commit never painted an exit to replay.
+      if (!bounds) return
+      Object.assign(clone.style, {
+        position: 'fixed', positionAnchor: 'none', positionArea: 'none', positionTryFallbacks: 'none',
+        inset: 'auto', margin: '0', boxSizing: 'border-box',
+        left: bounds.left + 'px', top: bounds.top + 'px', width: bounds.width + 'px', height: bounds.height + 'px',
+      })
+      clone.removeAttribute('data-anchor-side')
+      clone.removeAttribute('data-anchor-align')
+      clone.removeAttribute('data-match-anchor-width')
+    }
     // A quick reopen reuses the live surface's IDs. The fading copy must not
     // shadow it in getElementById/aria-controls lookups (e.g. the reasoning slider).
     clone.removeAttribute('id')
@@ -2773,8 +2800,29 @@
     if (typeof MutationObserver !== 'function') return
     if (window.__dshDesktopGhostWatcher === true) return
     window.__dshDesktopGhostWatcher = true
+    var anchoredMenus = new Set()
+    function rememberLiveMenus() {
+      anchoredMenus.forEach(function (menu) {
+        if (!menu.isConnected) anchoredMenus.delete(menu)
+        else rememberAnchoredMenu(menu)
+      })
+    }
+    // Capture runs before selection, Escape or an outside click removes the menu.
+    ['pointerdown', 'click', 'keydown'].forEach(function (event) {
+      document.addEventListener(event, rememberLiveMenus, true)
+    })
+    window.addEventListener('resize', rememberLiveMenus)
+    window.addEventListener('scroll', rememberLiveMenus, true)
     var observer = new MutationObserver(function (records) {
       if (!affectsOverlay(records)) return
+      records.forEach(function (record) {
+        Array.from(record.addedNodes || []).forEach(function (node) {
+          if (node.nodeType !== 1 || !node.isConnected || node.getAttribute(GHOST_ATTRIBUTE)) return
+          var menus = node.hasAttribute('data-anchor-side') ? [node] : node.querySelectorAll('[data-anchor-side]:not([data-dsh-ghost])')
+          Array.from(menus).forEach(function (menu) { anchoredMenus.add(menu); rememberAnchoredMenu(menu) })
+        })
+      })
+      anchoredMenus.forEach(function (menu) { if (!menu.isConnected) anchoredMenus.delete(menu) })
       // A quick reopen replaces the closing scenery in the same microtask.
       // Resume from its visible height rather than rendering both full lists.
       overlayQueryAll('[data-plugin-scope] > [class*="_groupBody"]:not([data-dsh-ghost]), [data-testid="todo-panel"] > div > ul:not([data-dsh-ghost])').forEach(function (body) {
@@ -2802,6 +2850,10 @@
       }
     })
     observer.observe(document.body, { childList: true, subtree: true })
+    document.querySelectorAll('[data-anchor-side]:not([data-dsh-ghost])').forEach(function (menu) {
+      anchoredMenus.add(menu)
+      rememberAnchoredMenu(menu)
+    })
   }
 
   /**

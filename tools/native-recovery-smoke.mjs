@@ -1,3 +1,4 @@
+import {recoveryFiles,recoveryFile} from './recovery-package-files.mjs'
 // Real desktop IPC, restart interruption and cold restoration in an isolated
 // data root. No model requests, global installs or user profile writes.
 import assert from 'node:assert/strict'
@@ -48,7 +49,7 @@ async function kill() {
   }
   await browser?.close().catch(() => {}); browser = null; await sleep(300)
 }
-async function entries() { return (await readdir(packages).catch(() => [])).filter(name => name.endsWith('.json')) }
+async function entries() { return (await recoveryFiles(packages)).map(name=>name.replace('transitions/','')) }
 async function journals() {
   const directory = join(root, 'maintenance/operations')
   return Promise.all((await readdir(directory).catch(() => [])).filter(name => name.endsWith('.json')).map(async name => JSON.parse(await readFile(join(directory, name), 'utf8'))))
@@ -82,9 +83,11 @@ try {
   const restarting = page.evaluate(async () => {
     let payload
     try {
+      const { frontendVersion } = await window.__TAURI__.core.invoke('remote_status', { identity: window.__DSH_REMOTE_IDENTITY__ })
+      if (!frontendVersion) throw Error('Current frontend version is unavailable')
       const end = Date.now() + 45000
       while (!payload) {
-        try { payload = await window.__DSH_UI_STATE__.prepareRemoteApply('0.2.1-rc.2') }
+        try { payload = await window.__DSH_UI_STATE__.prepareRemoteApply(frontendVersion) }
         catch (error) { if (!error.message.includes('输入或提交') || Date.now() >= end) throw error; await new Promise(resolve => setTimeout(resolve, 500)) }
       }
     }
@@ -101,14 +104,14 @@ try {
   let saved
   for (let i = 0; i < 2800; i++) {
     for (const name of await entries()) {
-      const material=await readFile(join(packages,name),'utf8').then(JSON.parse).catch(()=>null)
+      const material=await readFile(await recoveryFile(packages,name),'utf8').then(JSON.parse).catch(()=>null)
       if(material && !material.draftsOnly) {saved=name;break}
     }
     if (saved || restartError) break; await sleep(20)
   }
-  if (!saved) await writeFile(join(root, 'capture-failure.json'), JSON.stringify(await page.evaluate(() => window.__RECOVERY_PROBE__), null, 2))
+  if (!saved) await writeFile(join(root, 'capture-failure.json'), JSON.stringify({ restartError, probe: await page.evaluate(() => window.__RECOVERY_PROBE__).catch(() => null) }, null, 2))
   assert.ok(saved, 'Restart saved a durable package before replacing the backend: ' + restartError)
-  const packageText = await readFile(join(packages, saved), 'utf8')
+  const packageText = await readFile(await recoveryFile(packages, saved), 'utf8')
   assert.ok(packageText.includes('跨进程恢复草稿')); assert.ok(packageText.includes('sessionUpdatedAt'))
   let restartJournal
   for (let i = 0; i < 200; i++) {
@@ -184,13 +187,15 @@ try {
   })
   let terminalRestartError
   const terminalRestart=page.evaluate(async()=>{
-    const payload=await window.__DSH_UI_STATE__.prepareRemoteApply('0.2.1-rc.2')
+    const {frontendVersion}=await window.__TAURI__.core.invoke('remote_status',{identity:window.__DSH_REMOTE_IDENTITY__})
+    if(!frontendVersion)throw Error('Current frontend version is unavailable')
+    const payload=await window.__DSH_UI_STATE__.prepareRemoteApply(frontendVersion)
     return window.__TAURI__.core.invoke('plugins_restart',{identity:window.__DSH_REMOTE_IDENTITY__,payload})
   }).catch(error=>{terminalRestartError=error.message})
   let terminalPackage,terminalBytes
   for(let i=0;i<600 && !terminalPackage;i++) {
     for(const name of await entries()) {
-      const bytes=await readFile(join(packages,name),'utf8'),material=JSON.parse(bytes)
+      const bytes=await readFile(await recoveryFile(packages,name),'utf8'),material=JSON.parse(bytes)
       if(material.payload.dialogs.some(dialog=>dialog.id==='desktop-terminal')) {terminalPackage=material;terminalBytes=bytes;break}
     }
     if(terminalRestartError)throw Error(terminalRestartError)
@@ -220,7 +225,7 @@ try {
   await page.keyboard.press('Escape');await openDshMaintenance(page,'backup')
   await page.locator('[data-dsh-recovery-id="'+terminalPackage.recoveryId+'"]').getByRole('button',{name:'跳过终端状态，恢复其余内容',exact:true}).click()
   await page.getByRole('button',{name:'保留稍后处理',exact:true}).waitFor()
-  assert.equal(await readFile(join(packages,terminalPackage.recoveryId+'.json'),'utf8'),terminalBytes)
+  assert.equal(await readFile(await recoveryFile(packages,terminalPackage.recoveryId+'.json'),'utf8'),terminalBytes)
   assert.equal(await page.evaluate(()=>window.coldTerminalStarts),0)
   pass('skipping terminal state still refuses a conflicting cleared draft and retains the complete original package')
   await page.getByRole('button',{name:'保留稍后处理',exact:true}).click()
@@ -241,7 +246,7 @@ try {
   assert.equal(partial.text,'跨进程恢复草稿');assert.deepEqual(partial.files,['keep.txt']);assert.equal(partial.frozen,false)
   assert.deepEqual(await page.evaluate(()=>window.__TAURI__.core.invoke('terminal_list',{identity:window.__DSH_TERMINAL_IDENTITY__})),[])
   assert.equal(await page.evaluate(()=>window.coldTerminalStarts),0)
-  assert.equal(await readFile(join(packages,terminalPackage.recoveryId+'.json'),'utf8'),terminalBytes)
+  assert.equal(await readFile(await recoveryFile(packages,terminalPackage.recoveryId+'.json'),'utf8'),terminalBytes)
   assert.ok((await journals()).some(record=>record.checkpointId===terminalPackage.recoveryId && record.stage==='complete' && record.completedSteps.includes('terminal-state-retained')))
   pass('explicitly skipping cold terminal state restores drafts and attachments without opening shells or deleting the original package')
   await page.screenshot({ path: join(root, 'restored.png') })

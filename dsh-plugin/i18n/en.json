@@ -1183,5 +1183,12 @@
   "无法读取音频，请选择有效的 MP3、WAV、OGG 或 M4A 文件。": "Could not read the audio. Choose a valid MP3, WAV, OGG, or M4A file.",
   "无法播放音效，请在桌面应用中重试并检查系统声音设置。": "Could not play the sound. Try again in the desktop app and check your system sound settings.",
   "支持 MP3、WAV、OGG、M4A 等格式，最长 30 秒、最大 10 MB。导入后无需保留原文件。": "Supports MP3, WAV, OGG, M4A, and more, up to 30 seconds and 10 MB. You can move or delete the original file after importing.",
-  "请在桌面应用中修改声音提醒设置": "Change sound reminder settings in the desktop app"
+  "请在桌面应用中修改声音提醒设置": "Change sound reminder settings in the desktop app",
+  "正在检查界面恢复空间…": "Checking UI recovery space…",
+  "正在保存当前界面…": "Saving the current interface…",
+  "正在保存升级恢复快照…": "Saving the update recovery snapshot…",
+  "升级恢复快照空间已满。请在“故障诊断”的恢复列表中处理待恢复内容后重试；现有草稿已保留。": "Update recovery snapshot storage is full. Review pending content in the Diagnostics recovery list, then retry. Existing drafts have been preserved.",
+  "草稿恢复空间已满，请在“故障诊断”中处理历史恢复记录；现有草稿已保留。": "Draft recovery storage is full. Review historical recovery records in Diagnostics. Existing drafts have been preserved.",
+  "无法安全访问恢复目录，更新已停止。请检查目录权限并查看故障诊断。": "The recovery directory cannot be safely accessed, so the update stopped. Check directory permissions and Diagnostics.",
+  "无法保存升级恢复快照。请检查磁盘空间和目录写入权限；当前版本和草稿已保留。": "Could not save the update recovery snapshot. Check free disk space and directory write permissions. The current version and drafts have been preserved."
 }

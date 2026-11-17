@@ -11,15 +11,23 @@ export async function checkWorkspaceMotion(page, root, activeId) {
   const workspaceId = await page.evaluate(async activeId => {
     const ctx = window.__ARCHIVE_TEST__
     const workspace = ctx.workspaces.list.getSnapshot().items.find(workspace => workspace.sessionIds.includes(activeId))
+    let newest = activeId
     for (let i = 1; i <= 8; i++) {
       const id = await ctx.sessions.create({ workspaceId: workspace.workspaceId })
+      newest = id
       const title = 'Motion session ' + i
       const response = await fetch('/archive-smoke/seed', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, title, turns: 1 }) })
       if (!response.ok) throw Error(await response.text())
       const held = ctx.sessions.retain(id, { source: 'motion-fixture' }); await held.ready
       await held.binding.session.rename(title); held.release()
     }
-    ctx.uiWorkspace.openSession(activeId)
+    // New clients automatically raise the row watermark to reveal the current
+    // Session. Keep it near the top, then remount the list to reset that watermark.
+    ctx.uiWorkspace.openSession(newest)
+    const view = window.__DSH_ARCHIVE_SMOKE__.view
+    view.actions.setGroupBy('flat')
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    view.actions.setGroupBy('workspace')
     return workspace.workspaceId
   }, activeId)
   const project = region.locator('[data-row-key="workspace:' + workspaceId + '"]')
@@ -28,9 +36,13 @@ export async function checkWorkspaceMotion(page, root, activeId) {
   await settle()
   await page.evaluate(() => {
     window.workspaceMotionCalls = []
+    window.workspaceMotionNodes = []
     const animate = Element.prototype.animate
     Element.prototype.animate = function (frames, options) {
-      if (this.closest('[data-slot="sidebar.workspaces"]')) window.workspaceMotionCalls.push({ key: this.getAttribute('data-row-key'), frames, options })
+      if (this.closest('[data-slot="sidebar.workspaces"]')) {
+        window.workspaceMotionCalls.push({ key: this.getAttribute('data-row-key'), frames, options })
+        window.workspaceMotionNodes.push(this)
+      }
       return animate.call(this, frames, options)
     }
   })
@@ -41,14 +53,43 @@ export async function checkWorkspaceMotion(page, root, activeId) {
     await settle()
   }
   const sample = async locator => {
+    // Only visible rows are animated. Long workspace lists put this fixture
+    // below the viewport, so exercise it through the same scroll as a user.
+    await locator.scrollIntoViewIfNeeded()
+    if (await locator.getAttribute('class').then(value => value?.includes('dshArchive__toggle'))) {
+      // The archive and workspace views share a scroll container. Reset the
+      // fixture's prior scroll before sampling a different list's visible rows.
+      await region.locator('[role="tree"]').evaluate(tree => {
+        const root = tree.closest('[data-slot="sidebar.workspaces"]')
+        for (let node = tree; node && node !== root; node = node.parentElement) node.scrollTop = 0
+      })
+    }
+    await settle()
     const result = await locator.evaluate(async node => {
       const root = node.closest('[data-slot="sidebar.workspaces"]'), frames = []
       window.workspaceMotionCalls = []
+      window.workspaceMotionNodes = []
       node.click()
-      const start = performance.now()
-      while (performance.now() - start < 260) {
+      // A large view can take longer than the animation to commit. Start the
+      // sampling window on its first frame, after that synchronous render.
+      let start
+      while (start === undefined || performance.now() - start < 260) {
         await new Promise(requestAnimationFrame)
-        frames.push([...root.querySelectorAll('[data-row-key]')].map(row => ({ key: row.dataset.rowKey, y: row.getBoundingClientRect().top, opacity: getComputedStyle(row).opacity })))
+        start ??= performance.now()
+        // Sampling every imported row and ancestor can itself consume an entire
+        // animation frame. Measure a bounded set of the actual animation targets.
+        const rows = [...new Set(window.workspaceMotionNodes)].filter(node => node.isConnected).slice(0, 8)
+        const opacities = new Map()
+        const paintedOpacity = row => {
+          if (!row || row === root) return 1
+          if (!opacities.has(row)) opacities.set(row, Number(getComputedStyle(row).opacity) * paintedOpacity(row.parentElement))
+          return opacities.get(row)
+        }
+        frames.push(rows.map((row, index) => {
+          const opacity = paintedOpacity(row)
+          const motionIndex = window.workspaceMotionNodes.indexOf(row)
+          return { key: row.dataset.rowKey || (motionIndex >= 0 ? 'animation:' + motionIndex : 'exit:' + index), y: row.getBoundingClientRect().top, opacity }
+        }))
       }
       return { frames, calls: window.workspaceMotionCalls }
     })
@@ -62,7 +103,10 @@ export async function checkWorkspaceMotion(page, root, activeId) {
       if (!values.has(row.key)) values.set(row.key, new Set())
       values.get(row.key).add(row.y.toFixed(2) + ':' + row.opacity)
     }
-    assert.ok([...values.values()].some(values => values.size > 2), label + ' interpolates over multiple frames')
+    assert.ok([...values.values()].some(values => values.size > 2), label + ' interpolates over multiple frames: ' + JSON.stringify({
+      frameCount: result.frames.length, callCount: result.calls.length,
+      first: result.frames[0]?.slice(0, 5), last: result.frames.at(-1)?.slice(0, 5),
+    }))
     samples.push({ label, calls: result.calls.length })
   }
   await preference('on', true)
@@ -74,6 +118,9 @@ export async function checkWorkspaceMotion(page, root, activeId) {
       await new Promise(requestAnimationFrame)
       widths.add(slot.getBoundingClientRect().width.toFixed(2))
     }
+    window.workspaceSearchMotion = { widths: [...widths], elements: [...slot.parentElement.children].map(node => ({
+      className: node.className, transition: getComputedStyle(node).transition, animation: getComputedStyle(node).animation,
+    })), mode: document.documentElement.getAttribute('data-dsh-desktop-animation') }
     return widths.size
   })
   assert.ok(await searchMotion() > 2, 'search expands even when explicit on overrides OS reduced motion')
@@ -92,7 +139,12 @@ export async function checkWorkspaceMotion(page, root, activeId) {
   await project.evaluate(node => node.click())
   await preference('off')
   assert.equal(await region.locator('[class*="_exits"] > *').count(), 0)
-  assert.equal(await searchMotion(), 1, 'search expands immediately with motion off')
+  await searchMotion()
+  const offSearch = await page.evaluate(() => window.workspaceSearchMotion)
+  // The current sidebar scrollbar can change the available width even while
+  // search itself has no motion. Verify the header's actual animation contract.
+  assert.ok(offSearch.elements.every(node => node.transition === 'none' && node.animation === 'none'),
+    'search and adjacent header controls have no transitions or animations with motion off')
   await page.keyboard.press('Escape')
   await settle()
   for (const animation of ['off', 'system']) {

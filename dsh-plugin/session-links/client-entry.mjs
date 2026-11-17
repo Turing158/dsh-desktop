@@ -30,6 +30,7 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/session-links', factory(require
           for (const [entry, remove] of mounted) if (!entries.includes(entry)) { remove(); mounted.delete(entry) }
           for (const entry of entries) {
             if (mounted.has(entry)) continue
+            const delegate = window.__DSH_SLOT_CHILDREN__?.(React, ctx.slots, entry, 'desktop.links.' + entry.options.key)
             function LinkedMessage(props) {
               useLocale(React)
               const root = React.useRef(null)
@@ -50,12 +51,16 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/session-links', factory(require
                 })
               }, [links])
               return h('div', { ref: root, 'data-dsh-session-message': props.node.kind, style: { display: 'contents' } },
-                h(entry.component, { ...props, node }), error ? h('span', { role: 'alert' }, error) : null)
+                h(delegate?.component || entry.component, { ...props, node }), error ? h('span', { role: 'alert' }, error) : null)
             }
             wrappers.add(LinkedMessage)
-            mounted.set(entry, ctx.slots.register({ ...entry.options, name: slot,
+            const unregister = ctx.slots.register({ ...entry.options, name: slot,
               priority: (entry.options.priority || 0) - 1, inject: entry.inject, store: entry.store, locale: entry.locale,
-            }, LinkedMessage))
+              children: delegate?.children,
+            }, LinkedMessage)
+            let unmount
+            try { unmount = delegate?.mount() } catch (error) { unregister(); throw error }
+            mounted.set(entry, () => { unmount?.(); unregister() })
           }
         } finally { syncing = false }
       }

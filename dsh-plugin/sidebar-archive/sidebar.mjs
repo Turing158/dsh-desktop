@@ -19,7 +19,34 @@ export function rowSessionId(row) {
 }
 
 /** Keep the native fork action for active sessions, using the menu's own row id. */
-export function mountArchiveSessionMenu(React, slots, workspaces) {
+export function mountArchiveSessionMenu(React, slots, workspaces, contextMenus, locale) {
+  // Newer clients moved built-in actions into the structured context menu.
+  // Keep the same read-only archive presentation on that surface as well.
+  if (contextMenus?.active && locale) {
+    const hidden = new Map()
+    const update = () => {
+      const target = contextMenus.active.getSnapshot()
+      const archived = target?.kind === 'session' && workspaces.getSnapshot().archivedSessionIds.includes(target.value.sessionId)
+      const label = locale.bind('workspace')('menu.fork')
+      for (const [button, disabled] of hidden) {
+        button.removeAttribute('data-dsh-archive-fork-hidden'); button.disabled = disabled
+      }
+      hidden.clear()
+      if (!archived) return
+      for (const button of document.querySelectorAll('[role="menu"] button[role="menuitem"]')) {
+        if (!button.textContent.trim().startsWith(label)) continue
+        hidden.set(button, button.disabled)
+        button.setAttribute('data-dsh-archive-fork-hidden', ''); button.disabled = true
+      }
+    }
+    const observer = observeChrome('[role="menu"]', update)
+    const offTarget = contextMenus.active.subscribe(update), offWorkspace = workspaces.subscribe(update)
+    update()
+    return () => {
+      observer.disconnect(); offTarget(); offWorkspace()
+      for (const [button, disabled] of hidden) { button.removeAttribute('data-dsh-archive-fork-hidden'); button.disabled = disabled }
+    }
+  }
   const slot = 'sidebar.workspaces.session.menu.item'
   return slots.inject(slot, () => {
     let remove, registering = false
@@ -59,7 +86,12 @@ export function mountArchiveSidebar(React, createRoot, Toggle, navigation, onOpe
     for (const element of filterRows.keys()) if (!element.isConnected) filterRows.delete(element)
     for (const element of document.querySelectorAll('[role="menu"][class*="_viewOptionsMenu"] [class*="_viewport"] > *')) {
       const fiberKey = Object.keys(element).find(key => key.startsWith('__reactFiber$'))
-      if (!ARCHIVE_FILTER_ITEMS.has(element[fiberKey]?.key)) continue
+      let filter = false
+      for (let fiber = element[fiberKey], depth = 0; fiber && depth < 8; fiber = fiber.return, depth++) {
+        const key = fiber.key
+        if ([...ARCHIVE_FILTER_ITEMS].some(id => key === id || key?.endsWith('.$' + id) || key?.endsWith(':$' + id))) { filter = true; break }
+      }
+      if (!filter) continue
       const button = element.querySelector('button')
       if (!filterRows.has(element)) filterRows.set(element, { button, disabled: button?.disabled })
       element.setAttribute('data-dsh-archive-filter-hidden', '')

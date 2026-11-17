@@ -13,7 +13,8 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/account-popover', factory(requi
       style.dataset.dshAccountStyle = ''
       style.textContent = css
       document.head.append(style)
-      const unmount = mountAccountPopover(ctx.slots, Original => createAccountLauncher(React, ReactDOM, ui, Original))
+      const unmount = mountAccountPopover(ctx.slots, Original => createAccountLauncher(React, ReactDOM, ui, Original),
+        document.documentElement, entry => window.__DSH_SLOT_CHILDREN__(React, ctx.slots, entry, 'desktop.account'))
       const restoreNavigation = mountAccountSettingsNavigation(ctx.locale)
       return () => { restoreNavigation(); unmount(); style.remove() }
     })

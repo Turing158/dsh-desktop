@@ -1395,6 +1395,8 @@ var React = require('react')
         installing: '正在连接更新源并安装新版…', downloading: '正在下载程序和依赖…',
         'installing-dependencies': '正在安装依赖组件…', verifying: '正在复制并校验程序文件…',
         prepared: '新版已准备好，等待切换…', 'checking-data': '正在检查数据兼容性…',
+        'checking-recovery': '正在检查界面恢复空间…', 'capturing-ui': '正在保存当前界面…',
+        'saving-recovery': '正在保存升级恢复快照…',
         'saving-sessions': '正在保存会话并停止旧版…', checkpointing: '正在备份更新前的数据…',
         starting: '正在启动新版…', restoring: '正在恢复界面和草稿…', committing: '正在确认更新结果…',
         'rolling-back': '新版启动未完成，正在恢复旧版和数据…', 'rolled-back': '更新未完成，已恢复旧版和数据。',
@@ -1998,6 +2000,7 @@ var React = require('react')
 
       function candidateError(error) {
         var code = String(error?.message || error)
+        if (/^recovery-/.test(code)) return upgradeError(error)
         if (code === 'runtime-candidate-install-failed') return '候选安装失败，当前版本继续运行。请检查网络、磁盘空间和安装权限。'
         if (code === 'runtime-candidate-install-timeout') return '候选安装超时，当前版本继续运行。'
         if (code === 'runtime-candidate-cancelled') return '候选准备已取消，当前版本继续运行。'
@@ -2007,6 +2010,10 @@ var React = require('react')
 
       function upgradeError(error) {
         var code = String(error?.message || error)
+        if (code === 'recovery-transition-capacity') return t('升级恢复快照空间已满。请在“故障诊断”的恢复列表中处理待恢复内容后重试；现有草稿已保留。')
+        if (code === 'recovery-capacity') return t('草稿恢复空间已满，请在“故障诊断”中处理历史恢复记录；现有草稿已保留。')
+        if (code === 'recovery-capacity-unverified') return t('无法安全访问恢复目录，更新已停止。请检查目录权限并查看故障诊断。')
+        if (code === 'recovery-save-failed') return t('无法保存升级恢复快照。请检查磁盘空间和目录写入权限；当前版本和草稿已保留。')
         if (/^update-flush-/.test(code)) return t('会话数据尚未保存完成，更新已停止。请稍后重试。')
         if (/^update-(data-|session-schema)/.test(code)) return t('当前数据布局或会话格式暂不支持自动更新，旧版本和数据已保留。')
         if (code === 'update-candidate-required' || code === 'runtime-candidate-stale') return t('已准备的版本已失效，请重新检测更新。')

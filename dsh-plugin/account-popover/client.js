@@ -660,7 +660,7 @@
   }
 
   // dsh-plugin/account-popover/mount.mjs
-  function mountAccountPopover(slots, createLauncher, root = document.documentElement) {
+  function mountAccountPopover(slots, createLauncher, root = document.documentElement, delegateEntry) {
     if (!slots.entries || !slots.subscribe) return () => {
     };
     let source, remove, disposed = false, syncing = false;
@@ -679,16 +679,29 @@
         clear();
         if (!next) return;
         source = next;
-        const Launcher = createLauncher(next.component);
+        const delegate = delegateEntry?.(next);
+        const Launcher = createLauncher(delegate?.component || next.component);
         replacements.add(Launcher);
-        remove = slots.register({
+        const unregister = slots.register({
           ...next.options,
           name: "settings.launcher",
           priority: (next.options.priority || 0) - 10,
           inject: next.inject,
           locale: next.locale,
-          store: next.store
+          store: next.store,
+          ...delegate ? { children: delegate.children } : {}
         }, Launcher);
+        let unmount;
+        try {
+          unmount = delegate?.mount();
+        } catch (error) {
+          unregister();
+          throw error;
+        }
+        remove = () => {
+          unmount?.();
+          unregister();
+        };
       } finally {
         syncing = false;
       }
@@ -766,7 +779,12 @@
         style.dataset.dshAccountStyle = "";
         style.textContent = style_default;
         document.head.append(style);
-        const unmount = mountAccountPopover(ctx.slots, (Original) => createAccountLauncher(React, ReactDOM, ui, Original));
+        const unmount = mountAccountPopover(
+          ctx.slots,
+          (Original) => createAccountLauncher(React, ReactDOM, ui, Original),
+          document.documentElement,
+          (entry) => window.__DSH_SLOT_CHILDREN__(React, ctx.slots, entry, "desktop.account")
+        );
         const restoreNavigation = mountAccountSettingsNavigation(ctx.locale);
         return () => {
           restoreNavigation();

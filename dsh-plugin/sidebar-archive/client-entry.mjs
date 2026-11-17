@@ -91,16 +91,33 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/sidebar-archive', factory(requi
       children: { [HISTORY_SLOT]: { kind: 'list', scope: 'session' } },
     }, ArchivePanel)
     const offHistory = mountHistorySlots(React, ctx.slots)
-    const offMenu = mountArchiveSessionMenu(React, ctx.slots, ctx.workspaces.list)
+    const offMenu = mountArchiveSessionMenu(React, ctx.slots, ctx.workspaces.list, ctx.get('contextMenus'), ctx.get('locale'))
     const style = document.createElement('style'); style.textContent = css; document.head.append(style)
     const offSidebar = mountArchiveSidebar(React, createRoot, Toggle, navigation, () => {
       if (document.documentElement.hasAttribute('data-dsh-browser') && document.querySelector('[class*="_frame"]:not([data-sidebar-collapsed])')) ctx.layout.toggleSidebar()
     })
     if (navigation.getSnapshot().only) navigation.enter()
-    if (window.__DSH_UI_BOOT__?.smoke) window.__DSH_ARCHIVE_SMOKE__ = { navigation, view }
+    if (window.__DSH_UI_BOOT__?.smoke || window.__DSH_ARCHIVE_TEST__) window.__DSH_ARCHIVE_SMOKE__ = { navigation, view }
     return () => { navigation.exit(); offSidebar(); offMenu(); navigation.dispose(); offHistory(); offMain(); style.remove() }
   }
   return { inject: ['slots', 'sessions', 'workspaces', 'layout'], apply(ctx) {
-    return ctx.slots.inject('sidebar.workspaces', () => ctx.slots.inject('conversation.view', () => ctx.slots.inject('main', () => install(ctx))))
+    return ctx.slots.inject('sidebar.workspaces', () => ctx.slots.inject('conversation.view', () => ctx.slots.inject('main', () => {
+      // A declaration can arrive before its browser entry. Wait for the store,
+      // and follow its lifetime so saved archive filters are always restored.
+      let source, unmount, syncing = false
+      const sync = () => {
+        if (syncing) return
+        syncing = true
+        try {
+          const next = ctx.slots.entriesOfSlot('sidebar.workspaces').find(entry => entry.store)
+          if (next === source) return
+          unmount?.(); unmount = undefined; source = next
+          if (next) unmount = install(ctx)
+        } finally { syncing = false }
+      }
+      const off = ctx.slots.subscribe('sidebar.workspaces', sync)
+      sync()
+      return () => { off(); unmount?.() }
+    })))
   } }
 } })

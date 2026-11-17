@@ -59,7 +59,7 @@ pub fn progress(app: &AppHandle, step: &str) {
     let manager = app.state::<ManagerState>();
     let value = if let Ok(mut slot) = manager.status.lock() {
         let now = crate::maintenance::now_ms();
-        let new_attempt = step == "installing" || (step == "verifying" && slot.as_ref().is_some_and(|v|
+        let new_attempt = step == "checking-recovery" || step == "installing" || (step == "verifying" && slot.as_ref().is_some_and(|v|
             matches!(v.step.as_str(), "rolled-back" | "complete" | "cancelled" | "failed")));
         let started = if new_attempt {
             now
@@ -179,6 +179,41 @@ fn contract(
     }
     Ok(())
 }
+// Preserve safe error codes and the exact failed step before returning to the
+// page. Child-process output may contain private paths; journal only a fallback.
+fn preparation_step<T>(journal:&crate::maintenance::Progress, step:&str, fallback:&str,
+    action:impl FnOnce()->Result<T,String>)->Result<T,String> {
+    journal.update(Stage::Preparing,step)?;
+    action().map_err(|error| {
+        let code=if ["recovery-","runtime-","update-","snapshot-"].iter().any(|prefix|error.starts_with(prefix))
+            && error.len()<=160 && error.bytes().all(|b|b.is_ascii_lowercase() || b==b'-') {error.as_str()} else {fallback};
+        let _=journal.failed(code);
+        error
+    })
+}
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+    #[test]
+    fn failed_recovery_save_records_the_real_stage_and_error_without_private_output() {
+        for (error,expected) in [("recovery-transition-capacity","recovery-transition-capacity"),
+            ("recovery-save-failed","recovery-save-failed"),("disk failure at private path","recovery-save-failed")] {
+            let coordinator=crate::maintenance::MaintenanceCoordinator::default();
+            let lease=coordinator.begin(crate::maintenance::Kind::Update).unwrap();let journal=lease.progress();
+            journal.target("0.2.2-rc.3").unwrap();
+            preparation_step(&journal,"data-contract-check-started","update-data-check-failed",||Ok(())).unwrap();
+            let result:Result<(),String>=preparation_step(&journal,"recovery-save-started","recovery-save-failed",||Err(error.into()));
+            assert_eq!(result.unwrap_err(),error);
+            let record=coordinator.status().unwrap();
+            assert_eq!(record.stage,Stage::RecoveryRequired);
+            assert_eq!(record.error_code.as_deref(),Some(expected));
+            assert_eq!(record.completed_steps.last().map(String::as_str),Some("recovery-save-started"));
+            assert_eq!(record.target_runtime.as_deref(),Some("0.2.2-rc.3"));
+            let dir=tempfile::tempdir().unwrap();record.save(dir.path()).unwrap();
+            assert_eq!(crate::maintenance::OperationJournal::load(&dir.path().join(format!("{}.json",record.operation_id))).unwrap().error_code,record.error_code);
+        }
+    }
+}
 pub async fn install(
     window: WebviewWindow,
     identity: crate::remote_control::Identity,
@@ -233,17 +268,24 @@ pub async fn install(
             (roots, config, s.ui.identity())
         };
         let guard = crate::remote_control::ApplyingGuard(shared.clone());
-        progress(&app, "verifying");
-        lease.progress().update(Stage::Preparing,"candidate-verification-started")?;
-        crate::runtime_store::verify_candidate(&app, &target)?;
-        progress(&app, "checking-data");
-        lease.progress().update(Stage::Preparing,"data-contract-check-started")?;
-        contract(&app, &source, &target, &roots)?;
-        let mut snapshot = UiSnapshot::capture(payload, ui_identity)?;
-        let recovery = crate::recovery_store::persist(&app, &snapshot)?;
-        snapshot.restore_frontend_version = target.version.clone();
         let journal = lease.progress();
         journal.target(&target_version)?;
+        let (mut snapshot,recovery)=(|| {
+        progress(&app, "verifying");
+        preparation_step(&journal,"candidate-verification-started","update-candidate-verification-failed",
+            ||crate::runtime_store::verify_candidate(&app, &target))?;
+        progress(&app, "checking-data");
+        preparation_step(&journal,"data-contract-check-started","update-data-check-failed",
+            ||contract(&app, &source, &target, &roots))?;
+        progress(&app, "capturing-ui");
+        let snapshot = preparation_step(&journal,"ui-capture-started","update-ui-capture-failed",
+            ||UiSnapshot::capture(payload, ui_identity))?;
+        progress(&app, "saving-recovery");
+        let recovery = preparation_step(&journal,"recovery-save-started","recovery-save-failed",
+            ||crate::recovery_store::persist(&app, &snapshot))?;
+        Ok::<_,String>((snapshot,recovery))
+        })().map_err(|error| {failure(&app,&error);progress(&app,"failed");error})?;
+        snapshot.restore_frontend_version = target.version.clone();
         journal.checkpoint(
             recovery.id,
             source

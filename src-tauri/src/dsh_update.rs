@@ -125,7 +125,7 @@ fn diagnostic_code(error: &str) -> &str {
     const WRAPPERS: [&str; 2] = ["runtime-freeze", "runtime-profile-check"];
     error
         .split(|c: char| !(c.is_ascii_lowercase() || c == '-'))
-        .filter(|token| token.len() > "runtime-".len() && token.starts_with("runtime-") && !WRAPPERS.contains(token))
+        .filter(|token| token.len() > "runtime-".len() && (token.starts_with("runtime-") || token.starts_with("recovery-")) && !WRAPPERS.contains(token))
         .last()
         .unwrap_or("runtime-candidate-preparation-failed")
 }
@@ -153,6 +153,9 @@ pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_c
             crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
                 "sourceVersion":source.version,"targetVersion":target_version,"stage":"installing"})).map_err(|_|"runtime-candidate-record-failed")?;
             guard.check()?;
+            crate::dsh_upgrade::progress(&app,"checking-recovery");
+            progress.update(crate::maintenance::Stage::Preparing,"recovery-capacity-check-started")?;
+            crate::recovery_store::preflight_transition(&app)?;
             crate::dsh_upgrade::progress(&app,"installing");
             progress.update(crate::maintenance::Stage::Preparing,"candidate-cache-check-started")?;
             crate::dsh_upgrade::progress(&app,"verifying");
@@ -615,6 +618,8 @@ mod tests {
         for (message, code) in [
             ("runtime-freeze 失败：runtime-dependency-outside-installation", "runtime-dependency-outside-installation"),
             ("runtime-candidate-install-timeout", "runtime-candidate-install-timeout"),
+            ("recovery-transition-capacity", "recovery-transition-capacity"),
+            ("recovery-capacity-unverified", "recovery-capacity-unverified"),
             ("runtime-profile-check 失败：runtime-profile-binding", "runtime-profile-binding"),
             ("runtime-freeze 失败：boom", "runtime-candidate-preparation-failed"),
             ("无法启动 npm：spawn failed", "runtime-candidate-preparation-failed"),

@@ -15,6 +15,9 @@ pnpm-lock.yaml
 plan/
 backups/
 
+# Local release documents
+/docs
+
 # Local design previews and one-off helpers
 /previews/
 /tools/add-reliability-translations.mjs

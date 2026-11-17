@@ -1,5 +1,5 @@
 /** Override only the account launcher seat, retaining its injected store and operations. */
-export function mountAccountPopover(slots, createLauncher, root = document.documentElement) {
+export function mountAccountPopover(slots, createLauncher, root = document.documentElement, delegateEntry) {
   if (!slots.entries || !slots.subscribe) return () => {}
   let source, remove, disposed = false, syncing = false
   const replacements = new WeakSet()
@@ -22,11 +22,16 @@ export function mountAccountPopover(slots, createLauncher, root = document.docum
       clear()
       if (!next) return
       source = next
-      const Launcher = createLauncher(next.component)
+      const delegate = delegateEntry?.(next)
+      const Launcher = createLauncher(delegate?.component || next.component)
       replacements.add(Launcher)
-      remove = slots.register({ ...next.options, name: 'settings.launcher',
+      const unregister = slots.register({ ...next.options, name: 'settings.launcher',
         priority: (next.options.priority || 0) - 10, inject: next.inject, locale: next.locale, store: next.store,
+        ...(delegate ? { children: delegate.children } : {}),
       }, Launcher)
+      let unmount
+      try { unmount = delegate?.mount() } catch (error) { unregister(); throw error }
+      remove = () => { unmount?.(); unregister() }
     } finally { syncing = false }
   }
   const off = slots.subscribe('settings.launcher', sync)

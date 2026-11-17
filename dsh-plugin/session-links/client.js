@@ -176,20 +176,33 @@
                 return h(
                   "div",
                   { ref: root, "data-dsh-session-message": props.node.kind, style: { display: "contents" } },
-                  h(entry.component, { ...props, node }),
+                  h(delegate?.component || entry.component, { ...props, node }),
                   error ? h("span", { role: "alert" }, error) : null
                 );
               };
               if (mounted.has(entry)) continue;
+              const delegate = window.__DSH_SLOT_CHILDREN__?.(React, ctx.slots, entry, "desktop.links." + entry.options.key);
               wrappers.add(LinkedMessage);
-              mounted.set(entry, ctx.slots.register({
+              const unregister = ctx.slots.register({
                 ...entry.options,
                 name: slot,
                 priority: (entry.options.priority || 0) - 1,
                 inject: entry.inject,
                 store: entry.store,
-                locale: entry.locale
-              }, LinkedMessage));
+                locale: entry.locale,
+                children: delegate?.children
+              }, LinkedMessage);
+              let unmount;
+              try {
+                unmount = delegate?.mount();
+              } catch (error) {
+                unregister();
+                throw error;
+              }
+              mounted.set(entry, () => {
+                unmount?.();
+                unregister();
+              });
             }
           } finally {
             syncing = false;

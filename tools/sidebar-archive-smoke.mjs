@@ -2,10 +2,12 @@
 import assert from 'node:assert/strict'
 import { spawn, execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkWorkspaceMotion } from './workspace-motion-checks.mjs'
+import { checkWorkspacePicker } from './workspace-picker-checks.mjs'
+import { handleOnboarding, dismissInitialWelcome, offlineModelPatch } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -13,6 +15,14 @@ const dshBin = process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA, 'npm
 const root = await mkdtemp(resolve('src-tauri/target/sidebar-archive-'))
 const home = join(root, 'home'), probe = join(root, 'probe'), workA = join(root, 'workspace-a'), workB = join(root, 'workspace-b')
 await Promise.all([home, probe, workA, workB].map(path => mkdir(path)))
+// Optional read-only copy of an existing data set; no credentials or profile
+// plugins are imported, and every test write stays in this isolated home.
+if (process.env.DSH_SIDEBAR_SAVED_HOME) {
+  const source = resolve(process.env.DSH_SIDEBAR_SAVED_HOME)
+  await cp(join(source, 'sessions'), join(home, 'sessions'), { recursive: true })
+  await mkdir(join(home, 'storages'))
+  await cp(join(source, 'storages/workspace.json'), join(home, 'storages/workspace.json'))
+}
 await writeFile(join(home, 'settings.yaml'), 'desktop-appearance:\n  animation: off\n  ui: desktop\n')
 await writeFile(join(probe, 'package.json'), JSON.stringify({ name: '@dsh-desktop/archive-smoke', type: 'module', main: 'index.js',
   exports: { '.': './index.js', './client': './client.js' }, dsh: { client: { platform: 'web', inject: ['@dsh-desktop/sidebar-archive'] } } }))
@@ -48,7 +58,7 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({ id: '@
   inject: ['slots', 'sessions', 'workspaces', 'uiWorkspace', 'layout', 'configForms'], apply(ctx) { window.__ARCHIVE_TEST__ = ctx }
 }) })`)
 const patch = (await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')).replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
-  + '\n- insert:\n    - id: archive-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
+  + offlineModelPatch + '\n- insert:\n    - id: archive-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 await writeFile(join(root, 'patch.yml'), patch)
 let child, browser, page, output = ''
 const errors = [], requests = [], report = { root, checks: [] }
@@ -56,7 +66,7 @@ const pass = name => { report.checks.push(name); console.log('PASS: ' + name) }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 try {
   child = spawn(process.execPath, [dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], {
-    cwd: workA, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: workA, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_UI_SMOKE_KEY: 'offline-fixture' }, stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
   let url
@@ -65,22 +75,31 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   page = await browser.newPage({ viewport: { width: 1280, height: 840 } })
   page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) errors.push(message.text()) })
   page.on('request', req => { if (/\/api\//.test(req.url())) requests.push({ url: req.url(), body: req.postData() }) })
-  await page.addInitScript(() => { window.__DSH_UI_BOOT__ = { smoke: true }; window.__DSH_DESKTOP_BOOT_HOST__ = true })
+  await page.addInitScript(() => { window.__DSH_UI_BOOT__ = { smoke: true }; window.__DSH_ARCHIVE_TEST__ = true; window.__DSH_DESKTOP_BOOT_HOST__ = true })
+  await handleOnboarding(page)
   await page.goto(url)
   await page.waitForFunction(() => {
     if (document.body.textContent.includes('Failed to load plugins')) throw Error(document.body.textContent)
-    return window.__ARCHIVE_TEST__ && window.__DSH_ARCHIVE_SMOKE__
+    return window.__ARCHIVE_TEST__
   })
-  await page.waitForFunction(() => {
-    for (const button of document.querySelectorAll('button')) {
-      if (button.textContent.trim() === '稍后配置') return true
-      if (['继续', '我知道了'].includes(button.textContent.trim()) && !button.disabled) button.click()
-    }
-    return false
-  })
-  await page.getByRole('button', { name: '稍后配置', exact: true }).click()
+  report.slots = await page.evaluate(() => window.__ARCHIVE_TEST__.slots.snapshot())
+  await page.waitForFunction(() => window.__DSH_ARCHIVE_SMOKE__)
+  await dismissInitialWelcome(page)
   await page.evaluate(() => document.documentElement.removeAttribute('data-dsh-browser'))
+  if (process.env.DSH_SIDEBAR_SAVED_HOME) {
+    await page.waitForFunction(() => window.__ARCHIVE_TEST__.sessions.list.getSnapshot().phase === 'ready')
+    report.savedData = await page.evaluate(() => ({
+      sessionCount: window.__ARCHIVE_TEST__.sessions.list.getSnapshot().ids.length,
+      workspaceCount: window.__ARCHIVE_TEST__.workspaces.list.getSnapshot().items.length,
+      renderedRows: document.querySelectorAll('[data-slot="sidebar.workspaces"] [data-row-key]').length,
+      headerVisible: !!document.querySelector('[data-sidebar-workspace-header]')?.getClientRects().length,
+    }))
+    console.log('SAVED DATA: ' + JSON.stringify(report.savedData))
+    assert.equal(report.savedData.headerVisible, true, 'saved data does not unmount the workspace browser')
+    assert.ok(report.savedData.renderedRows > 0, 'saved sessions render on startup')
+  }
   const ids = await page.evaluate(async paths => {
     const ctx = window.__ARCHIVE_TEST__, ids = []
     for (const [path, title, turns] of [[paths[0], 'Archived Alpha', 60], [paths[1], 'Archived Beta', 2], [paths[0], 'Active Gamma', 1]]) {
@@ -100,6 +119,7 @@ try {
   const region = page.locator('[data-slot="sidebar.workspaces"]')
   const row = id => region.locator('[data-row-key="session:' + id + '"]')
   await row(ids[2]).waitFor()
+  report.picker = await checkWorkspacePicker(page, root, ids[2])
   assert.equal(await row(ids[0]).count(), 0)
   await row(ids[2]).click({ button: 'right' })
   await page.getByRole('menuitem', { name: /^分叉会话/ }).waitFor()
@@ -156,7 +176,10 @@ try {
   await checkViewOptions('workspace')
   await toggle.click()
   await page.locator('.dshArchive__empty').waitFor()
-  for (const group of await region.locator('[role="treeitem"][aria-expanded="false"]').all()) await group.click()
+  const closedGroups = await region.locator('[role="treeitem"][aria-expanded="false"]').evaluateAll(nodes => nodes.map(node => node.dataset.rowKey))
+  // Expanding removes a row from the collapsed selector; address stable keys
+  // rather than its changing nth() positions when importing a long list.
+  for (const key of closedGroups) await region.locator('[data-row-key="' + key + '"]').click()
   await row(ids[0]).waitFor(); await row(ids[1]).waitFor()
   assert.equal(await row(ids[2]).count(), 0)
   assert.equal(await region.locator('[class*="_sectionLabel"]').textContent(), '归档区')
@@ -199,6 +222,19 @@ try {
   pass('returning restores normal workspace and conversation')
   report.motion = await checkWorkspaceMotion(page, root, ids[2])
   pass('workspace disclosure, overflow, list switching, rapid reversal and live animation preferences')
+  await page.reload()
+  await page.waitForFunction(() => window.__ARCHIVE_TEST__?.sessions.list.getSnapshot().phase === 'ready' && window.__DSH_ARCHIVE_SMOKE__)
+  await page.evaluate(id => window.__ARCHIVE_TEST__.uiWorkspace.openSession(id), ids[2])
+  await row(ids[2]).waitFor()
+  report.reloaded = await page.evaluate(() => ({
+    sessionCount: window.__ARCHIVE_TEST__.sessions.list.getSnapshot().ids.length,
+    workspaceCount: window.__ARCHIVE_TEST__.workspaces.list.getSnapshot().items.length,
+    renderedRows: document.querySelectorAll('[data-slot="sidebar.workspaces"] [data-row-key]').length,
+    headerVisible: !!document.querySelector('[data-sidebar-workspace-header]')?.getClientRects().length,
+  }))
+  assert.ok(report.reloaded.headerVisible && report.reloaded.renderedRows > 0, 'saved sidebar remains rendered after reload')
+  if (report.savedData) assert.ok(report.reloaded.sessionCount >= report.savedData.sessionCount, 'reload retains the imported session list')
+  pass('saved session list and workspace browser survive reload with desktop background settings')
   assert.deepEqual(errors, [])
 } catch (error) {
   report.error = error.stack

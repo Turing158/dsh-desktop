@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import {spawn,execFileSync} from 'node:child_process'
 import {randomUUID} from 'node:crypto'
 import {createRequire} from 'node:module'
-import {mkdtemp,mkdir,rmdir,writeFile,readFile,copyFile,cp,symlink,lstat,readlink,readdir,appendFile} from 'node:fs/promises'
+import {mkdtemp,mkdir,rmdir,writeFile,readFile,copyFile,cp,symlink,lstat,readlink,readdir,appendFile,unlink} from 'node:fs/promises'
 import {resolve,join,dirname} from 'node:path'
 import {createServer} from 'node:net'
 import {offlineModelPatch,handleOnboarding} from './dsh-ui-helpers.mjs'
@@ -14,7 +14,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.ca
 const root=process.env.DSH_UPGRADE_SOURCE_ROOT ? resolve(process.env.DSH_UPGRADE_SOURCE_ROOT)
   : process.env.DSH_UPGRADE_RESUME || await mkdtemp(resolve('src-tauri/target/native-upgrade-'))
 const home=join(root,'home'),workspace=join(root,'workspace'),exe=join(root,'deepseek-harness-desktop.exe')
-const bin=join(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
+const bin=process.env.DSH_DESKTOP_DSH_BIN || join(process.env.APPDATA,'npm/node_modules/@deepseek-ai/dsh/lib/bin.js')
 const report=process.env.DSH_UPGRADE_RESUME
   ? JSON.parse(await readFile(join(root,'report.json'),'utf8')) : {root,checks:[],stages:[]}
 if(report.error){(report.previousFailures??=[]).push(report.error);delete report.error}
@@ -122,6 +122,35 @@ try {
     },{id,draft},{timeout:15000})
   }
   await verifyDraft()
+  const historicalRecovery=new Map(),recoveryDirectory=join(root,'maintenance/recovery')
+  if(process.env.DSH_UPGRADE_RECOVERY_CAPACITY==='1') {
+    const transitions=join(recoveryDirectory,'transitions');await mkdir(transitions,{recursive:true})
+    const blockers=Array.from({length:8},()=>join(transitions,randomUUID()+'.json'))
+    for(const file of blockers)await writeFile(file,'{}')
+    const rejected=await page.evaluate(async targetVersion=>{
+      try {await window.__TAURI__.core.invoke('prepare_dsh_candidate',{identity:window.__DSH_REMOTE_IDENTITY__,requestId:crypto.randomUUID(),targetVersion});return 'unexpected success'}
+      catch(error){return String(error)}
+    },versions.preview)
+    assert.equal(rejected,'recovery-transition-capacity')
+    const records=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
+    const failed=records.find(record=>record.errorCode==='recovery-transition-capacity')
+    assert.ok(failed);assert.ok(failed.completedSteps.includes('recovery-capacity-check-started'))
+    assert.equal(failed.completedSteps.includes('candidate-install-started'),false)
+    for(const file of blockers)await unlink(file)
+    await pass('full lifecycle recovery storage fails before installation with a specific durable error')
+    const template=await wait(async()=>{
+      for(const name of await readdir(recoveryDirectory))if(name.endsWith('.json')) {
+        const row=JSON.parse(await readFile(join(recoveryDirectory,name),'utf8'))
+        if(row.draftsOnly && row.payload.drafts.some(item=>item.text===draft))return row
+      }
+    },'background draft checkpoint',60000)
+    const existing=(await readdir(recoveryDirectory)).filter(name=>name.endsWith('.json'))
+    for(let n=existing.length;n<64;n++) {
+      const clone={...template,recoveryId:randomUUID()};const name=clone.recoveryId+'.json',bytes=JSON.stringify(clone)
+      await writeFile(join(recoveryDirectory,name),bytes);historicalRecovery.set(name,bytes)
+    }
+    assert.equal((await readdir(recoveryDirectory)).filter(name=>name.endsWith('.json')).length,64)
+  }
   async function switchTo(target) {
     await verifyDraft()
     // Manual IPC bypasses locator handlers. Run their actionability check so
@@ -209,6 +238,13 @@ try {
   report.upgradeElapsedMs=Date.now()-started
   assert.equal((await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress'))).error,null)
   assert.equal(record.stage,'committed');assert.equal(record.target.version,versions.preview)
+  if(historicalRecovery.size) {
+    for(const [name,bytes] of historicalRecovery)assert.equal(await readFile(join(recoveryDirectory,name),'utf8'),bytes)
+    assert.equal(await lstat(join(recoveryDirectory,'transitions',record.ui_checkpoint+'.json')).then(()=>true,()=>false),false)
+    const journals=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
+    assert.ok(journals.some(j=>j.stage==='complete'&&j.completedSteps.includes('ui-capture-started')&&j.completedSteps.includes('recovery-save-started')))
+    await pass('64 legacy draft packages survive a real preview upgrade and only the acknowledged lifecycle snapshot is removed')
+  }
   await wait(async()=>{
     const selection=JSON.parse(await readFile(join(root,'runtime/selection.json'),'utf8'))
     const directories=await readdir(join(root,'runtime/versions'))

@@ -136,7 +136,39 @@
     }
     return null;
   }
-  function mountArchiveSessionMenu(React, slots, workspaces) {
+  function mountArchiveSessionMenu(React, slots, workspaces, contextMenus, locale) {
+    if (contextMenus?.active && locale) {
+      const hidden = /* @__PURE__ */ new Map();
+      const update = () => {
+        const target = contextMenus.active.getSnapshot();
+        const archived = target?.kind === "session" && workspaces.getSnapshot().archivedSessionIds.includes(target.value.sessionId);
+        const label = locale.bind("workspace")("menu.fork");
+        for (const [button, disabled] of hidden) {
+          button.removeAttribute("data-dsh-archive-fork-hidden");
+          button.disabled = disabled;
+        }
+        hidden.clear();
+        if (!archived) return;
+        for (const button of document.querySelectorAll('[role="menu"] button[role="menuitem"]')) {
+          if (!button.textContent.trim().startsWith(label)) continue;
+          hidden.set(button, button.disabled);
+          button.setAttribute("data-dsh-archive-fork-hidden", "");
+          button.disabled = true;
+        }
+      };
+      const observer = observeChrome('[role="menu"]', update);
+      const offTarget = contextMenus.active.subscribe(update), offWorkspace = workspaces.subscribe(update);
+      update();
+      return () => {
+        observer.disconnect();
+        offTarget();
+        offWorkspace();
+        for (const [button, disabled] of hidden) {
+          button.removeAttribute("data-dsh-archive-fork-hidden");
+          button.disabled = disabled;
+        }
+      };
+    }
     const slot = "sidebar.workspaces.session.menu.item";
     return slots.inject(slot, () => {
       let remove, registering = false;
@@ -187,7 +219,15 @@
       for (const element of filterRows.keys()) if (!element.isConnected) filterRows.delete(element);
       for (const element of document.querySelectorAll('[role="menu"][class*="_viewOptionsMenu"] [class*="_viewport"] > *')) {
         const fiberKey = Object.keys(element).find((key) => key.startsWith("__reactFiber$"));
-        if (!ARCHIVE_FILTER_ITEMS.has(element[fiberKey]?.key)) continue;
+        let filter = false;
+        for (let fiber = element[fiberKey], depth = 0; fiber && depth < 8; fiber = fiber.return, depth++) {
+          const key = fiber.key;
+          if ([...ARCHIVE_FILTER_ITEMS].some((id) => key === id || key?.endsWith(".$" + id) || key?.endsWith(":$" + id))) {
+            filter = true;
+            break;
+          }
+        }
+        if (!filter) continue;
         const button = element.querySelector("button");
         if (!filterRows.has(element)) filterRows.set(element, { button, disabled: button?.disabled });
         element.setAttribute("data-dsh-archive-filter-hidden", "");
@@ -318,7 +358,7 @@
   }
 
   // dsh-plugin/sidebar-archive/style.css
-  var style_default = ".dshArchive__toggleMount { display:inline-flex; flex:none; }\n[data-dsh-archive-filter-hidden] { display:none !important; }\n/* React rewrites the action group's classes when search opens or closes. */\n[class*='_headerActions']:not([class*='_headerActionsHidden']):has(> .dshArchive__toggleMount) { max-width:92px; }\n.dshArchive__toggle { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; padding:0; border:0; border-radius:var(--dsw-radius-sm,8px); background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }\n.dshArchive__toggle:hover, .dshArchive__toggle[aria-pressed='true'] { background:var(--dsw-alias-interactive-bg-hover); }\n.dshArchive__toggle[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__toggle:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:-2px; }\n[data-slot='sidebar.workspaces'] [data-dsh-archive-selected] { background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary); }\n/* Archive browsing has its own section; keep the normal row text hierarchy. */\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] :is([class*='_title'], [class*='_searchResultTitle']) { color:var(--dsw-alias-label-primary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultWorkspace'] { color:var(--dsw-alias-label-tertiary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultSnippet'] { color:var(--dsw-alias-label-secondary); }\n.dshArchive { box-sizing:border-box; position:relative; display:flex; flex:1; flex-direction:column; height:100%; min-width:0; min-height:0; overflow:hidden; container-type:inline-size; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); --dsh-composer-height:0px; --dsh-composer-side-clearance:16px; --dsh-chat-content-width:var(--dsh-chat-user-width,clamp(680px,64cqw,920px)); }\n/* Match the conversation header's title row and view tabs. */\n.dshArchive__header { box-sizing:border-box; display:flex; flex:none; flex-direction:column; min-height:76px; padding:10px 28px 0 20px; border-bottom:.5px solid var(--dsw-alias-border-l3); }\n.dshArchive__header:not(:has(.dshArchive__tabs)) { min-height:0; padding-bottom:10px; }\n.dshArchive__titleRow { display:flex; align-items:center; gap:10px; min-width:0; min-height:30px; padding-inline-start:max(0px,calc(var(--dsh-frame-leading-clearance,0px) - 20px)); }\n.dshArchive__header h2 { flex:1; min-width:0; margin:0; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:500; line-height:20px; }\n.dshArchive__readonly { flex:none; color:var(--dsw-alias-label-tertiary); font-size:12px; }\n.dshArchive__tabs { display:flex; flex:none; gap:36px; margin-top:10px; padding-left:8px; }\n.dshArchive__tabs button { position:relative; border:0; background:transparent; color:var(--dsw-alias-label-tertiary); font:inherit; font-size:13px; font-weight:500; line-height:16px; padding:0 0 9px; cursor:pointer; }\n.dshArchive__tabs button::after { content:''; position:absolute; inset:auto 0 -1px; height:2px; border-radius:2px; background:transparent; }\n.dshArchive__tabs button[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__tabs button[aria-pressed='true']::after { background:currentColor; }\n.dshArchive__tabs button:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:3px; }\n.dshArchive__content { position:relative; display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; margin-right:2px; overflow:auto; scrollbar-gutter:stable; }\n.dshArchive__empty { box-sizing:border-box; display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:220px; padding:24px; color:var(--dsw-alias-label-tertiary); font-size:14px; line-height:22px; text-align:center; }\n.dshArchive__empty > svg { flex:none; }\n.dshArchive__placeholderCopy { max-width:28em; }\n.dshArchive__placeholderTitle { margin:0; color:var(--dsw-alias-label-primary); font-weight:500; }\n.dshArchive__placeholderHint { margin:6px 0 0; font-size:13px; line-height:20px; }\n.dshArchive__notice { flex:none; padding:12px 20px; border-top:.5px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-tertiary); font-size:12px; text-align:center; }\n";
+  var style_default = ".dshArchive__toggleMount { display:inline-flex; flex:none; }\n[data-dsh-archive-filter-hidden], [data-dsh-archive-fork-hidden] { display:none !important; }\n/* React rewrites the action group's classes when search opens or closes. */\n[class*='_headerActions']:not([class*='_headerActionsHidden']):has(> .dshArchive__toggleMount) { max-width:92px; }\n.dshArchive__toggle { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; padding:0; border:0; border-radius:var(--dsw-radius-sm,8px); background:transparent; color:var(--dsw-alias-label-secondary); cursor:pointer; }\n.dshArchive__toggle:hover, .dshArchive__toggle[aria-pressed='true'] { background:var(--dsw-alias-interactive-bg-hover); }\n.dshArchive__toggle[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__toggle:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:-2px; }\n[data-slot='sidebar.workspaces'] [data-dsh-archive-selected] { background:var(--dsw-alias-interactive-bg-hover); color:var(--dsw-alias-label-primary); }\n/* Archive browsing has its own section; keep the normal row text hierarchy. */\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] :is([class*='_title'], [class*='_searchResultTitle']) { color:var(--dsw-alias-label-primary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultWorkspace'] { color:var(--dsw-alias-label-tertiary); }\n[data-slot='sidebar.workspaces'] [role='treeitem'][class*='_archived'] [class*='_searchResultSnippet'] { color:var(--dsw-alias-label-secondary); }\n.dshArchive { box-sizing:border-box; position:relative; display:flex; flex:1; flex-direction:column; height:100%; min-width:0; min-height:0; overflow:hidden; container-type:inline-size; color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-base); --dsh-composer-height:0px; --dsh-composer-side-clearance:16px; --dsh-chat-content-width:var(--dsh-chat-user-width,clamp(680px,64cqw,920px)); }\n/* Match the conversation header's title row and view tabs. */\n.dshArchive__header { box-sizing:border-box; display:flex; flex:none; flex-direction:column; min-height:76px; padding:10px 28px 0 20px; border-bottom:.5px solid var(--dsw-alias-border-l3); }\n.dshArchive__header:not(:has(.dshArchive__tabs)) { min-height:0; padding-bottom:10px; }\n.dshArchive__titleRow { display:flex; align-items:center; gap:10px; min-width:0; min-height:30px; padding-inline-start:max(0px,calc(var(--dsh-frame-leading-clearance,0px) - 20px)); }\n.dshArchive__header h2 { flex:1; min-width:0; margin:0; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; font-weight:500; line-height:20px; }\n.dshArchive__readonly { flex:none; color:var(--dsw-alias-label-tertiary); font-size:12px; }\n.dshArchive__tabs { display:flex; flex:none; gap:36px; margin-top:10px; padding-left:8px; }\n.dshArchive__tabs button { position:relative; border:0; background:transparent; color:var(--dsw-alias-label-tertiary); font:inherit; font-size:13px; font-weight:500; line-height:16px; padding:0 0 9px; cursor:pointer; }\n.dshArchive__tabs button::after { content:''; position:absolute; inset:auto 0 -1px; height:2px; border-radius:2px; background:transparent; }\n.dshArchive__tabs button[aria-pressed='true'] { color:var(--dsw-alias-state-business-primary); }\n.dshArchive__tabs button[aria-pressed='true']::after { background:currentColor; }\n.dshArchive__tabs button:focus-visible { outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary)); outline-offset:3px; }\n.dshArchive__content { position:relative; display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; margin-right:2px; overflow:auto; scrollbar-gutter:stable; }\n.dshArchive__empty { box-sizing:border-box; display:flex; flex:1; flex-direction:column; align-items:center; justify-content:center; gap:14px; min-height:220px; padding:24px; color:var(--dsw-alias-label-tertiary); font-size:14px; line-height:22px; text-align:center; }\n.dshArchive__empty > svg { flex:none; }\n.dshArchive__placeholderCopy { max-width:28em; }\n.dshArchive__placeholderTitle { margin:0; color:var(--dsw-alias-label-primary); font-weight:500; }\n.dshArchive__placeholderHint { margin:6px 0 0; font-size:13px; line-height:20px; }\n.dshArchive__notice { flex:none; padding:12px 20px; border-top:.5px solid var(--dsw-alias-border-l3); color:var(--dsw-alias-label-tertiary); font-size:12px; text-align:center; }\n";
 
   // dsh-plugin/sidebar-archive/client-entry.mjs
   window.__ModuleLoader__.load({ id: "@dsh-desktop/sidebar-archive", factory(require2) {
@@ -463,7 +503,7 @@
         children: { [HISTORY_SLOT]: { kind: "list", scope: "session" } }
       }, ArchivePanel);
       const offHistory = mountHistorySlots(React, ctx.slots);
-      const offMenu = mountArchiveSessionMenu(React, ctx.slots, ctx.workspaces.list);
+      const offMenu = mountArchiveSessionMenu(React, ctx.slots, ctx.workspaces.list, ctx.get("contextMenus"), ctx.get("locale"));
       const style = document.createElement("style");
       style.textContent = style_default;
       document.head.append(style);
@@ -471,7 +511,7 @@
         if (document.documentElement.hasAttribute("data-dsh-browser") && document.querySelector('[class*="_frame"]:not([data-sidebar-collapsed])')) ctx.layout.toggleSidebar();
       });
       if (navigation.getSnapshot().only) navigation.enter();
-      if (window.__DSH_UI_BOOT__?.smoke) window.__DSH_ARCHIVE_SMOKE__ = { navigation, view };
+      if (window.__DSH_UI_BOOT__?.smoke || window.__DSH_ARCHIVE_TEST__) window.__DSH_ARCHIVE_SMOKE__ = { navigation, view };
       return () => {
         navigation.exit();
         offSidebar();
@@ -483,7 +523,29 @@
       };
     }
     return { inject: ["slots", "sessions", "workspaces", "layout"], apply(ctx) {
-      return ctx.slots.inject("sidebar.workspaces", () => ctx.slots.inject("conversation.view", () => ctx.slots.inject("main", () => install(ctx))));
+      return ctx.slots.inject("sidebar.workspaces", () => ctx.slots.inject("conversation.view", () => ctx.slots.inject("main", () => {
+        let source, unmount, syncing = false;
+        const sync = () => {
+          if (syncing) return;
+          syncing = true;
+          try {
+            const next = ctx.slots.entriesOfSlot("sidebar.workspaces").find((entry) => entry.store);
+            if (next === source) return;
+            unmount?.();
+            unmount = void 0;
+            source = next;
+            if (next) unmount = install(ctx);
+          } finally {
+            syncing = false;
+          }
+        };
+        const off = ctx.slots.subscribe("sidebar.workspaces", sync);
+        sync();
+        return () => {
+          off();
+          unmount?.();
+        };
+      })));
     } };
   } });
 })();
