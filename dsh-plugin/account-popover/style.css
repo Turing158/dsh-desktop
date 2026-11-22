@@ -98,6 +98,10 @@ body[data-ds-dark-theme] .dshAccount { --dsh-account-surface-tint: rgb(0 0 0 / .
 .dshAccount :is(button, a):focus-visible { outline: 2px solid var(--dsw-focus-ring-color, #5686fe); outline-offset: 2px; }
 .dshAccount :is(button:disabled, [aria-disabled=true]) { opacity: .5; cursor: default; }
 .dshAccount__unavailable { font-size: 11px; line-height: 28px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
+.dshAccount__readStatus { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--dsw-alias-border-l2); padding: 12px 16px; }
+.dshAccount__readStatus p { flex: 1; min-width: 0; margin: 0; color: var(--dsw-alias-label-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.dshAccount__retry { flex: none; min-height: 28px; padding: 0 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; background: transparent; color: var(--dsw-alias-link, #4176e6); font: inherit; font-size: 11px; cursor: pointer; }
+.dshAccount__retry:enabled:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dshAccount__error { margin: 0; padding: 0 16px 12px; font-size: 11px; color: var(--dsw-alias-state-error-primary, #d74d64); }
 .dshAccount__confirmError { color: var(--dsw-alias-state-error-primary, #d74d64); }
 [data-dsh-account-settings-hidden] { display: none !important; }

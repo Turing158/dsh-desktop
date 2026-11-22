@@ -18,7 +18,10 @@ export async function prepareBoot(overlayPath, bootPath) {
   const profile = loadProfileDirectory('dsh', dir, installAnchor)
   const builtin = JSON.parse(readFileSync(bootPath, 'utf8'))
   const overlays = [...loadOverlayPatches('dsh', overlayPath), ...builtin]
-  const context = { ...profile, installAnchor, home: dirname(dirname(dir)), overlays, telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED }
+  // Newer app-boot releases reread overlay files; older releases consume the
+  // parsed patches. Supply both contracts in the same command-line order.
+  const context = { ...profile, installAnchor, home: dirname(dirname(dir)), overlays,
+    overlayPaths: [overlayPath, bootPath], telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED }
   const entries = composeEntries([readProfilePatches('dsh', context, profile)])
   const protectedModules = JSON.parse(readFileSync(new URL('./protected-modules.json', import.meta.url), 'utf8'))
   const runtimeVersion = JSON.parse(readFileSync(installAnchor, 'utf8')).version

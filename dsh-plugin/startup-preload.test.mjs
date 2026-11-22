@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const preload = resolve('dsh-plugin/plugin-control/prepare-boot.mjs')
-function fixture() {
+function fixture({ fileOverlays = false } = {}) {
   mkdirSync(resolve('src-tauri/target'), { recursive: true })
   const root = mkdtempSync(resolve('src-tauri/target/profile-plugin-control-'))
   const runtime = join(root, 'runtime'), home = join(root, 'home')
@@ -15,15 +15,21 @@ function fixture() {
   writeFileSync(join(runtime, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', type: 'module', version: '0.2.1' }))
   writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-app-boot', type: 'module', exports: './index.js' }))
   writeFileSync(join(pkg, 'index.js'), `
-    import { appendFileSync } from 'node:fs'; import { join } from 'node:path';
+    import { appendFileSync, readFileSync } from 'node:fs'; import { join } from 'node:path';
     import { isMainThread } from 'node:worker_threads';
     const trace = value => appendFileSync(process.env.TEST_TRACE, value + '\\n');
     trace(isMainThread ? 'main-import' : 'worker-import');
     export const resolveProfileDir = name => { trace('prepare'); return join(process.env.DSH_HOME, 'profiles', name) };
     export const loadProfileDirectory = () => ({});
-    export const loadOverlayPatches = () => [];
-    export const readProfilePatches = () => [{ id: 'optional', name: 'test-module' }];
-    export const composeEntries = groups => groups.flat();
+    export const loadOverlayPatches = (_, file) => JSON.parse(readFileSync(file, 'utf8'));
+    export const readProfilePatches = (_, context) => ${fileOverlays
+      ? "context.overlayPaths.flatMap(file => loadOverlayPatches('dsh', file))"
+      : 'context.overlays'};
+    export const composeEntries = groups => {
+      const entries = new Map();
+      for (const patch of groups.flat()) entries.set(patch.id, { ...entries.get(patch.id), ...patch });
+      return [...entries.values()];
+    };
   `)
   const entry = join(runtime, 'lib/bin.js'), result = join(root, 'result.json'), trace = join(root, 'trace.txt')
   writeFileSync(entry, `
@@ -39,7 +45,7 @@ function fixture() {
     } else parentPort.postMessage('ready');
   `)
   const boot = join(root, 'boot.json'), overlay = join(root, 'desktop.patch.yml')
-  writeFileSync(boot, '[]'); writeFileSync(overlay, '[]')
+  writeFileSync(boot, '[]'); writeFileSync(overlay, JSON.stringify([{ id: 'optional', name: 'test-module' }]))
   const env = { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: entry, TEST_TRACE: trace, TEST_RESULT: result, TEST_BOOT: boot,
     DSH_DESKTOP_BOOT_OVERLAY: overlay, DSH_DESKTOP_BOOT_PATCH: boot }
   // Do not inherit unrelated hooks from the test runner's environment.
@@ -55,14 +61,34 @@ test('preload preserves the CLI entrypoint and argv, shares imports, and does no
   assert.deepEqual(readFileSync(f.trace, 'utf8').trim().split('\n'), ['main-import', 'prepare', 'worker-import'])
 })
 
-test('saved plugin intent is applied before the backend starts and the saved file is unchanged', () => {
-  const f = fixture(), saved = JSON.stringify({ version: 1, entries: [{ patchId: 'optional', moduleName: 'test-module', enabled: false, runtimeVersion: '0.2.1' }] })
-  const file = join(f.profile, 'desktop-plugin-switches.json')
-  writeFileSync(file, saved)
+for (const fileOverlays of [false, true]) for (const enabled of [false, true]) {
+  test(`saved plugin intent applies before startup with ${fileOverlays ? 'preview file' : 'stable parsed'} overlays (${enabled})`, () => {
+    const f = fixture({ fileOverlays }), saved = JSON.stringify({ version: 1, entries: [
+      { patchId: 'optional', moduleName: 'test-module', enabled, runtimeVersion: '0.2.2-rc.5' },
+    ] })
+    const file = join(f.profile, 'desktop-plugin-switches.json')
+    const builtin = [{ id: 'optional', disabled: enabled }, { id: 'desktop-notify', disabled: false }]
+    writeFileSync(file, saved); writeFileSync(f.boot, JSON.stringify(builtin))
+    const overlay = readFileSync(f.overlay, 'utf8'), run = f.run()
+    assert.equal(run.status, 0, run.stderr)
+    assert.deepEqual(JSON.parse(readFileSync(f.result)).boot, [...builtin, { id: 'optional', name: 'test-module', disabled: !enabled }])
+    assert.equal(readFileSync(file, 'utf8'), saved)
+    assert.equal(readFileSync(f.overlay, 'utf8'), overlay)
+  })
+}
+
+test('preview overlay read errors prevent backend execution without overwriting the boot patch', () => {
+  const f = fixture({ fileOverlays: true })
+  writeFileSync(join(f.profile, 'desktop-plugin-switches.json'), JSON.stringify({ version: 1, entries: [
+    { patchId: 'optional', moduleName: 'test-module', enabled: false, runtimeVersion: '0.2.2-rc.5' },
+  ] }))
+  writeFileSync(f.overlay, '{broken')
   const run = f.run()
-  assert.equal(run.status, 0, run.stderr)
-  assert.deepEqual(JSON.parse(readFileSync(f.result)).boot, [{ id: 'optional', name: 'test-module', disabled: true }])
-  assert.equal(readFileSync(file, 'utf8'), saved)
+  assert.notEqual(run.status, 0)
+  assert.match(run.stderr, /无法准备 DSH 插件开关/)
+  assert.doesNotMatch(run.stderr, /reading 'flatMap'/)
+  assert.equal(existsSync(f.result), false)
+  assert.equal(readFileSync(f.boot, 'utf8'), '[]')
 })
 
 test('invalid saved intent prevents backend execution and retains the diagnostic', () => {

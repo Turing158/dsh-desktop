@@ -14,13 +14,19 @@ const root = await mkdtemp(resolve('src-tauri/target/account-feedback-'))
 const home = join(root, 'home'), probe = join(root, 'probe')
 await mkdir(home); await mkdir(probe)
 await writeFile(join(home, 'settings.yaml'), 'desktop-appearance:\n  ui: desktop\n  animation: on\n')
-let authorization, platformOrigin, initializations = 0
+let authorization, platformOrigin, initializations = 0, failedReads = new Set(), readDelay = 0
 const platform = createServer(async (req, res) => {
   const url = new URL(req.url, platformOrigin)
   let body = ''; for await (const chunk of req) body += chunk
   const json = value => {
     res.setHeader('content-type', 'application/json')
     res.end(JSON.stringify({ code: 0, data: { biz_code: 0, biz_data: value } }))
+  }
+  const accountField = url.pathname === '/auth-api/v0/users/current' ? 'profile'
+    : url.pathname === '/api/v0/users/get_user_summary' ? 'balance' : null
+  if (accountField) {
+    if (readDelay) await new Promise(resolve => setTimeout(resolve, readDelay))
+    if (failedReads.has(accountField)) return res.writeHead(503).end('account fixture unavailable')
   }
   if (url.pathname.endsWith('/auth_init')) {
     authorization = JSON.parse(body); initializations++
@@ -136,7 +142,8 @@ try {
   browser = await chromium.launch({ channel: 'msedge', headless: true })
   page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1280, height: 850 } })
   page.on('pageerror', error => report.errors.push(error.message))
-  page.on('console', message => { if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) report.errors.push(message.text()) })
+  page.on('console', message => { if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')
+    && !message.text().startsWith('[deepseek-account] account read failed')) report.errors.push(message.text()) })
   await page.addInitScript(() => {
     window.__DSH_UI_BOOT__ = { smoke: true }
     window.__TAURI__ = { core: { Channel: class {}, invoke: async () => null }, event: { listen: async () => () => {} } }
@@ -214,6 +221,7 @@ try {
   await page.evaluate(() => { window.failFeedback = false }); await restoreOpen()
   pass('locale changes update labels and launch failures display a toast while signed out')
 
+  failedReads = new Set(['profile', 'balance'])
   const popupPromise = page.waitForEvent('popup')
   await page.locator('[data-dsh-account-sign-in]').click(); const popup = await popupPromise
   await popup.waitForURL(platformOrigin + '/dsh/authorize**')
@@ -232,6 +240,35 @@ try {
   await page.keyboard.press('Escape')
   await sidebar(true); assert.equal(await feedback.count(), 0); await checkGeometry()
   pass('real OAuth sign-in hides sidebar feedback in expanded and collapsed layouts while preserving the account popover')
+
+  await sidebar(false)
+  await page.locator('[data-dsh-account-trigger]').click()
+  const accountPanel = page.locator('[data-dsh-account-popover]')
+  await accountPanel.getByText('登录信息已保存，账号资料或余额未能加载。请检查系统时间和网络后重试。', { exact: true }).waitFor()
+  assert.equal(await accountPanel.getByText('余额暂不可用', { exact: true }).count(), 2)
+  assert.equal(await accountPanel.getByText('前往开放平台查看', { exact: true }).count(), 0)
+  assert.equal(await accountPanel.locator('.dshAccount__amount').count(), 0, 'failed balances must never appear as zero')
+  assert.ok((await page.locator('[data-dsh-account-trigger]').textContent()).includes('已登录 DeepSeek'))
+  await page.screenshot({ path: join(root, 'account-unavailable.png') })
+  failedReads = new Set(['balance']); readDelay = 400
+  const retry = accountPanel.getByRole('button', { name: '重试', exact: true })
+  await retry.click()
+  await accountPanel.getByRole('button', { name: '刷新中…', exact: true }).waitFor()
+  assert.equal(await accountPanel.getByRole('button', { name: '刷新中…', exact: true }).isDisabled(), true)
+  await accountPanel.locator('.dshAccount__name').filter({ hasText: 'Fixture account' }).waitFor()
+  await retry.waitFor()
+  assert.equal(await accountPanel.getByText('余额暂不可用', { exact: true }).count(), 2)
+  failedReads = new Set()
+  await retry.click()
+  await accountPanel.locator('.dshAccount__amount').first().waitFor()
+  await accountPanel.locator('.dshAccount__readStatus').waitFor({ state: 'detached' })
+  assert.equal((await accountPanel.locator('.dshAccount__amount').first().textContent()).trim(), '¥12.34')
+  assert.equal((await accountPanel.locator('.dshAccount__amount').last().textContent()).trim(), '¥0.00')
+  readDelay = 0
+  await page.screenshot({ path: join(root, 'account-restored.png') })
+  await page.keyboard.press('Escape')
+  await sidebar(true)
+  pass('failed and partial account reads keep credentials, expose retry and restore profile and exact balances')
 
   await page.locator('[data-dsh-account-trigger]').click()
   await page.locator('.dshAccount__logout').click()

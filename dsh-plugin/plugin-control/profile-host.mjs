@@ -27,7 +27,8 @@ export async function createProfileControl(ctx) {
         try { pkg = entry && ctx.get('pluginPackages')?.packageOf(row.moduleName, entry.parent.tree.ctx.baseUrl) } catch { /* Unknown metadata cannot certify hot switching. */ }
         const details = { ...row, packageName: pkg?.name, version: pkg?.version }
         const readOnlyReason = protectedReason(details, protectedModules)
-        return { ...details, readOnlyReason, ...hotCapability(details, runtimeVersion, policies, Boolean(ctx.get('hmr'))),
+        return { ...details, readOnlyReason, ...hotCapability(details, runtimeVersion, policies,
+          Boolean(ctx.get('hmr')) && Array.isArray(ctx.profileContext.overlays)),
           ...(readOnlyReason ? { hot: false } : {}) }
       }) }
   }

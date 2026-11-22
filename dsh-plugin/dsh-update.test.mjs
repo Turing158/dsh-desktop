@@ -141,6 +141,25 @@ test('rolled back update displays its original failure alongside the restored ve
   assert.ok(nodes.some(node => node.props?.role === 'status' && node.props.children.includes('更新未完成，已恢复旧版和数据。')))
 })
 
+for (const [code, message] of [
+  ['CERT_NOT_YET_VALID', '更新源的证书尚未生效。请检查 Windows 日期、时间和时区，同步时间后重新检测。'],
+  ['CERT_HAS_EXPIRED', '更新源的证书已过期。请检查系统时间；时间正确时，请稍后重试或检查更新源。'],
+  ['SELF_SIGNED_CERT_IN_CHAIN', '无法验证更新源的证书。请检查网络代理和证书配置后重试。'],
+  ['ECONNRESET', '操作未完成，请展开错误详情。'],
+]) {
+  test(`update failure ${code} displays guidance and keeps the complete log in closed details`, async () => {
+    const detail = `npm view @deepseek-ai/dsh dist-tags 失败：npm error code ${code}\nnpm error request failed\nC:\\Temp\\npm-debug.log`
+    const f = fixture({ check: async () => { throw detail } })
+    f.openDialog(); await flush(); f.selectTab('dsh')
+    const nodes = f.render()
+    assert.ok(nodes.some(node => node.props.role === 'alert' && node.props.children.includes(message)))
+    assert.equal(nodes.find(node => node.type === 'details').props.open, undefined)
+    assert.ok(nodes.some(node => node.type === 'pre' && node.props.children.includes(detail)))
+    assert.equal(f.button('最新稳定版').props.disabled, true)
+    assert.equal(f.button('重新检测').props.disabled, false)
+  })
+}
+
 test('one click opens the dialog and starts both checks without duplicate requests', async () => {
   const pending = deferred(), desktop = deferred()
   const f = fixture({ check: () => pending.promise, checkDesktop: () => desktop.promise })

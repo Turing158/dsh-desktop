@@ -19,6 +19,7 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
   function EnhancedLauncher(props) {
     window.__DSH_I18N__?.use(React)
     const { t } = props
+    const desktopText = text => window.__DSH_I18N__?.t(text) ?? text
     const account = props.useAccount(value => value)
     const signedIn = account.view?.status === 'credential-stored'
     const native = React.useRef(null), signInButton = React.useRef(null), panel = React.useRef(null), releasePage = React.useRef(null)
@@ -31,6 +32,8 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
     const [busy, setBusy] = React.useState(false), [failed, setFailed] = React.useState(false)
     const [actionFailed, setActionFailed] = React.useState(false)
     const [feedbackFailed, setFeedbackFailed] = React.useState(false)
+    const [refreshing, setRefreshing] = React.useState(false)
+    const refreshPending = React.useRef(null)
     const id = React.useId()
     const getTrigger = () => signedIn ? native.current?.querySelector('button[aria-haspopup]') : signInButton.current
     const close = (restore = false) => {
@@ -48,6 +51,7 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
     React.useEffect(() => {
       if (signedIn) return
       pending.current = false
+      refreshPending.current = null; setRefreshing(false)
       setOpen(false); setPresent(false); setImpact(undefined); setActionFailed(false); setChecking(false); setBusy(false)
       releasePage.current?.(); releasePage.current = null
     }, [signedIn])
@@ -130,9 +134,20 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
       setOpen(next); setActionFailed(false)
       if (next) {
         if (!present) setPosition(null)
-        Promise.resolve().then(() => props.refreshAccount?.()).catch(() => {
-          if (alive.current && currentSignedIn.current) setActionFailed(true)
-        })
+        refreshDetails()
+      }
+    }
+    async function refreshDetails() {
+      if (refreshPending.current || typeof props.refreshAccount !== 'function') return
+      const request = {}
+      refreshPending.current = request; setRefreshing(true); setActionFailed(false)
+      try { await props.refreshAccount() }
+      catch { if (alive.current && currentSignedIn.current && refreshPending.current === request) setActionFailed(true) }
+      finally {
+        if (refreshPending.current === request) {
+          refreshPending.current = null
+          if (alive.current) setRefreshing(false)
+        }
       }
     }
     function signIn() {
@@ -197,12 +212,15 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
             ? values.map((value, i) => h('span', { key: rows[i].currency, className: 'dshAccount__amount', title: value.text,
               'aria-label': value.text, 'data-long': value.number.length > 11 },
             h('span', { className: 'dshAccount__currency' }, value.prefix + value.symbol), value.number))
-            : h('span', { className: 'dshAccount__unavailable' }, t(account.details?.balance === undefined && !account.failed ? 'loading' : 'balanceUnavailable'))),
+            : h('span', { className: 'dshAccount__unavailable' }, refreshing || account.details?.balance === undefined && !account.failed
+              ? t('loading') : desktopText('余额暂不可用'))),
           platformAction(bonus ? 'usage' : 'top-up', t(bonus ? 'usage' : 'topUp'), bonus ? 'dshAccount__usage' : 'dshAccount__topup')))
     }
     const profile = account.details?.profile?.status === 'ready' ? account.details.profile.value : undefined
     const name = profile?.name || profile?.contact || t('signedIn')
-    const contact = profile?.contact || t(account.details?.profile === undefined && !account.failed ? 'loading' : 'profileUnavailable')
+    const contact = profile?.contact || (refreshing || account.details?.profile === undefined && !account.failed ? t('loading') : t('profileUnavailable'))
+    const unavailable = account.failed || ['profile', 'balance'].some(field =>
+      account.details?.[field] !== undefined && account.details[field]?.status !== 'ready')
     const iconButton = (label, className, onClick, icon, disabled = false) => {
       const button = h('button', { type: 'button', className: 'dshAccount__icon ' + className,
         'aria-label': label, title: ui.Tooltip ? undefined : label, onClick, disabled }, icon)
@@ -236,6 +254,10 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
         iconButton(t('signOut'), 'dshAccount__logout', requestSignOut, h(LogoutIcon, { size: 14 }), checking),
         h('div', { className: 'dshAccount__contact' }, h('span', { className: 'dshAccount__phone', title: contact }, contact))),
       h('div', { className: 'dshAccount__finance' }, wallet(false), wallet(true)),
+      (unavailable || refreshing) && h('div', { className: 'dshAccount__readStatus', 'aria-busy': refreshing },
+        h('p', { role: 'status', 'aria-live': 'polite' }, desktopText(refreshing ? '正在刷新账号信息…' : '登录信息已保存，账号资料或余额未能加载。请检查系统时间和网络后重试。')),
+        typeof props.refreshAccount === 'function' && h('button', { type: 'button', className: 'dshAccount__retry',
+          disabled: refreshing, onClick: refreshDetails }, desktopText(refreshing ? '刷新中…' : '重试'))),
       actionFailed && h('p', { className: 'dshAccount__error', role: 'alert' }, t('failed'))), document.body),
       signedIn && impact !== undefined && h(ui.Modal, { open: true, title: t('signOut'), closeLabel: t('close'),
         onClose: dismissSignOut, description: t(impact === 'unknown' ? 'signOutUnknownDescription' : impact ? 'signOutRunningDescription' : 'signOutDescription'),

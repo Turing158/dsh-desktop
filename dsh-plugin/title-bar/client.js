@@ -1391,6 +1391,25 @@ var React = require('react')
         progress && props.busy ? h('p', null, t('已用时 {seconds} 秒', { seconds: seconds })) : null)
     }
 
+    function UpdateError(props) {
+      var detail = String(props.error)
+      var message = detail
+      if (/CERT_NOT_YET_VALID|certificate is not yet valid/i.test(detail)) {
+        message = '更新源的证书尚未生效。请检查 Windows 日期、时间和时区，同步时间后重新检测。'
+      } else if (/CERT_HAS_EXPIRED|certificate has expired/i.test(detail)) {
+        message = '更新源的证书已过期。请检查系统时间；时间正确时，请稍后重试或检查更新源。'
+      } else if (/UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT|CERT_AUTHORITY_INVALID|unable to get local issuer certificate/i.test(detail)) {
+        message = '无法验证更新源的证书。请检查网络代理和证书配置后重试。'
+      } else if (/npm (?:error|ERR!)|\n/i.test(detail)) {
+        message = '操作未完成，请展开错误详情。'
+      }
+      return h('div', { className: 'dshTb__dialogError dshTb__updateError' },
+        h('div', { role: 'alert' }, t(message)),
+        message !== detail ? h('details', { className: 'dshTb__errorDetails' },
+          h('summary', null, t('错误详情')),
+          h('pre', { className: 'dshTb__errorLog', tabIndex: 0 }, detail)) : null)
+    }
+
     function DshUpdatePanel(props) {
       var update = props.update
       var versions = update.versions
@@ -1420,7 +1439,7 @@ var React = require('react')
           ? h('p', { className: 'dshTb__aboutText' }, t('正在安装') + (update.busy === 'latest' ? t('最新稳定版') : t('最新预览版')) + t('，请稍候…'))
           : null,
         update.message ? h('p', { className: 'dshTb__aboutText', role: 'status' }, t(update.message, update.messageValues)) : null,
-        update.error ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, t(update.error)) : null,
+        update.error ? h(UpdateError, { error: update.error }) : null,
       )
     }
 
@@ -1457,8 +1476,8 @@ var React = require('react')
           ) : '—'),
           published ? h(React.Fragment, null, h('dt', null, t('发布时间')), h('dd', null, published)) : null,
         ),
-        update.error ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, t(update.error)) : null,
-        update.openError ? h('div', { className: 'dshTb__dialogError dshTb__updateError', role: 'alert' }, t(update.openError)) : null,
+        update.error ? h(UpdateError, { error: update.error }) : null,
+        update.openError ? h(UpdateError, { error: update.openError }) : null,
         release ? h('section', { className: 'dshTb__releaseNotes', 'aria-label': t('更新说明') },
           h('div', { className: 'dshTb__releaseHeading' }, h('h3', null, t('更新说明')), h('span', null, release.name)),
           h('div', { className: 'dshTb__releaseBody', tabIndex: 0 },

@@ -4160,6 +4160,21 @@ html:not([data-dsh-titlebar-hover='off']) .dshTb__control--close:hover {
 }
 
 .dshTb__updateError {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.dshTb__errorDetails { margin-top: 10px; color: var(--dsw-alias-label-secondary); }
+.dshTb__errorDetails summary { width: fit-content; cursor: pointer; }
+.dshTb__errorLog {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-module-platform);
+  font: 11px/1.6 ui-monospace, 'Cascadia Mono', Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 160px;
@@ -4221,14 +4236,14 @@ html:not([data-dsh-titlebar-hover='off']) .dshTb__control--close:hover {
   box-shadow: 0 1px 3px #00000012;
 }
 
-.dshTb__updateDialog :is(button, [tabindex='0']):focus-visible {
+.dshTb__updateDialog :is(button, summary, [tabindex='0']):focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;
 }
 
 .dshTb__updateDialog button:not(:disabled) { cursor: pointer; }
 .dshTb__updateDialog [role='tabpanel'][hidden] { display: none; }
-.dshTb__updateDialog [role='tabpanel'] { min-height: 300px; }
+.dshTb__updateDialog [role='tabpanel'] { min-width: 0; }
 
 .dshTb__updateSpinner {
   width: 12px;

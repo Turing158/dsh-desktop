@@ -130,6 +130,32 @@ try {
   assert.equal(await dialog.getByRole('button', { name: '最新稳定版', exact: true }).isDisabled(), true)
   assert.equal(await dialog.getByRole('button', { name: '最新预览版', exact: true }).count(), 0)
   pass('reopening refreshes both; a GitHub error leaves dsh results intact')
+  await dialog.getByRole('button', { name: '关闭窗口', exact: true }).click()
+  await page.getByRole('button', { name: '更多', exact: true }).click()
+  await page.getByRole('menuitem', { name: '检测更新...', exact: true }).click()
+  await page.evaluate(() => {
+    window.updateReplies.check_desktop_update.resolve({ current: '0.1.0', release: null })
+    window.updateReplies.check_dsh_update.reject('npm view @deepseek-ai/dsh dist-tags 失败：npm error code CERT_NOT_YET_VALID\n'
+      + 'npm error certificate is not yet valid\n' + 'npm error network diagnostic output\n'.repeat(30))
+  })
+  await dialog.getByRole('tab', { name: 'dsh 更新' }).click()
+  await dialog.getByRole('alert').filter({ hasText: '请检查 Windows 日期、时间和时区' }).waitFor()
+  const details = dialog.locator('.dshTb__errorDetails'), log = dialog.locator('.dshTb__errorLog')
+  assert.equal(await log.isVisible(), false)
+  assert.ok((await dialog.boundingBox()).height < 500, 'a short error does not leave a tall empty panel')
+  for (const theme of ['light', 'dark']) {
+    await page.emulateMedia({ colorScheme: theme })
+    for (const width of [375, 1280]) {
+      await page.setViewportSize({ width, height: 720 })
+      await details.locator('summary').click()
+      assert.equal(await log.isVisible(), true)
+      const geometry = await log.evaluate(node => ({ height: node.getBoundingClientRect().height, client: node.clientWidth, scroll: node.scrollWidth }))
+      assert.ok(geometry.height <= 161 && geometry.scroll <= geometry.client + 1)
+      await page.screenshot({ path: join(root, `certificate-${theme}-${width}.png`) })
+      await details.locator('summary').click()
+    }
+  }
+  pass('certificate errors explain system time; logs expand without overflowing in either theme')
   assert.deepEqual(errors, [])
   pass('no browser runtime errors')
 } catch (error) {

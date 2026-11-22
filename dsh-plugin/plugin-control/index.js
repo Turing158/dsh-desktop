@@ -31,7 +31,9 @@ export async function apply(ctx) {
   const find = id => [...ctx.loader.entries()].find(entry => entry.options.id === id)
   const running = Object.fromEntries(catalog.map(row => [row.id, !find(row.id)?.disabled]))
   const control = new PluginControl({ catalog, saved, running,
-    hotAvailable: () => Boolean(ctx.get('hmr')),
+    // File-based overlays cannot retain an in-memory hot override. Use the
+    // saved intent on restart until this runtime supports that adapter.
+    hotAvailable: () => Boolean(ctx.get('hmr')) && Array.isArray(ctx.profileContext.overlays),
     phase: id => {
       const row = catalog.find(row => row.id === id)
       const phases = (row.modules || [id]).map(moduleId => {

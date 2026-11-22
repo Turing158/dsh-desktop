@@ -61,7 +61,8 @@ export async function profileRestoreContext(roots, overlayPath, bootPath) {
   if (profile.skippedBundles?.length) throw Error('backup-profile-unavailable')
   const builtin = JSON.parse(await readFile(bootPath, 'utf8'))
   const overlays = [...loadOverlayPatches('dsh', overlayPath),...builtin]
-  const context = {...profile,installAnchor,home:roots.profileHome,overlays,telemetryDisabledEnv:process.env.DSH_TELEMETRY_DISABLED}
+  const context = {...profile,installAnchor,home:roots.profileHome,overlays,
+    overlayPaths:[overlayPath,bootPath],telemetryDisabledEnv:process.env.DSH_TELEMETRY_DISABLED}
   const entries = composeEntries([readProfilePatches('dsh', context, profile)])
   const protectedModules = JSON.parse(await readFile(new URL('../plugin-control/protected-modules.json',import.meta.url),'utf8'))
   return {entries,protectedModules,runtimeVersion:manifest.version}

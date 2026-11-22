@@ -158,7 +158,7 @@ export async function verifyRuntimeProfile(sourceEntry, targetEntry, options) {
     const table = new Map(resolution.entries.map(row => [row.name, row]))
     const local = new Set(resolution.localPackageNames)
     const entries = boot.composeEntries([boot.readProfilePatches('dsh', { dir, patchPath: profile.patchPath,
-      home, installAnchor: installation.anchor, overlays: overlays.flatMap(file => boot.loadOverlayPatches('dsh', file)),
+      home, installAnchor: installation.anchor, overlays: overlays.flatMap(file => boot.loadOverlayPatches('dsh', file)), overlayPaths: overlays,
       telemetryDisabledEnv: options.telemetryDisabledEnv }, profile)])
     const imports = []
     async function visit(rows) {
