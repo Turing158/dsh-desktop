@@ -1016,6 +1016,12 @@ fn restart_backend(
     if exiting(state) {
         return;
     }
+    if app.state::<dsh_upgrade::ManagerState>().is_updating() {
+        if let Err(error) = dsh_upgrade::commit_ready(app) {
+            dsh_upgrade::failure(app, &error);
+            if dsh_upgrade::rollback_pending(app) { return; }
+        }
+    }
     let progress = state.lock().ok().and_then(|s| s.ui.recovery_lease.as_ref().map(|lease| lease.progress()));
     if let Some(progress) = progress {
         if progress.backend_ready().is_err() {
@@ -1027,11 +1033,12 @@ fn restart_backend(
         if s.ui.snapshot.is_some() {
             s.remote.restore_instance = Some(s.ui.backend_instance);
             s.ui.transition(ui_snapshot::UiPhase::Restoring);
+        } else {
+            s.update_presentation = None;
         }
         s.remote.applying = false;
     }
     navigate_current(app);
-    if app.state::<dsh_upgrade::ManagerState>().is_updating() {dsh_upgrade::progress(app,"restoring");}
     let restore_operation = state.lock().ok().filter(|s| s.ui.snapshot.is_some()).map(|s| s.ui.operation_id);
     if let Some(operation) = restore_operation { minimal::watch_recovery(app, operation); }
     // Publish Running only once the navigation is in flight. The boot page is

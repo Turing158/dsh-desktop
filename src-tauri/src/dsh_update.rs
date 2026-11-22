@@ -153,9 +153,6 @@ pub async fn prepare_dsh_candidate(window:WebviewWindow,identity:crate::remote_c
             crate::maintenance::atomic_json(&record,&serde_json::json!({"schema":1,"requestId":request_id,
                 "sourceVersion":source.version,"targetVersion":target_version,"stage":"installing"})).map_err(|_|"runtime-candidate-record-failed")?;
             guard.check()?;
-            crate::dsh_upgrade::progress(&app,"checking-recovery");
-            progress.update(crate::maintenance::Stage::Preparing,"recovery-capacity-check-started")?;
-            crate::recovery_store::preflight_transition(&app)?;
             crate::dsh_upgrade::progress(&app,"installing");
             progress.update(crate::maintenance::Stage::Preparing,"candidate-cache-check-started")?;
             crate::dsh_upgrade::progress(&app,"verifying");
@@ -554,7 +551,6 @@ pub(crate) fn require_idle(state: &crate::state::AppState) -> Result<(), String>
 pub async fn install_dsh_update(
     window: WebviewWindow,
     identity: crate::remote_control::Identity,
-    payload: crate::ui_snapshot::UiPayload,
     palette: Option<crate::boot_bar::Palette>,
     channel: Channel,
     target_version: Option<String>,
@@ -567,7 +563,7 @@ pub async fn install_dsh_update(
         require_idle(&state)?;
     }
     let _=channel.args(target_version.as_deref())?;
-    crate::dsh_upgrade::install(window,identity,payload,palette.and_then(crate::boot_bar::Palette::bounded),
+    crate::dsh_upgrade::install(window,identity,palette.and_then(crate::boot_bar::Palette::bounded),
         target_version.ok_or("update-candidate-required")?,candidate_id.ok_or("update-candidate-required")?).await
 }
 

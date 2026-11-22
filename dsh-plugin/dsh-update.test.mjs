@@ -20,7 +20,7 @@ function deferred() {
 test('snapshot provider permits version queries but keeps installation and external launch exclusive', () => {
   const start=source.indexOf("return bridge.registerProvider('title-bar', {")
   const providerSource=source.slice(start,source.indexOf('\n      }, [rename,',start))
-  const state={renamePending:false,updateCapture:{current:false},updatePending:{current:true},desktopUpdatePending:{current:true},
+  const state={renamePending:false,updatePending:{current:true},desktopUpdatePending:{current:true},
     dshUpdate:{busy:'check'},desktopUpdate:{busy:'check'},setOpenMenu(){},rename:null,confirm:null,aboutOpen:false,updateOpen:false}
   const provider=vm.runInNewContext('(function(){'+providerSource+'})()', {...state,bridge:{registerProvider:(_id,provider)=>provider}})
   assert.equal(provider.capture(),null)
@@ -30,8 +30,6 @@ test('snapshot provider permits version queries but keeps installation and exter
   }
   state.dshUpdate.busy='check';state.desktopUpdate.busy='open'
   assert.throws(()=>provider.capture(),/snapshot-input-busy/)
-  state.desktopUpdate.busy='check';state.updateCapture.current=true;state.dshUpdate.busy='install'
-  assert.equal(provider.capture(),null)
 })
 
 // Render the actual title-bar bundle with stateful hooks; only the external UI
@@ -39,7 +37,7 @@ test('snapshot provider permits version queries but keeps installation and exter
 // controlled native responses, including repeated clicks before a rerender.
 function fixture({ check = async () => ({ current: tags.latest, ...tags }), install,
   checkDesktop = async () => desktopRelease, openRelease, host = true, capture = async () => ({ page: { kind: 'dsh' } }),
-  prepare, cancelCandidate, progress = async () => null,
+  prepare, cancelCandidate, progress = async () => null, bridge = true,
   timers = { setTimeout, clearTimeout },
   nativeActivity = async () => false,
   sessions = { refresh: async () => {}, list: { getSnapshot: () => ({ phase: 'ready', ids: [], byId: {} }) } } } = {}) {
@@ -65,10 +63,10 @@ function fixture({ check = async () => ({ current: tags.latest, ...tags }), inst
     AbortController, crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'}, ...timers,
     __DSH_REMOTE_IDENTITY__: { backendInstance: 1, documentNonce: [1] },
     __DSH_DESKTOP_BOOT__: { capturePalette: () => ({ dark: false, background: 'rgb(246, 248, 250)', foreground: 'rgb(20, 22, 24)', border: 'rgb(200, 202, 204)' }) },
-    __DSH_UI_STATE__: {
+    __DSH_UI_STATE__: bridge ? {
       prepareRemoteApply: async version => { calls.push({ command: 'capture', version }); return capture() },
       finishRemoteApply: () => calls.push({ command: 'unfreeze' }),
-    },
+    } : undefined,
     document: {
       body: {}, addEventListener() {},
       getElementById: id => ({ focus: () => focused.push(id) }),
@@ -206,7 +204,7 @@ for (const [current, latest, preview, label, stableDisabled, previewDisabled] of
 }
 
 for (const channel of ['latest', 'preview']) {
-  test(`${channel} update captures the page and stays frozen until native navigation`, async () => {
+  test(`${channel} update sends no page state and waits for native navigation`, async () => {
     const pending = deferred()
     const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), install: () => pending.promise })
     f.openDialog(); await flush(); f.selectTab('dsh')
@@ -222,10 +220,10 @@ for (const channel of ['latest', 'preview']) {
     assert.equal(calls[1].command, 'install_dsh_update')
     assert.equal(calls[1].args.channel, channel)
     assert.equal(calls[1].args.targetVersion, tags[channel])
-    assert.equal(calls[1].args.payload.page.kind, 'dsh')
+    assert.equal('payload' in calls[1].args, false)
     assert.equal(calls[1].args.identity.backendInstance, 1)
     assert.equal(calls[1].args.palette.background, 'rgb(246, 248, 250)')
-    assert.ok(f.calls.findIndex(call => call.command === 'capture') < f.calls.findIndex(call => call.command === 'install_dsh_update'))
+    assert.equal(f.calls.some(call => call.command === 'capture'), false)
     // Dismiss and reopen while installing: status is retained and no new call.
     f.render().find(node => node.type === 'Modal').props.onClose()
     f.openDialog()
@@ -289,25 +287,20 @@ test('candidate installation failure keeps the current version and can be retrie
   assert.equal(f.calls.some(call=>call.command==='capture'),false)
 })
 
-for (const phase of ['prepare','install']) {
-  for (const [code,message] of [['recovery-transition-capacity','升级恢复快照空间已满'],
-    ['recovery-save-failed','无法保存升级恢复快照'],['recovery-capacity-unverified','无法安全访问恢复目录']]) {
-    test(`${phase} ${code} explains recovery failures and leaves the original page usable`,async()=>{
-      const fail=async()=>{throw Error(code)}
-      const f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true}),
-        prepare:phase==='prepare'?fail:async()=>({id:'ready',version:tags.preview,switchAvailable:true}),install:fail})
-      f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush();await flush()
-      assert.equal(f.button('最新预览版').props.disabled,false)
-      assert.ok(f.render().some(node=>node.props.role==='alert'&&String(node.props.children).includes(message)))
-      assert.equal(f.calls.some(call=>call.command==='capture'),phase==='install')
-      assert.equal(f.calls.some(call=>call.command==='unfreeze'),phase==='install')
-      assert.equal(f.calls.some(call=>call.command==='cancel_dsh_candidate'),phase==='install')
-    })
-  }
+for (const code of ['update-data-layout-unsupported', 'update-session-schema-unsupported']) {
+  test(`${code} retains data compatibility checks without capturing the page`, async () => {
+    const f = fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true}),
+      prepare:async()=>({id:'ready',version:tags.preview,switchAvailable:true}),install:async()=>{throw Error(code)}})
+    f.openDialog();await flush();f.selectTab('dsh');f.button('最新预览版').props.onClick();await flush();await flush()
+    assert.equal(f.button('最新预览版').props.disabled,false)
+    assert.ok(f.render().some(node=>node.props.role==='alert'&&String(node.props.children).includes('当前数据布局或会话格式')))
+    assert.equal(f.calls.some(call=>call.command==='capture'||call.command==='unfreeze'),false)
+    assert.equal(f.calls.some(call=>call.command==='cancel_dsh_candidate'),true)
+  })
 }
 
 for (const channel of ['latest','preview']) {
-  test(`${channel} staged update prepares before capture and hands the exact candidate to native switching`, async () => {
+  test(`${channel} staged update hands the exact candidate to native switching without UI capture`, async () => {
     const pending=deferred(),f=fixture({check:async()=>({current:'0.1.5-rc.2',...tags,stagedUpdate:true,candidateOnly:false}),prepare:()=>pending.promise})
     f.openDialog();await flush();f.selectTab('dsh');f.button(channel==='latest'?'最新稳定版':'最新预览版').props.onClick();await flush()
     assert.equal(f.calls.some(c=>c.command==='capture'),false)
@@ -315,7 +308,9 @@ for (const channel of ['latest','preview']) {
     pending.resolve({id:'verified-candidate',version:tags[channel],switchAvailable:true});await flush();await flush()
     const install=f.calls.find(c=>c.command==='install_dsh_update')
     assert.equal(install.args.candidateId,'verified-candidate');assert.equal(install.args.targetVersion,tags[channel])
-    assert.ok(f.calls.findIndex(c=>c.command==='prepare_dsh_candidate')<f.calls.findIndex(c=>c.command==='capture'))
+    assert.ok(f.calls.findIndex(c=>c.command==='prepare_dsh_candidate')<f.calls.findIndex(c=>c.command==='install_dsh_update'))
+    assert.equal(f.calls.some(c=>c.command==='capture'),false)
+    assert.equal('payload' in install.args,false)
     assert.equal(f.calls.some(c=>c.command==='unfreeze'),false)
     assert.equal(f.calls.some(c=>c.command==='cancel_dsh_candidate'),false)
   })
@@ -390,20 +385,22 @@ test('rejected update releases the page and preserves the last verified version'
   assert.equal(f.button('最新稳定版').props.disabled, false)
   assert.equal(f.button('最新预览版').props.disabled, false)
   assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('npm EACCES')))
-  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 1)
+  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 0)
   f.button('最新稳定版').props.onClick(); await flush()
   assert.equal(f.button('最新稳定版').props.disabled, true)
 })
 
-test('failed draft capture never starts installation and leaves the page usable', async () => {
-  const f = fixture({ check: async () => ({ current: '0.1.5-rc.2', ...tags }), capture: async () => { throw Error('draft unavailable') } })
-  f.openDialog(); await flush(); f.selectTab('dsh')
-  f.button('最新稳定版').props.onClick(); await flush()
-  assert.equal(f.updateCalls().length, 1)
-  assert.equal(f.button('最新稳定版').props.disabled, false)
-  assert.equal(f.calls.at(-1).command, 'unfreeze')
-  assert.ok(f.render().some(node => node.props.role === 'alert' && node.props.children.includes('draft unavailable')))
-})
+for (const bridge of [true,false]) {
+  test(`updates proceed with an unsupported or absent UI state bridge (${bridge})`, async () => {
+    const f = fixture({ bridge, check: async () => ({ current: '0.1.5-rc.2', ...tags }), capture: async () => { throw Error('snapshot-form-unsupported') } })
+    f.openDialog(); await flush(); f.selectTab('dsh')
+    f.button('最新稳定版').props.onClick(); await flush()
+    assert.equal(f.updateCalls().length, 2)
+    assert.equal(f.button('最新稳定版').props.disabled, true)
+    assert.equal(f.calls.some(call=>call.command==='capture'||call.command==='unfreeze'),false)
+    assert.equal(f.render().some(node => node.props.role === 'alert'),false)
+  })
+}
 
 test('ordinary browsers do not offer a desktop package update', async () => {
   const f = fixture({ host: false })
@@ -543,7 +540,7 @@ test('native activity blocks an idle-looking catalog and late native admission r
   running = false; await activity.tick()
   assert.equal(installs, 1)
   assert.equal(f.status(), '等待会话结束后更新…')
-  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 1)
+  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 0)
   await activity.tick()
   assert.equal(installs, 2)
   assert.equal(f.status(), '正在更新 dsh…')
@@ -565,26 +562,25 @@ test('waits for every session without freezing input, then installs once', async
   activity.running('foreground', false)
   await activity.tick()
   assert.equal(f.updateCalls().filter(call => call.command === 'install_dsh_update').length, 1)
-  assert.equal(f.calls.filter(call => call.command === 'capture').length, 1)
+  assert.equal(f.calls.filter(call => call.command === 'capture').length, 0)
 })
 
-test('a session starting during capture releases input and resumes waiting', async () => {
+test('a session starting at native admission resumes waiting without UI capture', async () => {
   const activity = activityFixture()
   activity.running('background', false)
-  let captures = 0
-  const f = fixture({ ...activity, check: async () => ({ current: '0.1.5-rc.2', ...tags }), capture: async () => {
-    if (++captures === 1) activity.running('background', true)
-    return { page: { kind: 'dsh' } }
+  let installs = 0
+  const f = fixture({ ...activity, check: async () => ({ current: '0.1.5-rc.2', ...tags }), install: async () => {
+    if (++installs === 1) { activity.running('background', true); throw Error('dsh-update-sessions-running') }
   } })
   f.openDialog(); await flush(); f.selectTab('dsh')
   f.button('最新稳定版').props.onClick(); await flush()
   assert.equal(f.status(), '等待会话结束后更新…')
-  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 1)
-  assert.equal(f.updateCalls().length, 1)
+  assert.equal(f.calls.filter(call => call.command === 'unfreeze').length, 0)
+  assert.equal(installs, 1)
   activity.running('background', false)
   await activity.tick()
-  assert.equal(f.updateCalls().length, 2)
-  assert.equal(captures, 2)
+  assert.equal(installs, 2)
+  assert.equal(f.calls.some(call=>call.command==='capture'),false)
 })
 
 test('cancel waiting clears the timer and never installs later', async () => {

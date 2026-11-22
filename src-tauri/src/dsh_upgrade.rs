@@ -1,16 +1,13 @@
 //! Two-phase upgrade: prepare while usable, checkpoint after durable shutdown,
-//! then commit selection only after the new desktop acknowledges UI restoration.
+//! then commit selection once the new backend is ready. Updates do not save UI state.
 use crate::{
     dsh::Runtime,
     maintenance::Stage,
     state::Shared,
-    ui_snapshot::{UiPhase, UiSnapshot},
+    ui_snapshot::UiPhase,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{path::PathBuf, sync::Mutex};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[derive(Clone, Serialize)]
@@ -48,12 +45,15 @@ struct Record {
     source: Runtime,
     target: Runtime,
     checkpoint: crate::update_checkpoint::Checkpoint,
-    ui_checkpoint: uuid::Uuid,
+    // Read and discard the deprecated field; new records never store UI state.
+    #[serde(default, skip_serializing, rename = "ui_checkpoint")]
+    _legacy_ui_checkpoint: Option<serde::de::IgnoredAny>,
     selection: Option<serde_json::Value>,
 }
 struct Active {
     record: Record,
     config: crate::remote_control::Config,
+    lease: crate::maintenance::Lease,
 }
 pub fn progress(app: &AppHandle, step: &str) {
     let manager = app.state::<ManagerState>();
@@ -194,30 +194,82 @@ fn preparation_step<T>(journal:&crate::maintenance::Progress, step:&str, fallbac
 #[cfg(test)]
 mod preparation_tests {
     use super::*;
+    fn update_record(stage: &str) -> serde_json::Value {
+        let runtime = serde_json::json!({"node_exe":"node.exe", "dsh_bin":"dsh/bin.js",
+            "source":"configured", "version":"0.2.2"});
+        serde_json::json!({"schema":1, "stage":stage, "source":runtime, "target":runtime,
+            "checkpoint":{"home":"profile", "saved":"profile-before", "failed":"profile-failed", "files":[]},
+            "selection":null})
+    }
     #[test]
-    fn failed_recovery_save_records_the_real_stage_and_error_without_private_output() {
-        for (error,expected) in [("recovery-transition-capacity","recovery-transition-capacity"),
-            ("recovery-save-failed","recovery-save-failed"),("disk failure at private path","recovery-save-failed")] {
+    fn old_and_new_update_records_load_without_serializing_ui_state() {
+        for stage in ["pending", "committed", "rolled-back"] {
+            for legacy in [None, Some(serde_json::Value::Null), Some(serde_json::json!(uuid::Uuid::new_v4()))] {
+                let mut value = update_record(stage);
+                if let Some(legacy) = legacy { value["ui_checkpoint"] = legacy; }
+                let record: Record = serde_json::from_value(value).unwrap();
+                assert_eq!(record.schema, 1);
+                assert_eq!(record.stage, stage);
+                assert!(serde_json::to_value(record).unwrap().get("ui_checkpoint").is_none());
+            }
+        }
+    }
+    #[test]
+    fn legacy_compatibility_does_not_accept_unknown_or_missing_transaction_fields() {
+        let mut unknown = update_record("committed");
+        unknown["unexpected"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<Record>(unknown).is_err());
+        let mut missing = update_record("committed");
+        missing.as_object_mut().unwrap().remove("checkpoint");
+        assert!(serde_json::from_value::<Record>(missing).is_err());
+    }
+    #[test]
+    #[ignore = "read-only check; set DSH_LEGACY_UPDATE_RECORD to an existing update.json"]
+    fn existing_legacy_update_record_loads_without_rewriting() {
+        let path = std::env::var_os("DSH_LEGACY_UPDATE_RECORD").expect("DSH_LEGACY_UPDATE_RECORD");
+        let bytes = std::fs::read(&path).unwrap();
+        let record: Record = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(record.schema, 1);
+        assert!(matches!(record.stage.as_str(), "pending" | "committed" | "rolled-back"));
+        assert!(serde_json::to_value(record).unwrap().get("ui_checkpoint").is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    #[test]
+    fn failed_preparation_records_the_real_stage_and_error_without_private_output() {
+        for (error,expected) in [("update-data-layout-unsupported","update-data-layout-unsupported"),
+            ("runtime-candidate-binding","runtime-candidate-binding"),("disk failure at private path","update-data-check-failed")] {
             let coordinator=crate::maintenance::MaintenanceCoordinator::default();
             let lease=coordinator.begin(crate::maintenance::Kind::Update).unwrap();let journal=lease.progress();
             journal.target("0.2.2-rc.3").unwrap();
             preparation_step(&journal,"data-contract-check-started","update-data-check-failed",||Ok(())).unwrap();
-            let result:Result<(),String>=preparation_step(&journal,"recovery-save-started","recovery-save-failed",||Err(error.into()));
+            let result:Result<(),String>=preparation_step(&journal,"data-contract-check-started","update-data-check-failed",||Err(error.into()));
             assert_eq!(result.unwrap_err(),error);
             let record=coordinator.status().unwrap();
             assert_eq!(record.stage,Stage::RecoveryRequired);
             assert_eq!(record.error_code.as_deref(),Some(expected));
-            assert_eq!(record.completed_steps.last().map(String::as_str),Some("recovery-save-started"));
+            assert_eq!(record.completed_steps.last().map(String::as_str),Some("data-contract-check-started"));
             assert_eq!(record.target_runtime.as_deref(),Some("0.2.2-rc.3"));
             let dir=tempfile::tempdir().unwrap();record.save(dir.path()).unwrap();
             assert_eq!(crate::maintenance::OperationJournal::load(&dir.path().join(format!("{}.json",record.operation_id))).unwrap().error_code,record.error_code);
         }
     }
+    #[test]
+    fn runtime_commit_finishes_without_a_ui_checkpoint_or_restore() {
+        let coordinator=crate::maintenance::MaintenanceCoordinator::default();
+        let lease=coordinator.begin(crate::maintenance::Kind::Update).unwrap();
+        let journal=lease.progress();
+        journal.update(Stage::Committing,"backend-ready").unwrap();
+        journal.complete_update().unwrap();
+        let record=coordinator.status().unwrap();
+        assert_eq!(record.stage,Stage::Complete);
+        assert_eq!(record.checkpoint_id,None);
+        assert_eq!(record.completed_steps,vec!["backend-ready","runtime-committed"]);
+        assert!(record.recovery_actions.is_empty());
+    }
 }
 pub async fn install(
     window: WebviewWindow,
     identity: crate::remote_control::Identity,
-    payload: crate::ui_snapshot::UiPayload,
     palette: Option<crate::boot_bar::Palette>,
     target_version: String,
     candidate_id: String,
@@ -241,7 +293,7 @@ pub async fn install(
         (source.clone(), target.clone())
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let (roots, config, ui_identity) = {
+        let (roots, config) = {
             let mut s = shared.lock().map_err(|_| "runtime-state")?;
             if s.remote.applying
                 || s.boot_in_progress
@@ -251,9 +303,7 @@ pub async fn install(
                 return Err("maintenance-busy".into());
             }
             crate::dsh_update::require_idle(&s)?;
-            if s.runtime.as_ref().map(|r| &r.dsh_bin) != Some(&source.dsh_bin)
-                || payload.frontend_version != source.version.as_deref().unwrap_or("")
-            {
+            if s.runtime.as_ref().map(|r| &r.dsh_bin) != Some(&source.dsh_bin) {
                 return Err("runtime-candidate-stale".into());
             }
             let roots = s
@@ -265,34 +315,20 @@ pub async fn install(
                 .clone();
             let config = s.remote.active.clone().ok_or("runtime-unavailable")?;
             s.remote.applying = true;
-            (roots, config, s.ui.identity())
+            (roots, config)
         };
         let guard = crate::remote_control::ApplyingGuard(shared.clone());
         let journal = lease.progress();
         journal.target(&target_version)?;
-        let (mut snapshot,recovery)=(|| {
+        (|| {
         progress(&app, "verifying");
         preparation_step(&journal,"candidate-verification-started","update-candidate-verification-failed",
             ||crate::runtime_store::verify_candidate(&app, &target))?;
         progress(&app, "checking-data");
         preparation_step(&journal,"data-contract-check-started","update-data-check-failed",
             ||contract(&app, &source, &target, &roots))?;
-        progress(&app, "capturing-ui");
-        let snapshot = preparation_step(&journal,"ui-capture-started","update-ui-capture-failed",
-            ||UiSnapshot::capture(payload, ui_identity))?;
-        progress(&app, "saving-recovery");
-        let recovery = preparation_step(&journal,"recovery-save-started","recovery-save-failed",
-            ||crate::recovery_store::persist(&app, &snapshot))?;
-        Ok::<_,String>((snapshot,recovery))
+        Ok::<_,String>(())
         })().map_err(|error| {failure(&app,&error);progress(&app,"failed");error})?;
-        snapshot.restore_frontend_version = target.version.clone();
-        journal.checkpoint(
-            recovery.id,
-            source
-                .version
-                .as_deref()
-                .ok_or("runtime-version-unavailable")?,
-        )?;
         let selection_path = crate::runtime_store::directory(&app)?.join("selection.json");
         let selection = match std::fs::read(&selection_path) {
             Ok(bytes) => {
@@ -316,22 +352,14 @@ pub async fn install(
             let _ = journal.failed("update-flush-failed");
             if !process.is_running() {
                 drop(process);
-                snapshot.restore_frontend_version = source.version.clone();
                 {
                     let mut s = shared.lock().map_err(|_| "runtime-state")?;
-                    s.ui.recovery = Some(recovery);
-                    s.ui.snapshot = Some(Arc::new(snapshot));
-                    s.ui.recovery_lease = Some(lease.into_lease());
                     s.ui.loaded = false;
-                    s.ui.transition(UiPhase::Restoring);
                 }
                 clear_prepared(&app);
                 let _ = journal.update(Stage::RolledBack, "source-exited-before-checkpoint");
                 progress(&app, "rolled-back");
-                std::thread::spawn(move || {
-                    let _guard = guard;
-                    crate::restart_backend(&app, &shared, source, config);
-                });
+                crate::restart_backend(&app, &shared, source, config);
                 return Ok(());
             }
             let mut s = shared.lock().map_err(|_| "runtime-state")?;
@@ -346,15 +374,11 @@ pub async fn install(
         drop(process);
         {
             let mut s = shared.lock().map_err(|_| "runtime-state")?;
-            s.ui.recovery = Some(recovery.clone());
-            s.ui.snapshot = Some(Arc::new(snapshot));
-            s.ui.recovery_lease = Some(lease.into_lease());
             s.ui.loaded = false;
-            s.ui.transition(UiPhase::Restoring);
             s.update_presentation = Some(crate::boot_bar::UpdatePresentation { palette });
         }
-        // From here onward the native host owns recovery, including failures
-        // before a candidate process can be launched.
+        // The lease belongs to the update, independently of UI recovery.
+        let mut operation_lease = Some(lease.into_lease());
         let outcome = (|| {
             progress(&app, "checkpointing");
             journal.update(Stage::Checkpointing, "data-checkpoint-started")?;
@@ -371,7 +395,7 @@ pub async fn install(
                 source: source.clone(),
                 target: target.clone(),
                 checkpoint,
-                ui_checkpoint: recovery.id,
+                _legacy_ui_checkpoint: None,
                 selection,
             };
             if let Err(error) = save(&app, &record) {
@@ -383,6 +407,7 @@ pub async fn install(
             *active = Some(Active {
                 record,
                 config: config.clone(),
+                lease: operation_lease.take().ok_or("maintenance-stale")?,
             });
             drop(active);
             journal.update(Stage::StartingCandidate, "candidate-starting")?;
@@ -394,12 +419,13 @@ pub async fn install(
             let _ = journal.failed("update-checkpoint-failed");
             if !rollback_pending(&app) {
                 clear_prepared(&app);
-                restore_snapshot_version(&shared, &source);
                 let _ = journal.update(Stage::RolledBack, "checkpoint-failed-source-retained");
                 progress(&app, "rolled-back");
                 crate::restart_backend(&app, &shared, source, config);
             }
             drop(guard);
+            drop(operation_lease);
+            crate::runtime_cleanup::schedule(&app);
             return Ok(());
         }
         std::thread::spawn(move || {
@@ -410,19 +436,6 @@ pub async fn install(
     })
     .await
     .map_err(|_| "update-worker")?
-}
-fn restore_snapshot_version(shared: &Shared, source: &Runtime) {
-    if let Ok(mut s) = shared.lock() {
-        if let Some(snapshot) = s.ui.snapshot.as_ref() {
-            if let Ok(mut restored) = snapshot
-                .wire()
-                .and_then(|w| UiSnapshot::capture(w.payload, snapshot.source))
-            {
-                restored.restore_frontend_version = source.version.clone();
-                s.ui.snapshot = Some(Arc::new(restored));
-            }
-        }
-    }
 }
 fn restore_selection(app: &AppHandle, record: &Record) -> Result<(), String> {
     let path = crate::runtime_store::directory(app)?.join("selection.json");
@@ -446,15 +459,12 @@ fn cleanup_committed(app: &AppHandle, record: &Record) {
         }
     }
 }
-pub fn acknowledge(app: &AppHandle, checkpoint: uuid::Uuid) -> Result<(), String> {
+pub fn commit_ready(app: &AppHandle) -> Result<(), String> {
     let manager = app.state::<ManagerState>();
     let mut slot = manager.active.lock().map_err(|_| "runtime-state")?;
     let Some(active) = slot.as_mut() else {
         return Ok(());
     };
-    if active.record.ui_checkpoint != checkpoint {
-        return Err("update-checkpoint-binding".into());
-    }
     {
         let shared = app.state::<Shared>();
         let s = shared.lock().map_err(|_| "runtime-state")?;
@@ -475,33 +485,21 @@ pub fn acknowledge(app: &AppHandle, checkpoint: uuid::Uuid) -> Result<(), String
         }
     }
     progress(app, "committing");
-    let journal={
-        let shared=app.state::<Shared>();let state=shared.lock().map_err(|_|"runtime-state")?;
-        state.ui.recovery_lease.as_ref().map(|lease|lease.progress())
-    };
-    if let Some(journal)=journal {
-        journal.update(Stage::Committing,"candidate-commit-started")?;
-    }
+    let journal = active.lease.progress();
+    journal.update(Stage::Committing,"backend-ready")?;
+    journal.update(Stage::Committing,"candidate-commit-started")?;
     crate::runtime_store::commit_update(app, &active.record.target, &active.record.source)?;
-    let recovery = app
-        .state::<Shared>()
-        .lock()
-        .map_err(|_| "runtime-state")?
-        .ui
-        .recovery
-        .clone()
-        .ok_or("update-checkpoint-binding")?;
-    crate::recovery_store::store(app)?
-        .permit_version(
-            &recovery,
-            active
-                .record
-                .target
-                .version
-                .as_deref()
-                .ok_or("runtime-version-unavailable")?,
-        )
-        .map_err(|_| "update-recovery-save-failed")?;
+    // Verification may take time; a backend that exited meanwhile cannot commit.
+    {
+        let shared = app.state::<Shared>();
+        let s = shared.lock().map_err(|_| "runtime-state")?;
+        if s.runtime.as_ref().map(|r| &r.dsh_bin) != Some(&active.record.target.dsh_bin)
+            || s.remote.active.is_none()
+            || s.ui.phase == UiPhase::Exiting
+        {
+            return Err("runtime-candidate-stale".into());
+        }
+    }
     active.record.stage = "committed".into();
     save(app, &active.record)?;
     {
@@ -510,6 +508,9 @@ pub fn acknowledge(app: &AppHandle, checkpoint: uuid::Uuid) -> Result<(), String
         if let Some(m) = s.runtime.as_mut().and_then(|r| r.managed.as_mut()) {
             m.committed = true;
         }
+    }
+    if journal.complete_update().is_err() {
+        crate::diagnostics::record(app, "update", "journal-save-failed");
     }
     cleanup_committed(app, &active.record);
     clear_prepared(app);
@@ -529,7 +530,8 @@ pub fn rollback_pending(app: &AppHandle) -> bool {
     let app = app.clone();
     std::thread::spawn(move || {
         let shared = app.state::<Shared>().inner().clone();
-        let (process, journal) = {
+        let journal = active.lease.progress();
+        let process = {
             let Ok(mut s) = shared.lock() else { return };
             if s.ui.phase == UiPhase::Exiting {
                 return;
@@ -538,10 +540,7 @@ pub fn rollback_pending(app: &AppHandle) -> bool {
             s.ui.backend_instance += 1;
             s.remote.active = None;
             s.ui.loaded = false;
-            (
-                s.process.take(),
-                s.ui.recovery_lease.as_ref().map(|l| l.progress()),
-            )
+            s.process.take()
         };
         let _guard = crate::remote_control::ApplyingGuard(shared.clone());
         progress(&app, "rolling-back");
@@ -559,9 +558,7 @@ pub fn rollback_pending(app: &AppHandle) -> bool {
             save(&app, &active.record)
         })();
         if result.is_err() {
-            if let Some(p) = journal {
-                let _ = p.failed("update-rollback-failed");
-            }
+            let _ = journal.failed("update-rollback-failed");
             progress(&app, "failed");
             crate::fail(
                 &app,
@@ -572,13 +569,12 @@ pub fn rollback_pending(app: &AppHandle) -> bool {
             crate::navigate_current(&app);
             return;
         }
-        restore_snapshot_version(&shared, &active.record.source);
         clear_prepared(&app);
-        if let Some(p) = journal {
-            let _ = p.update(Stage::RolledBack, "data-and-runtime-rolled-back");
-        }
+        let _ = journal.update(Stage::RolledBack, "data-and-runtime-rolled-back");
         progress(&app, "rolled-back");
         crate::restart_backend(&app, &shared, active.record.source, active.config);
+        drop(active.lease);
+        crate::runtime_cleanup::schedule(&app);
     });
     true
 }

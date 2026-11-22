@@ -219,6 +219,7 @@ impl RecoveryStore {
         plain_directory(&directory)?;
         Ok(directory)
     }
+    #[cfg(test)]
     fn preflight_transition(&self) -> io::Result<()> {
         let directory=self.prepare_transition_directory()?;
         // Advisory early check; persist repeats it with the actual payload size.
@@ -293,9 +294,6 @@ pub fn persist(app: &AppHandle, snapshot: &UiSnapshot) -> Result<Handle, String>
     if snapshot.payload.frontend_version != binding.runtime_version { return Err("recovery-version".into()); }
     let id = store(app)?.persist(snapshot, binding.clone()).map_err(save_error)?;
     Ok(Handle { id, binding })
-}
-pub fn preflight_transition(app:&AppHandle)->Result<(),String> {
-    store(app)?.preflight_transition().map_err(save_error)
 }
 #[tauri::command]
 pub async fn desktop_draft_checkpoint(window:WebviewWindow,identity:crate::remote_control::Identity,payload:UiPayload)->Result<CheckpointResult,String> {

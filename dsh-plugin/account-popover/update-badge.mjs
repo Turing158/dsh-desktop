@@ -23,14 +23,15 @@ export function createUpdateBadge(React, ui) {
     const available = Boolean(update?.versions?.stableUpdateAvailable)
     const waiting = update?.busy === 'waiting'
     const installing = Boolean(update?.busy && !['waiting', 'check'].includes(update.busy))
+    const downloading = installing && update?.progress?.step === 'downloading'
     const busy = waiting || installing
     const failed = Boolean(update?.error)
     const state = waiting ? 'waiting' : installing ? 'installing' : failed ? 'error' : 'available'
-    const text = waiting ? t('等待中') : installing ? t('更新中') : failed ? t('重试') : t('新版本')
+    const text = waiting ? t('等待中') : installing ? t(downloading ? '下载中' : '更新中') : failed ? t('重试') : t('新版本')
     const contentKey = JSON.stringify([available, state, Boolean(wide), wide ? text : ''])
     React.useLayoutEffect(() => { motion.current.update(contentKey, pill.current, content.current, outgoing.current) }, [contentKey])
     if (!available) return null
-    const label = waiting ? t('等待会话结束后更新…') : installing ? t('正在更新 dsh…')
+    const label = waiting ? t('等待会话结束后更新…') : downloading ? t('正在下载程序和依赖…') : installing ? t('正在更新 dsh…')
       : failed ? t('更新失败，点击查看并重试') : t('更新到 dsh 稳定版 {version}', { version: update.versions.latest })
     const button = h('button', {
       type: 'button', className: 'dshUpdateBadge', 'data-state': state,

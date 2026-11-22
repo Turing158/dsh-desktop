@@ -109,7 +109,7 @@ try {
     await ctx.uiWorkspace.openSession(id);return id
   },workspace);report.sessionId=id
   await page.waitForFunction(id=>window.__DSH_SMOKE_CONTEXT__.conversation.input.for(window.__DSH_SMOKE_CONTEXT__.sessions.scope(id))?.editor.getRootElement(),id)
-  const draft='升级后仍然保留的测试草稿'
+  const draft='更新前的测试草稿'
   // Set the documented draft model. Filling contenteditable's DOM directly
   // can leave Lexical's state empty, which cannot test draft restoration.
   await page.evaluate(({id,draft})=>{
@@ -127,17 +127,7 @@ try {
     const transitions=join(recoveryDirectory,'transitions');await mkdir(transitions,{recursive:true})
     const blockers=Array.from({length:8},()=>join(transitions,randomUUID()+'.json'))
     for(const file of blockers)await writeFile(file,'{}')
-    const rejected=await page.evaluate(async targetVersion=>{
-      try {await window.__TAURI__.core.invoke('prepare_dsh_candidate',{identity:window.__DSH_REMOTE_IDENTITY__,requestId:crypto.randomUUID(),targetVersion});return 'unexpected success'}
-      catch(error){return String(error)}
-    },versions.preview)
-    assert.equal(rejected,'recovery-transition-capacity')
-    const records=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
-    const failed=records.find(record=>record.errorCode==='recovery-transition-capacity')
-    assert.ok(failed);assert.ok(failed.completedSteps.includes('recovery-capacity-check-started'))
-    assert.equal(failed.completedSteps.includes('candidate-install-started'),false)
-    for(const file of blockers)await unlink(file)
-    await pass('full lifecycle recovery storage fails before installation with a specific durable error')
+    await pass('full lifecycle recovery storage is present while updating without a UI checkpoint')
     const template=await wait(async()=>{
       for(const name of await readdir(recoveryDirectory))if(name.endsWith('.json')) {
         const row=JSON.parse(await readFile(join(recoveryDirectory,name),'utf8'))
@@ -152,10 +142,6 @@ try {
     assert.equal((await readdir(recoveryDirectory)).filter(name=>name.endsWith('.json')).length,64)
   }
   async function switchTo(target) {
-    await verifyDraft()
-    // Manual IPC bypasses locator handlers. Run their actionability check so
-    // initial welcome dialogs finish before the native snapshot is captured.
-    await page.locator('#root').click({trial:true})
     await importCachedTarget()
     await writeFile(join(root,'upgrade-reused.json'),'{}')
     await writeFile(join(root,'command.json'),JSON.stringify({sequence:Date.now(),action:'upgrade-reuse-candidate',target}))
@@ -164,24 +150,22 @@ try {
     const attempt=Date.now()
     await page.evaluate(async target=>{
       window.upgradeError=undefined
-      const payload=await window.__DSH_UI_STATE__.prepareRemoteApply(window.__DSH_DSH_UPDATE__.getSnapshot().versions.current,'正在更新…')
-      window.upgradePending=window.__TAURI__.core.invoke('install_dsh_update',{identity:window.__DSH_REMOTE_IDENTITY__,payload,channel:'preview',targetVersion:target.version,candidateId:target.managed.id})
+      window.upgradePending=window.__TAURI__.core.invoke('install_dsh_update',{identity:window.__DSH_REMOTE_IDENTITY__,channel:'preview',targetVersion:target.version,candidateId:target.managed.id})
         .catch(error=>{window.upgradeError=String(error)})
     },target)
     return attempt
   }
   if (cachedTarget && process.env.DSH_UPGRADE_TEST_ROLLBACK) {
-    const checkpointCheck='checkpoint failure restores old UI, shows the original error, preserves the journal cause, and removes partial copies'
+    const checkpointCheck='checkpoint failure restarts the old version without restoring UI, preserves the journal cause, and removes partial copies'
     const publicationCheck='record publication failure removes the unpublished checkpoint while preserving historical recovery data'
     if(!report.checks.includes(checkpointCheck)) {
     const lockFile=join(home,'checkpoint-locked');await writeFile(lockFile,'locked checkpoint regression')
     await holdFile(lockFile)
     const checkpointAttempt=await switchTo(cachedTarget)
     await wait(async()=>{const s=await state();const p=await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress')).catch(()=>null)
-      return p?.startedAt>=checkpointAttempt&&p.step==='rolled-back'&&s.phase==='active'&&!s.hasSnapshot},'checkpoint failure restores original UI')
+      return p?.startedAt>=checkpointAttempt&&p.step==='rolled-back'&&s.phase==='active'&&s.loaded&&s.backend==='running'&&!s.hasSnapshot},'checkpoint failure restarts the original version')
     const failure=await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress'))
     assert.ok(failure.error);assert.equal((await state()).runtime.version,versions.current)
-    await verifyDraft()
     await wait(async()=>!(await state()).runtimeCleanupPending && !await lstat(join(root,'runtime/versions',cachedTarget.managed.id)).then(()=>true,()=>false),'failed checkpoint candidate reclaimed')
     await page.evaluate(()=>window.__DSH_DSH_UPDATE__.show())
     await page.locator('.dshTb__updateError').waitFor({timeout:120000});assert.equal(await page.locator('.dshTb__updateError').textContent(),failure.error)
@@ -199,10 +183,9 @@ try {
     await mkdir(recordPath)
     const recordAttempt=await switchTo(cachedTarget)
     await wait(async()=>{const s=await state();const p=await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress')).catch(()=>null)
-      return p?.startedAt>=recordAttempt&&p.step==='rolled-back'&&s.phase==='active'&&!s.hasSnapshot},'record save failure restores original UI')
+      return p?.startedAt>=recordAttempt&&p.step==='rolled-back'&&s.phase==='active'&&s.loaded&&s.backend==='running'&&!s.hasSnapshot},'record save failure restarts the original version')
     assert.equal((await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress'))).error,'update-record-save-failed')
     assert.equal((await state()).runtime.version,versions.current)
-    await verifyDraft()
     assert.equal((await readdir(root)).filter(name=>name.startsWith('.dsh-update-')&&name.endsWith('-before')).length,obsolete.filter(path=>path.endsWith('-before')).length)
     await rmdir(recordPath)
     await pass(publicationCheck)
@@ -210,6 +193,11 @@ try {
     if(obsolete.length)await holdFile(join(obsolete[0],'sentinel'))
   }
   const started=Date.now()
+  await page.evaluate(() => {
+    window.__DSH_UI_STATE__.prepareRemoteApply = async () => { throw Error('snapshot-form-unsupported') }
+    const dialog = document.createElement('div'); dialog.setAttribute('role','dialog')
+    dialog.textContent = '尚未适配的测试弹窗'; document.body.append(dialog)
+  })
   if (process.env.DSH_UPGRADE_RESUME || cachedTarget) {
     const target=cachedTarget || JSON.parse(await readFile(join(root,'runtime/update.json'),'utf8')).target
     assert.equal(target.version,versions.preview,'reused candidate must match the current registry version')
@@ -227,23 +215,33 @@ try {
       if(currentProgress?.step&&currentProgress.step!==last){last=currentProgress.step;report.stages.push(last);console.log('STAGE: '+last);await save()}
     }catch{}
     const s=await state()
+    if(currentProgress?.step==='failed') {
+      const error=await page.evaluate(()=>window.__DSH_DSH_UPDATE__?.getSnapshot()?.error).catch(()=>null)
+      throw Object.assign(Error(currentProgress.error||error||'upgrade failed; inspect debug.log'),{fatal:true})
+    }
     if(currentProgress?.step==='rolled-back'&&s.phase==='active')throw Object.assign(Error(currentProgress.error||'upgrade rolled back; inspect debug.log'),{fatal:true})
     if(Date.now()-started>5000 && s.backend==='running') {
       const error=await page.evaluate(()=>window.upgradeError).catch(()=>null)
       if(error)throw Object.assign(Error(error),{fatal:true})
     }
-    return s.runtime?.version===report.targetVersion&&s.phase==='active'&&!s.hasSnapshot
+    return s.runtime?.version===report.targetVersion&&s.phase==='active'&&s.loaded&&s.backend==='running'&&!s.hasSnapshot
   },'upgrade commit',900000)
   const record=JSON.parse(await readFile(join(root,'runtime/update.json'),'utf8'))
   report.upgradeElapsedMs=Date.now()-started
   assert.equal((await page.evaluate(()=>window.__TAURI__.core.invoke('dsh_update_progress'))).error,null)
   assert.equal(record.stage,'committed');assert.equal(record.target.version,versions.preview)
+  assert.equal('ui_checkpoint' in record,false)
+  assert.equal((await state()).hasSnapshot,false)
+  const completedJournals=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
+  const committed=completedJournals.find(j=>j.stage==='complete'&&j.completedSteps.includes('runtime-committed'))
+  assert.ok(committed)
+  assert.equal(committed.checkpointId,null)
+  assert.equal(committed.completedSteps.some(step=>['ui-capture-started','recovery-save-started','ui-restored'].includes(step)),false)
+  await pass('an unsupported dialog cannot block updating; backend readiness commits without a UI snapshot or restore acknowledgement')
   if(historicalRecovery.size) {
     for(const [name,bytes] of historicalRecovery)assert.equal(await readFile(join(recoveryDirectory,name),'utf8'),bytes)
-    assert.equal(await lstat(join(recoveryDirectory,'transitions',record.ui_checkpoint+'.json')).then(()=>true,()=>false),false)
-    const journals=await Promise.all((await readdir(join(root,'maintenance/operations'))).map(async name=>JSON.parse(await readFile(join(root,'maintenance/operations',name),'utf8'))))
-    assert.ok(journals.some(j=>j.stage==='complete'&&j.completedSteps.includes('ui-capture-started')&&j.completedSteps.includes('recovery-save-started')))
-    await pass('64 legacy draft packages survive a real preview upgrade and only the acknowledged lifecycle snapshot is removed')
+    assert.equal((await readdir(join(recoveryDirectory,'transitions'))).length,8)
+    await pass('full recovery storage and legacy draft packages survive updating without blocking it')
   }
   await wait(async()=>{
     const selection=JSON.parse(await readFile(join(root,'runtime/selection.json'),'utf8'))
@@ -257,7 +255,7 @@ try {
   if(initial.runtime.managed)assert.equal(await lstat(join(root,'runtime/versions',initial.runtime.managed.id)).then(()=>true,()=>false),false)
   assert.equal(await lstat(bin).then(()=>true,()=>false),true)
   await pass('full update commit retains only the current runtime and reclaims previous versions and installation staging')
-  assert.match(await page.locator('[contenteditable=true]').first().textContent(),/升级后仍然保留/)
+  assert.equal((await page.locator('[contenteditable=true]').first().textContent()).includes(draft),false)
   assert.equal((await lstat(moduleLink)).isSymbolicLink(),true)
   assert.equal(await readlink(moduleLink),external)
   assert.equal(await readFile(join(external,'sentinel'),'utf8'),'external dependency is untouched')
@@ -266,7 +264,7 @@ try {
   assert.equal(await lstat(record.checkpoint.saved).then(()=>true,()=>false),false)
   assert.equal((await readdir(root)).filter(name=>name.startsWith('.dsh-update-')&&/-(before|failed)$/.test(name)).length,lockChild?1:0)
   await pass('successful commit deletes its backup, obsolete backups, partial captures and failed update data')
-  await page.screenshot({path:join(root,'upgraded.png')});await pass('actual preview installs, checkpoints data, restores draft, and commits selection')
+  await page.screenshot({path:join(root,'upgraded.png')});await pass('actual preview installs, checkpoints data, opens a fresh page, and commits selection')
   if(lockChild) {
     assert.match(await readFile(join(root,'debug.log'),'utf8'),/checkpoint cleanup will retry on startup/)
     lockChild.stdin.end('\n');await wait(()=>lockChild.exitCode!==null,'unlock obsolete checkpoint',10000);lockChild=null

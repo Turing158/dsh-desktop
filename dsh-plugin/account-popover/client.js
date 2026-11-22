@@ -203,16 +203,17 @@
       const available = Boolean(update?.versions?.stableUpdateAvailable);
       const waiting = update?.busy === "waiting";
       const installing = Boolean(update?.busy && !["waiting", "check"].includes(update.busy));
+      const downloading = installing && update?.progress?.step === "downloading";
       const busy = waiting || installing;
       const failed = Boolean(update?.error);
       const state = waiting ? "waiting" : installing ? "installing" : failed ? "error" : "available";
-      const text = waiting ? t("\u7B49\u5F85\u4E2D") : installing ? t("\u66F4\u65B0\u4E2D") : failed ? t("\u91CD\u8BD5") : t("\u65B0\u7248\u672C");
+      const text = waiting ? t("\u7B49\u5F85\u4E2D") : installing ? t(downloading ? "\u4E0B\u8F7D\u4E2D" : "\u66F4\u65B0\u4E2D") : failed ? t("\u91CD\u8BD5") : t("\u65B0\u7248\u672C");
       const contentKey = JSON.stringify([available, state, Boolean(wide), wide ? text : ""]);
       React.useLayoutEffect(() => {
         motion.current.update(contentKey, pill.current, content.current, outgoing.current);
       }, [contentKey]);
       if (!available) return null;
-      const label = waiting ? t("\u7B49\u5F85\u4F1A\u8BDD\u7ED3\u675F\u540E\u66F4\u65B0\u2026") : installing ? t("\u6B63\u5728\u66F4\u65B0 dsh\u2026") : failed ? t("\u66F4\u65B0\u5931\u8D25\uFF0C\u70B9\u51FB\u67E5\u770B\u5E76\u91CD\u8BD5") : t("\u66F4\u65B0\u5230 dsh \u7A33\u5B9A\u7248 {version}", { version: update.versions.latest });
+      const label = waiting ? t("\u7B49\u5F85\u4F1A\u8BDD\u7ED3\u675F\u540E\u66F4\u65B0\u2026") : downloading ? t("\u6B63\u5728\u4E0B\u8F7D\u7A0B\u5E8F\u548C\u4F9D\u8D56\u2026") : installing ? t("\u6B63\u5728\u66F4\u65B0 dsh\u2026") : failed ? t("\u66F4\u65B0\u5931\u8D25\uFF0C\u70B9\u51FB\u67E5\u770B\u5E76\u91CD\u8BD5") : t("\u66F4\u65B0\u5230 dsh \u7A33\u5B9A\u7248 {version}", { version: update.versions.latest });
       const button = h("button", {
         type: "button",
         className: "dshUpdateBadge",

@@ -339,11 +339,6 @@ pub fn restored(
         return Ok(());
     }
     if let Some(checkpoint) = checkpoint {
-        if let Err(code)=crate::dsh_upgrade::acknowledge(app,checkpoint) {
-            crate::dsh_upgrade::failure(app, &code);
-            restore_failed(app,identity.operation_id,"update-commit-ack-failed");
-            return Err(code);
-        }
         if let Err(code)=crate::backup::acknowledge(app,checkpoint) {
             restore_failed(app,identity.operation_id,"backup-commit-ack-failed");
             return Err(code);

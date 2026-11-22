@@ -1373,39 +1373,17 @@ var React = require('react')
     }
 
     function DshUpdateProgress(props) {
-      var state = React.useState(null), progress = state[0], setProgress = state[1]
-      React.useEffect(function () {
-        var stopped = false, timer
-        function receive(event) {
-          var value = event.detail
-          if (!stopped && value && typeof value.step === 'string') setProgress(Object.assign({}, value, { now: Date.now() }))
-        }
-        window.addEventListener('dsh-update-progress', receive)
-        async function poll() {
-          try {
-            var value = await invokeHost('dsh_update_progress')
-            if (!stopped && value && typeof value.step === 'string') setProgress(Object.assign({}, value, { now: Date.now() }))
-          } catch (_) {}
-          if (!stopped) timer = setTimeout(poll, 750)
-        }
-        if (props.busy && props.busy !== 'check') poll()
-        return function () { stopped = true; clearTimeout(timer); window.removeEventListener('dsh-update-progress', receive) }
-      }, [props.busy])
+      var progress = props.progress
       var labels = {
         installing: '正在连接更新源并安装新版…', downloading: '正在下载程序和依赖…',
         'installing-dependencies': '正在安装依赖组件…', verifying: '正在复制并校验程序文件…',
         prepared: '新版已准备好，等待切换…', 'checking-data': '正在检查数据兼容性…',
-        'checking-recovery': '正在检查界面恢复空间…', 'capturing-ui': '正在保存当前界面…',
-        'saving-recovery': '正在保存升级恢复快照…',
         'saving-sessions': '正在保存会话并停止旧版…', checkpointing: '正在备份更新前的数据…',
-        starting: '正在启动新版…', restoring: '正在恢复界面和草稿…', committing: '正在确认更新结果…',
+        starting: '正在启动新版…', committing: '正在确认更新结果…',
         'rolling-back': '新版启动未完成，正在恢复旧版和数据…', 'rolled-back': '更新未完成，已恢复旧版和数据。',
         complete: '更新完成。', cancelled: '更新已取消。', failed: '更新未完成，请查看错误信息。'
       }
       var label = props.busy === 'waiting' ? '等待会话结束后更新…' : labels[progress?.step]
-      React.useEffect(function () {
-        if (label) window.__DSH_UI_STATE__?.setRemoteApplyNotice?.(t(label))
-      }, [label])
       if (!label) return null
       var seconds = progress ? Math.max(0, Math.floor((progress.now - progress.startedAt) / 1000)) : 0
       return h('div', { className: 'dshTb__aboutText' },
@@ -1433,9 +1411,9 @@ var React = require('react')
           ),
         ) : null,
         versions?.candidateOnly ? h('p', { className: 'dshTb__aboutText' }, t('当前操作只准备独立候选版本。准备完成后继续使用当前版本，自动切换与回退尚未开放。')) : null,
-        update.busy && update.busy !== 'check' ? h(DshUpdateProgress, { busy: update.busy }) : null,
+        update.busy && update.busy !== 'check' ? h(DshUpdateProgress, { busy: update.busy, progress: update.progress }) : null,
         update.busy === 'waiting'
-          ? h('p', { className: 'dshTb__aboutText' }, t('所有运行中的会话结束后，将自动保存界面并更新。等待期间可以继续使用。'))
+          ? h('p', { className: 'dshTb__aboutText' }, t('所有运行中的会话结束后，将自动更新。等待期间可以继续使用。'))
           : update.busy === 'preparing' && !versions?.stagedUpdate
           ? h('p', { className: 'dshTb__aboutText' }, t('正在安装并校验独立候选版本，请稍候…'))
           : update.busy && update.busy !== 'check' && !versions?.stagedUpdate
@@ -1715,7 +1693,6 @@ var React = require('react')
       var setUpdateOpen = updateOpenState[1]
       // Block repeated clicks before React has committed the disabled state.
       var updatePending = React.useRef(false)
-      var updateCapture = React.useRef(false)
       var updateAbort = React.useRef(null)
       var updateLive = React.useRef(null)
       var updateLastCheck = React.useRef(0)
@@ -1762,6 +1739,28 @@ var React = require('react')
       React.useEffect(function () {
         if (hasHost()) document.dispatchEvent(new Event('dsh-desktop:dsh-update'))
       }, [dshUpdate])
+      // Share native progress with the badge even when the update dialog is closed.
+      React.useEffect(function () {
+        if (!hasHost() || !dshUpdate.busy || dshUpdate.busy === 'check') return
+        var stopped = false, timer
+        function accept(value) {
+          if (stopped || !value || typeof value.step !== 'string') return
+          setDshUpdate(function (previous) {
+            if (stopped || !previous.busy || previous.busy === 'check') return previous
+            // A pending poll must not overwrite a newer pushed stage.
+            if (previous.progress?.updatedAt > value.updatedAt) return previous
+            return Object.assign({}, previous, { progress: Object.assign({}, value, { now: Date.now() }) })
+          })
+        }
+        function receive(event) { accept(event.detail) }
+        window.addEventListener('dsh-update-progress', receive)
+        async function poll() {
+          try { accept(await invokeHost('dsh_update_progress')) } catch (_) {}
+          if (!stopped) timer = setTimeout(poll, 750)
+        }
+        poll()
+        return function () { stopped = true; clearTimeout(timer); window.removeEventListener('dsh-update-progress', receive) }
+      }, [dshUpdate.busy])
 
       // ---- the theme switch (remote page) ----------------------------------
 
@@ -1891,8 +1890,6 @@ var React = require('react')
         updateAbort.current = controller
         var previousVersions = dshUpdate.versions
         setDshUpdate({ attempted: true, busy: 'waiting', versions: previousVersions, error: null, message: null })
-        var bridge = window.__DSH_UI_STATE__
-        var captured = false
         var preparedCandidate = null
         var handedToHost = false
         if (previousVersions.candidateOnly || previousVersions.stagedUpdate) {
@@ -1933,47 +1930,29 @@ var React = require('react')
         }
         try {
           if (!hasHost()) throw new Error(t('请在桌面应用中安装 dsh 更新。'))
-          if (!bridge?.prepareRemoteApply) throw new Error(t('页面保存服务尚未准备好，请稍后重试'))
           var identity = window.__DSH_REMOTE_IDENTITY__
-          var payload
           while (!controller.signal.aborted) {
             if (await isRunning()) {
               await updatePause(controller.signal)
               continue
             }
             if (controller.signal.aborted) return
-            var status = await invokeHost('remote_status', { identity: identity })
-            if (controller.signal.aborted) return
-            updateCapture.current = true
             setDshUpdate({ attempted: true, busy: channel, versions: previousVersions, error: null, message: null })
-            captured = true
-            payload = await bridge.prepareRemoteApply(status.frontendVersion, t('正在保存界面并更新 dsh…'))
-            // A queued turn or another window may start work while capture awaits.
-            // Release the input guard and keep waiting if that happened.
-            if (!(await isRunning())) {
-              if (controller.signal.aborted) { bridge.finishRemoteApply(); captured = false; return }
-              var request = { channel: channel, identity: identity, payload: payload,
-                palette: window.__DSH_DESKTOP_BOOT__?.capturePalette() }
-              request.targetVersion = previousVersions[channel]
-              if (preparedCandidate) request.candidateId = preparedCandidate.id
-              try {
-                await invokeHost('install_dsh_update', request)
-                handedToHost = true
-                // The host owns the snapshot; stay frozen until the new document restores it.
-                return
-              } catch (error) {
-                // Rechecked by Rust after npm resolution and snapshot staging.
-                // A newly started task returns us to the same pending request.
-                if (String(error?.message || error) !== 'dsh-update-sessions-running') throw error
-              }
+            var request = { channel: channel, identity: identity,
+              palette: window.__DSH_DESKTOP_BOOT__?.capturePalette(), targetVersion: previousVersions[channel] }
+            if (preparedCandidate) request.candidateId = preparedCandidate.id
+            try {
+              await invokeHost('install_dsh_update', request)
+              handedToHost = true
+              return
+            } catch (error) {
+              // Native admission rechecks sessions immediately before shutdown.
+              if (String(error?.message || error) !== 'dsh-update-sessions-running') throw error
             }
-            bridge.finishRemoteApply(); captured = false; updateCapture.current = false
             setDshUpdate({ attempted: true, busy: 'waiting', versions: previousVersions, error: null, message: null })
             await updatePause(controller.signal)
           }
-          if (controller.signal.aborted) { if (captured) bridge.finishRemoteApply(); return }
         } catch (error) {
-          if (captured) bridge?.finishRemoteApply()
           if (updateAbort.current === controller) updatePending.current = false
           if (!controller.signal.aborted) setDshUpdate({ attempted: true, busy: null, versions: previousVersions, error: upgradeError(error), message: null })
         } finally {
@@ -1981,7 +1960,6 @@ var React = require('react')
             controller.signal.removeEventListener('abort', cancelPreparation)
             if (!handedToHost && !controller.signal.aborted) cancelPreparation()
           }
-          if (updateAbort.current === controller) updateCapture.current = false
         }
       }
 
@@ -2000,7 +1978,6 @@ var React = require('react')
 
       function candidateError(error) {
         var code = String(error?.message || error)
-        if (/^recovery-/.test(code)) return upgradeError(error)
         if (code === 'runtime-candidate-install-failed') return '候选安装失败，当前版本继续运行。请检查网络、磁盘空间和安装权限。'
         if (code === 'runtime-candidate-install-timeout') return '候选安装超时，当前版本继续运行。'
         if (code === 'runtime-candidate-cancelled') return '候选准备已取消，当前版本继续运行。'
@@ -2010,10 +1987,6 @@ var React = require('react')
 
       function upgradeError(error) {
         var code = String(error?.message || error)
-        if (code === 'recovery-transition-capacity') return t('升级恢复快照空间已满。请在“故障诊断”的恢复列表中处理待恢复内容后重试；现有草稿已保留。')
-        if (code === 'recovery-capacity') return t('草稿恢复空间已满，请在“故障诊断”中处理历史恢复记录；现有草稿已保留。')
-        if (code === 'recovery-capacity-unverified') return t('无法安全访问恢复目录，更新已停止。请检查目录权限并查看故障诊断。')
-        if (code === 'recovery-save-failed') return t('无法保存升级恢复快照。请检查磁盘空间和目录写入权限；当前版本和草稿已保留。')
         if (/^update-flush-/.test(code)) return t('会话数据尚未保存完成，更新已停止。请稍后重试。')
         if (/^update-(data-|session-schema)/.test(code)) return t('当前数据布局或会话格式暂不支持自动更新，旧版本和数据已保留。')
         if (code === 'update-candidate-required' || code === 'runtime-candidate-stale') return t('已准备的版本已失效，请重新检测更新。')
@@ -2033,12 +2006,12 @@ var React = require('react')
           capture: function () {
             // Read-only version queries can be abandoned on navigation. Only
             // an installation, pending wait or external launch owns the page.
-            if (renamePending || (!updateCapture.current && ((updatePending.current && dshUpdate.busy !== 'check') || (desktopUpdatePending.current && desktopUpdate.busy !== 'check')))) throw new Error('snapshot-input-busy')
+            if (renamePending || (updatePending.current && dshUpdate.busy !== 'check') || (desktopUpdatePending.current && desktopUpdate.busy !== 'check')) throw new Error('snapshot-input-busy')
             setOpenMenu(null)
-            if (!rename && !confirm && !aboutOpen && (!updateOpen || updateCapture.current)) return null
+            if (!rename && !confirm && !aboutOpen && !updateOpen) return null
             return { rename: rename, value: renameValue, confirm: confirm, about: aboutOpen,
-              update: updateCapture.current ? null : dshUpdate, updateOpen: !updateCapture.current && updateOpen,
-              desktopUpdate: updateCapture.current ? null : desktopUpdate, updateTab: updateTab,
+              update: dshUpdate, updateOpen: updateOpen,
+              desktopUpdate: desktopUpdate, updateTab: updateTab,
               sessionId: currentSessionId(ctx.sessions.list.getSnapshot()) || null }
           },
           preflightRestore: function (saved) {

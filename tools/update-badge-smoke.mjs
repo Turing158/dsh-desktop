@@ -51,9 +51,10 @@ try {
   await handleOnboarding(page)
   await page.addInitScript(() => {
     window.updateCalls = []
+    window.updateProgress = null
     window.updateVersions = { current: '0.1.9', latest: '0.2.0', preview: '0.3.0-alpha.1', stableUpdateAvailable: true }
     window.__DSH_UI_STATE__ = {
-      prepareRemoteApply: async () => { window.updateCalls.push('capture'); return { page: { kind: 'dsh' } } },
+      prepareRemoteApply: async () => { window.updateCalls.push('capture'); throw Error('snapshot-form-unsupported') },
       finishRemoteApply: () => window.updateCalls.push('unfreeze'),
       registerProvider: () => () => {},
     }
@@ -62,6 +63,10 @@ try {
       if (command === 'check_dsh_update') return window.updateVersions
       if (command === 'check_desktop_update') return { current: '0.1.3', release: null }
       if (command === 'remote_status') return { frontendVersion: '0.1.9' }
+      if (command === 'dsh_update_progress') {
+        if (window.holdProgressPoll) return new Promise(resolve => { window.finishProgressPoll = resolve })
+        return window.updateProgress
+      }
       if (command === 'install_dsh_update') return new Promise((resolve, reject) => { window.finishUpdate = { resolve, reject } })
       return false
     } } }
@@ -87,7 +92,7 @@ try {
   }
   await page.evaluate(() => window.updateContext.layout.toggleSidebar())
   await page.waitForFunction(() => document.querySelector('.dshUpdateBadge')?.dataset.compact === 'true')
-  assert.ok((await badge.boundingBox()).width <= 36)
+  await page.waitForFunction(() => document.querySelector('.dshUpdateBadge')?.getBoundingClientRect().width <= 36)
   await page.screenshot({ path: join(root, 'collapsed.png') })
   await page.evaluate(() => window.updateContext.layout.toggleSidebar())
   await page.waitForFunction(() => document.querySelector('.dshUpdateBadge')?.dataset.compact === 'false')
@@ -123,6 +128,7 @@ try {
   await dialog.getByRole('button', { name: '取消等待', exact: true }).click()
   await dialog.getByRole('button', { name: '关闭窗口', exact: true }).click()
   assert.equal(await badge.getAttribute('data-state'), 'available')
+  await page.evaluate(() => { window.holdProgressPoll = true })
   await badge.click()
   await page.evaluate(() => { window.backgroundRunning = false })
   await page.waitForFunction(() => window.updateCalls.includes('install_dsh_update'))
@@ -132,9 +138,37 @@ try {
   await page.screenshot({ path: join(root, 'installing.png') })
   pass('click animates, waits without capture, supports cancellation, and installs once after idle')
 
+  const badgeText = badge.locator('.dshUpdateBadge__pill > .dshUpdateBadge__content')
+  const publishProgress = step => page.evaluate(step => {
+    const updatedAt = (window.updateProgress?.updatedAt || Date.now()) + 1
+    window.updateProgress = { step, startedAt: updatedAt - 1000, updatedAt }
+    window.dispatchEvent(new CustomEvent('dsh-update-progress', { detail: window.updateProgress }))
+  }, step)
+  await publishProgress('downloading')
+  await page.waitForFunction(() => document.querySelector('.dshUpdateBadge__content')?.textContent === '下载中')
+  assert.equal(await badge.getAttribute('aria-label'), '正在下载程序和依赖…')
+  assert.equal(await badge.isDisabled(), true)
+  assert.equal(await dialog.count(), 0, 'download progress is shared while the dialog is closed')
+  await page.screenshot({ path: join(root, 'downloading.png') })
+  const staleDownload = await page.evaluate(() => window.updateProgress)
+  await publishProgress('installing-dependencies')
+  await page.waitForFunction(() => document.querySelector('.dshUpdateBadge__content')?.textContent === '更新中')
+  await page.evaluate(value => { window.holdProgressPoll = false; window.finishProgressPoll(value) }, staleDownload)
+  await page.waitForTimeout(100)
+  assert.equal(await badgeText.textContent(), '更新中', 'an older poll cannot restore the downloading label')
+  await page.evaluate(() => { window.updateProgress = { ...window.updateProgress, step: 'downloading', updatedAt: window.updateProgress.updatedAt + 1 } })
+  await page.waitForFunction(() => document.querySelector('.dshUpdateBadge__content')?.textContent === '下载中')
+  for (const step of ['verifying', 'prepared', 'checking-data', 'saving-sessions', 'checkpointing', 'starting', 'committing']) {
+    await publishProgress(step)
+    await page.waitForFunction(step => window.__DSH_DSH_UPDATE__.getSnapshot().progress?.step === step, step)
+    assert.equal(await badgeText.textContent(), '更新中', step)
+    assert.equal(await badge.getAttribute('aria-label'), '正在更新 dsh…', step)
+  }
+  pass('downloads show 下载中; other stages show 更新中, with pushed and polled progress while the dialog is closed')
+
   await page.evaluate(() => window.finishUpdate.reject('测试安装失败'))
   await page.waitForFunction(() => document.querySelector('.dshUpdateBadge')?.dataset.state === 'error')
-  assert.equal(await page.evaluate(() => window.updateCalls.at(-1)), 'unfreeze')
+  assert.equal(await page.evaluate(() => window.updateCalls.some(value => value === 'capture' || value === 'unfreeze')), false)
   await badge.click()
   await dialog.getByText('测试安装失败', { exact: true }).waitFor()
   await dialog.getByRole('button', { name: '关闭窗口', exact: true }).click()

@@ -143,6 +143,9 @@ impl Progress {
     pub fn complete(&self) -> Result<(), String> {
         self.edit(|j| { if j.stage != Stage::RolledBack {j.stage = Stage::Complete; j.error_code = None;} j.completed_steps.push("ui-restored".into());j.step_times.insert("ui-restored".into(),now_ms().max(j.updated_at)); j.recovery_actions.clear(); })
     }
+    pub fn complete_update(&self) -> Result<(), String> {
+        self.edit(|j| { j.stage = Stage::Complete; j.error_code = None; j.completed_steps.push("runtime-committed".into()); j.step_times.insert("runtime-committed".into(),now_ms().max(j.updated_at)); j.recovery_actions.clear(); })
+    }
     pub fn prepared(&self) -> Result<(),String> {
         self.edit(|j| {j.stage=Stage::Complete;j.completed_steps.push("candidate-prepared-only".into());j.step_times.insert("candidate-prepared-only".into(),now_ms().max(j.updated_at));j.error_code=None;j.recovery_actions.clear();})
     }
