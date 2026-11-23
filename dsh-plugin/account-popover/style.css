@@ -75,7 +75,11 @@ body[data-ds-dark-theme] .dshAccount { --dsh-account-surface-tint: rgb(0 0 0 / .
 .dshAccount__avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .dshAccount__name { grid-column: 2; grid-row: 1; font-size: 13px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dshAccount__contact { grid-column: 2 / 4; grid-row: 2; display: flex; align-items: center; min-width: 0; gap: 6px; }
-.dshAccount__phone { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dshAccount__phone { min-width: 0; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dshAccount__refreshSlot { display: inline-grid; align-items: center; flex: none; height: 18px; margin-inline-start: auto; }
+.dshAccount__refreshSlot::before, .dshAccount__refreshStatus { grid-area: 1 / 1; height: 22px; padding: 0 7px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; font-size: 11px; line-height: 20px; white-space: nowrap; }
+.dshAccount__refreshSlot::before { content: attr(data-label); visibility: hidden; }
+.dshAccount__refreshStatus { display: inline-flex; align-items: center; background: transparent; color: color-mix(in srgb, var(--dsw-alias-link, #4176e6) 60%, var(--dsw-alias-label-secondary)); pointer-events: none; }
 .dshAccount__icon { display: inline-grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; }
 .dshAccount__icon:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .dshAccount__logout { grid-column: 3; grid-row: 1; width: 20px; height: 20px; }

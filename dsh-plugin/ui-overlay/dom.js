@@ -2476,6 +2476,45 @@
     scan()
   }
 
+  /** Right disclosures also change the shared grid; stop that slide before paint. */
+  function watchSidebarDisclosure() {
+    if (typeof MutationObserver !== 'function' || window.__dshSidebarDisclosure) return
+    window.__dshSidebarDisclosure = true
+    var marker = 'data-dsh-right-sidebar-instant'
+    var releases = new WeakMap(), sequence = 0
+    var observer = new MutationObserver(function (records) {
+      if (isVanilla()) {
+        document.querySelectorAll('[' + marker + ']').forEach(function (frame) { frame.removeAttribute(marker) })
+        return
+      }
+      var frames = new Map()
+      records.forEach(function (record) {
+        if (record.attributeName === MODE_ATTRIBUTE) return
+        var frame = record.target.closest('[class*="_frame"]')
+        if (!frame) return
+        var right = record.attributeName !== 'data-sidebar-collapsed'
+        // A right disclosure can also auto-collapse the left rail in a narrow
+        // window. All tracks must settle immediately in that shared update.
+        frames.set(frame, right || frames.get(frame) === true)
+      })
+      frames.forEach(function (right, frame) {
+        if (!right) { releases.delete(frame); frame.removeAttribute(marker); return }
+        frame.setAttribute(marker, '')
+        var token = ++sequence
+        releases.set(frame, token)
+        // Leave one painted frame with transitions disabled, then restore the
+        // left rail's transition before another toggle can need it.
+        requestAnimationFrame(function () { requestAnimationFrame(function () {
+          if (releases.get(frame) !== token) return
+          releases.delete(frame)
+          frame.removeAttribute(marker)
+        }) })
+      })
+    })
+    observer.observe(document.documentElement, { attributes: true, subtree: true,
+      attributeFilter: [MODE_ATTRIBUTE, 'data-sidebar-collapsed', 'data-rightbar-collapsed', 'data-sidebar-right-open'] })
+  }
+
   /** Animate navigation identities, never transcript or terminal output updates.
    * Slots and ARIA selections also cover keyboard/programmatic navigation. Keep
    * React's real nodes in place so drafts, scroll, focus and terminals survive.
@@ -2561,7 +2600,7 @@
         if (active) present(dialog.querySelector('[class*="_options"]'), selectionIdentity(active, nav, 'button, a, [role="tab"]'), 'x', nav)
       })
       document.querySelectorAll('[role="tablist"]').forEach(function (list) {
-        // Sidebar tabs update in place; only the panel's disclosure owns motion.
+        // Sidebar tabs and disclosures update in place without content motion.
         if (list.closest('[data-sidebar-right-panel], [data-dsh-terminal-dock]')) return
         var selected = list.querySelector('[role="tab"][aria-selected="true"]')
         if (!selected) return
@@ -2589,7 +2628,7 @@
       document.querySelectorAll('[data-sidebar-right-panel]').forEach(function (node) {
         var open = node.hasAttribute('data-sidebar-right-open')
         var key = open ? node.getAttribute('data-sidebar-right-panel') + ':' + node.getAttribute('data-sidebar-right-session') : 'closed'
-        // Existing slide handles open/close. Add a small transition for changing
+        // Disclosures switch immediately. Add a small transition for changing
         // the panel's fullscreen/push mode while it remains visible.
         var old = identities.get(node)
         if (!open || old === 'closed') identities.set(node, key)
@@ -4975,6 +5014,7 @@
   watchRowMenus()
   watchRemovalGhosts()
   watchWorkspaceMotion()
+  watchSidebarDisclosure()
   watchViewMotion()
   watchModelDisclosures()
   installFileReferenceSelection()

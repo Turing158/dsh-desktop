@@ -1,9 +1,9 @@
-/** Browser regressions for sidebar geometry, observer work and interrupted exits. */
+/** Browser regressions for sidebar geometry, observer work and immediate disclosures. */
 import assert from 'node:assert/strict'
 import { after, test } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { createDockMotion } from '../dsh-plugin/sidebar-terminal/dock-motion.mjs'
+import { createDockLayout } from '../dsh-plugin/sidebar-terminal/dock-layout.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -69,11 +69,11 @@ test('conversation width measurements skip the layer sweep; real style and popup
 })
 
 async function installDock(page) {
-  await page.addScriptTag({ content: `window.createDockMotion = ${createDockMotion.toString()}` })
+  await page.addScriptTag({ content: `window.createDockLayout = ${createDockLayout.toString()}` })
   await page.evaluate(() => {
     window.hiddenCount = 0
     window.dock = document.querySelector('[data-dsh-terminal-dock]')
-    window.motion = createDockMotion(document, () => { hiddenCount++; dock.hidden = true })
+    window.layout = createDockLayout(document, () => { hiddenCount++; dock.hidden = true })
     window.measure = () => ({
       visible: dock.hidden ? 0 : 840 - dock.getBoundingClientRect().top,
       padding: parseFloat(getComputedStyle(document.querySelector('.fixture_centerCol')).paddingBottom),
@@ -82,50 +82,48 @@ async function installDock(page) {
   })
 }
 
-test('dock slides keep all three edges together and reverse without jumping or per-frame root writes', async t => {
+test('dock disclosures immediately align all three edges without animation or per-frame root writes', async t => {
   const page = await fixture(t)
   await installDock(page)
   const result = await page.evaluate(async () => {
     let writes = 0
     const observer = new MutationObserver(records => writes += records.length)
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
-    motion.update(true, 240, dock)
-    await nextFrame(); await nextFrame(); await nextFrame()
+    layout.update(true, 240)
     const before = measure()
-    motion.update(false, 240, dock)
+    layout.update(false, 240)
     const after = measure()
     const samples = []
-    while (dock.getAnimations().length) { await nextFrame(); samples.push(measure()) }
+    for (let i = 0; i < 4; i++) { await nextFrame(); samples.push(measure()) }
     observer.disconnect()
-    return { before, after, samples, writes, hiddenCount, reserved: document.documentElement.style.getPropertyValue('--dsh-terminal-dock-height') }
+    return { before, after, samples, writes, hiddenCount, animations: document.getAnimations().length,
+      reserved: document.documentElement.style.getPropertyValue('--dsh-terminal-dock-height') }
   })
-  assert.ok(result.before.visible > 0 && result.before.visible < 240)
-  assert.ok(Math.abs(result.before.visible - result.after.visible) < 1, 'reversing must start at the currently painted position')
-  assert.ok(result.samples.every(s => Math.abs(s.visible - s.padding) < 1 && Math.abs(s.visible - s.right) < 1), 'composer, preview and terminal must move on one timeline: ' + JSON.stringify(result.samples))
+  assert.deepEqual(result.before, { visible: 240, padding: 240, right: 240 })
+  assert.deepEqual(result.after, { visible: 0, padding: 0, right: 0 })
+  assert.ok(result.samples.every(s => s.visible === 0 && s.padding === 0 && s.right === 0))
   assert.ok(result.writes <= 2, 'only destinations are published to inherited root styles')
+  assert.equal(result.animations, 0)
   assert.equal(result.hiddenCount, 1)
   assert.equal(result.reserved, '0px')
 })
 
-test('disabling motion, resizing and disposing release all owned animation effects', async t => {
+test('animation preferences, resizing and disposal leave no delayed dock layout', async t => {
   const page = await fixture(t)
   await installDock(page)
   const result = await page.evaluate(async () => {
-    motion.update(true, 240, dock)
-    await waitForMotion()
-    motion.update(false, 240, dock)
-    await nextFrame()
+    layout.update(true, 240)
+    layout.update(false, 240)
     document.documentElement.setAttribute('data-dsh-desktop-animation', 'off')
     await Promise.resolve()
     const disabled = { count: document.getAnimations().length, height: measure().padding, hiddenCount }
     document.documentElement.setAttribute('data-dsh-desktop-animation', 'on')
     dock.hidden = false
-    motion.update(true, 240, dock)
-    await nextFrame()
-    motion.update(true, 300, dock)
+    layout.update(true, 240)
+    layout.update(true, 300)
     const resized = { count: document.getAnimations().length, height: measure().padding }
-    motion.update(false, 300, dock)
-    motion.dispose()
+    layout.update(false, 300)
+    layout.dispose()
     return { disabled, resized, disposed: { count: document.getAnimations().length, height: measure().padding } }
   })
   assert.deepEqual(result.disabled, { count: 0, height: 0, hiddenCount: 1 })
@@ -133,20 +131,17 @@ test('disabling motion, resizing and disposing release all owned animation effec
   assert.deepEqual(result.disposed, { count: 0, height: 0 })
 })
 
-test('a right preview becoming fullscreen leaves the bottom animation immediately', async t => {
+test('a right preview immediately switches between fullscreen and reserved dock space', async t => {
   const page = await fixture(t)
   await installDock(page)
   const result = await page.evaluate(async () => {
-    motion.update(true, 240, dock)
-    await nextFrame(); await nextFrame()
+    layout.update(true, 240)
     const right = document.querySelector('[data-sidebar-right-panel]')
     right.setAttribute('data-sidebar-right-panel', 'fullscreen')
-    await Promise.resolve()
     const fullscreenBottom = getComputedStyle(right).bottom
     right.setAttribute('data-sidebar-right-panel', 'push')
-    await Promise.resolve()
     const joined = measure()
-    await waitForMotion()
+    await nextFrame()
     return { fullscreenBottom, joined, settled: measure() }
   })
   assert.equal(result.fullscreenBottom, '0px')

@@ -18,16 +18,29 @@ export function apply(ctx, config) {
     }, () => {})
   })
   if (ctx.webServer.host === '127.0.0.1') return upstream.apply(ctx, config)
-  upstream.apply(ctx, { ...config, printUrl: false, openBrowser: false, surfaceContext: false })
-  const origin = () => `http://${ctx.webServer.host}:${ctx.webServer.port}`
-  if (config.surfaceContext) {
-    ctx.inject(['systemPrompt'], c => c.systemPrompt.section({ name: 'app:web-surface', order: c.systemPrompt.getSectionOrder('WEB_SURFACE'),
-      text: () => `You are interacting with the user through the DeepSeek Harness Web GUI at ${origin()}. The desktop and phone share this running backend. The browser provides no implicit DOM, route, or screenshot context. Do not start a replacement server unless the user asks.` }))
-    ctx.inject(['shellEnv'], c => c.shellEnv.register({ name: 'web-runtime', variables: { DSH_WEB_URL: { description: 'Canonical URL of the running DeepSeek Harness Web GUI.' } }, resolve: () => ({ DSH_WEB_URL: origin() }) }))
-  }
+  // Upstream owns the advertised LAN URL and its prompt/environment context.
+  // Registering app:web-surface here conflicts with newer harness-dev-context.
+  upstream.apply(ctx, { ...config, printUrl: false, openBrowser: false })
   if (config.printUrl) ctx.inject(['connection'], c => {
+    let active = true
+    c.effect(() => () => { active = false }, 'desktop-web-runtime: ready URL')
     const announce = () => {
-      if (c.get('webServer') && c.get('connection')) console.log(`dsh web: ${c.connection.authenticatedUrl(`http://127.0.0.1:${ctx.webServer.port}`)}`)
+      const webServer = c.get('webServer'), connection = c.get('connection')
+      if (!active || !webServer || !connection) return
+      const baseUrl = `http://127.0.0.1:${webServer.port}`
+      let url
+      if (typeof connection.authenticatedUrl === 'function') {
+        url = connection.authenticatedUrl(baseUrl)
+      } else {
+        // DSH 0.2.3 moved browser authentication out of Connection. Ask the
+        // active WebServer's authentication providers for the same launch URL
+        // upstream publishes, using the desktop's local callback origin.
+        const entries = []
+        c.emit(webServer, 'webserver/entry-url', baseUrl, entries)
+        url = entries.find(entry => entry.open)?.url
+      }
+      if (!url) throw new Error('desktop-web-runtime: no authenticated desktop entry URL')
+      console.log(`dsh web: ${url}`)
     }
     const settled = c.get('loader')?.await()
     if (settled) settled.then(announce, () => {})

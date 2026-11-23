@@ -10,7 +10,7 @@
 
 <p>
   <img src="https://img.shields.io/badge/平台-Windows_x64-0078D4?style=flat-square" alt="Windows x64" />
-  <img src="https://img.shields.io/badge/桌面版本-1.0.4-4C8BF5?style=flat-square" alt="桌面版本 1.0.4" />
+  <img src="https://img.shields.io/badge/桌面版本-1.1.0-4C8BF5?style=flat-square" alt="桌面版本 1.1.0" />
   <img src="https://img.shields.io/badge/技术-Rust_%2B_Tauri_2-DEA584?style=flat-square" alt="Rust + Tauri 2" />
   <img src="https://img.shields.io/badge/界面-中文_%2F_English-2EA043?style=flat-square" alt="中文 / English" />
 </p>
@@ -59,7 +59,7 @@ dsh desktop 就是围绕这些日常操作做的增强。它启动 dsh 的 Web �
 | **缺少桌面提醒、托盘和本机会话链接** | 由桌面宿主与插件补充，无需旧版先实现这些桌面功能。 | 仍依赖可用的 dsh 事件与会话接口，具体行为以运行时能力为准。 |
 | **新旧设置、导航接口不一致** | 适配旧版设置注册方式与新版配置方式，兼容两代会话导航接口，保存桌面外观及终端偏好。 | 恢复草稿、附件和布局前检查所需接口；缺少必要能力时提示原因并取消操作。 |
 
-版本需要分开看：**`1.0.4` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
+版本需要分开看：**`1.1.0` 是本项目的桌面版本，不是 dsh 版本。** 历史适配记录包含 dsh `0.1.5-rc.2`；当前代码核对与近期集成记录主要基于 `0.2.0-rc.2`，分发包不内置或固定 dsh 版本。部分旧接口回退通过行为测试覆盖，不代表所有旧版本和所有功能组合都已逐一实机验证。
 
 ## 日常使用体验优化了什么？
 
@@ -245,6 +245,8 @@ npm run build          # 构建桌面程序与 NSIS 安装包
 
 `npm run test:runtime-profile` 复用已冻结的依赖树，验证自定义 bundle、Profile/home/overlay 相对模块、内容指纹和断网启动。`npm run test:runtime-candidate` 使用本地测试 npm 仓库和真实原生 IPC，验证候选安装失败、取消、成功冻结以及过期请求拒绝；不访问外部仓库或改变当前版本。原生报告即时保存，可用 `DSH_CANDIDATE_RESUME` 从已完成项后继续。
 
+`node tools/lan-web-runtime-smoke.mjs <稳定版 bin.js> <预览版 bin.js>` 使用隔离 Profile 和无头 Edge，验证本机及局域网监听、认证地址登录和未认证请求拒绝；不发送模型请求。已验证 `0.2.2-rc.5` 的 `connection.authenticatedUrl` 和 `0.2.3-alpha.2` 的 `webserver/entry-url` 认证提供者接口，Web 提示及环境变量由上游统一注册。原生升级验证可设置 `DSH_UPGRADE_BIND_ADDRESS` 为本机私有 IPv4 地址，覆盖开启远程控制后的预览版切换与离线重启；新版自行保留草稿时，脚本检查显示的草稿原文完整。
+
 `npm run test:diagnostics-native` 验证真实 WebView2/Tauri 的诊断入口、功能报告、旧页面身份拒绝和所有可选增强关闭场景。`tools/diagnostics-smoke.mjs` 验证中英文、主题、验证记录、普通浏览器限制与本地故障页；设置 `DSH_DIAGNOSTICS_MENU_CHECK=1` 会同时启动隔离 Edge 调试实例并执行菜单回归。
 
 Windows 原生通知可单独验证（会发送一条测试通知，临时开始菜单快捷方式与测试通知会自动清理）：
@@ -253,7 +255,7 @@ Windows 原生通知可单独验证（会发送一条测试通知，临时开始
 cargo test --manifest-path src-tauri/Cargo.toml --features single live_windows_notification -- --ignored --nocapture --test-threads=1
 ```
 
-关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v1.0.4-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
+关闭桌面实例后，可运行 `node tools/notification-package-smoke.mjs pack/dsh-desktop-v1.1.0-win-x64.exe` 验证单文件成品。检查会连续启动两次，确认通知进入系统通知中心且快捷方式未被重复写入；使用隔离的 DSH 目录，不启动模型任务或 LAN 服务。正常通知注册会保留指向被测试 EXE。
 
 设置环境变量 `DSH_DESKTOP_DEBUG` 为日志文件路径后启动 EXE，可查看通知注册、提交与失败记录。`[notify/registration] unchanged` 表示复用了已有注册，`[notify/submitted]` 表示系统接受了提交；是否显示横幅仍由 Windows 决定。
 

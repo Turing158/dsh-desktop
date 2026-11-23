@@ -2510,22 +2510,15 @@ html:not([data-dsh-ui='vanilla']) body #root [data-sidebar-right-panel='push'] {
   bottom: var(--dsh-terminal-dock-height, 0px);
 }
 
-/* Both directions, including the left rail's own content animations and resize
-   handles, share the appearance preference. Vanilla keeps the upstream rules. */
+/* Left rail animations and resize handles share the appearance preference.
+   Right and bottom disclosures switch immediately. */
 html:not([data-dsh-ui='vanilla']) body {
   --dsh-sidebar-motion-duration: 220ms;
 }
 
 html:not([data-dsh-ui='vanilla']) body [data-sidebar-right-panel] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
-  transition: transform var(--dsh-sidebar-motion-duration) ease-out,
-    visibility 0s linear var(--dsh-sidebar-motion-duration);
+  transition: none !important;
 }
-
-html:not([data-dsh-ui='vanilla']) body [data-sidebar-right-panel][data-sidebar-right-open] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
-  transition-delay: 0s;
-}
-/* New tab hosts and empty placeholders mount at rest. Their transition above
-   responds only to the panel's open state, not to tab creation or removal. */
 
 /* Install the transition before a toggle. Upstream adds data-animating in a
    layout effect after changing the tracks; a layout read in between makes the
@@ -2536,6 +2529,13 @@ html:not([data-dsh-ui='vanilla']):not([data-dsh-browser]) body [class*='_frame']
 
 html:not([data-dsh-ui='vanilla']):not([data-dsh-browser]) body [class*='_frame']:where(:not([data-dragging]):not([data-rightbar-fullscreen]):not([data-rightbar-instant])) [class*='_handle'] {
   transition: left var(--dsh-sidebar-motion-duration) ease-out;
+}
+
+/* The frame shares tracks with the left rail. Cancel its transition for right
+   disclosures; the DOM tier removes this marker after the immediate paint. */
+html:not([data-dsh-ui='vanilla']) body [class*='_frame'][data-dsh-right-sidebar-instant],
+html:not([data-dsh-ui='vanilla']) body [class*='_frame'][data-dsh-right-sidebar-instant] [class*='_handle'] {
+  transition: none !important;
 }
 
 html:not([data-dsh-ui='vanilla']) body [class*='_sidebarCol'] [class*='_wide'] {

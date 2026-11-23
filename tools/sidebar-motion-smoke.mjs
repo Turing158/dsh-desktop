@@ -53,13 +53,14 @@ async function sample(seat, geometry = true) {
   await c.send('Performance.enable')
   const metricsBefore = (await c.send('Performance.getMetrics')).metrics
   const values = await c.evaluate(`(async () => {
-    const seat = ${JSON.stringify(seat)}, samples = [], frames = [];
+    const seat = ${JSON.stringify(seat)}, samples = [], frames = [], grids = [];
     let lastFrame = performance.now(), styleWrites = 0;
     const mutations = new MutationObserver(records => styleWrites += records.length);
     mutations.observe(document.documentElement, {attributes:true, attributeFilter:['style']});
     const take = () => {
       if (!${geometry}) return 0;
       const frame = document.querySelector('[class*="_frame"]');
+      if (seat === 'right') grids.push(getComputedStyle(frame).gridTemplateColumns);
       const panel = document.querySelector('[data-sidebar-right-panel]');
       const dock = document.querySelector('[data-dsh-terminal-dock]');
       const host = panel?.querySelector('[data-dockkit-host="dock"], [data-dockkit-empty]');
@@ -80,7 +81,7 @@ async function sample(seat, geometry = true) {
       samples.push(take());
     }
     mutations.disconnect();
-    window.__sidebarPerformance = {frames, styleWrites};
+    window.__sidebarPerformance = {frames, styleWrites, gridSteps: new Set(grids).size};
     return samples;
   })()`)
   const metricsAfter = (await c.send('Performance.getMetrics')).metrics
@@ -141,9 +142,13 @@ try {
   // before measuring the workspace, rather than profiling underneath its mask.
   if (await page.getByText('开始使用', { exact: true }).isVisible()) await page.keyboard.press('Escape')
   for (const seat of ['left', 'right', 'bottom']) {
-    for (let i = 0; i < 2; i++) assert.ok(await sample(seat) > 3, seat + ' must animate both directions, even with OS reduced motion')
+    for (let i = 0; i < 2; i++) {
+      const steps = await sample(seat)
+      assert.ok(seat === 'left' ? steps > 3 : steps <= 2, seat + ' must follow its disclosure behavior with animation on')
+      if (seat === 'right') assert.ok(report.samples.at(-1).gridSteps <= 2, 'right disclosures must settle the shared grid immediately')
+    }
   }
-  pass('left, right and bottom animate both ways with animation on, including OS reduced motion')
+  pass('right and bottom switch immediately while left animates, including explicit on with OS reduced motion')
   for (const seat of ['left', 'right', 'bottom']) {
     for (let i = 0; i < 2; i++) {
       // Measure scheduling without geometry reads that would themselves force
@@ -212,7 +217,10 @@ try {
   }
   pass('off and system/reduced-motion disable motion in both directions for all three sidebars')
   await preference('system', false)
-  for (const seat of ['left', 'right', 'bottom']) assert.ok(await sample(seat) > 3, seat + ': system/no-preference animates')
+  for (const seat of ['left', 'right', 'bottom']) {
+    const steps = await sample(seat)
+    assert.ok(seat === 'left' ? steps > 3 : steps <= 2, seat + ': system/no-preference follows its disclosure behavior')
+  }
   await c.evaluate("window.__DSH_UPSTREAM_DOCK_SMOKE__.dock.open()")
   await sleep(350)
   await checkDockSidebarLayout(c, root, pass)
@@ -234,7 +242,7 @@ try {
   assert.equal(rapid.transform, 'none')
   assert.equal(rapid.afterOff, 0)
   assert.equal(rapid.reserved, '0px')
-  pass('rapid bottom reversals settle correctly and disabling animation during exit immediately releases the region')
+  pass('rapid bottom toggles settle correctly and collapse immediately releases the region')
   await preference('on', false, 'vanilla')
   assert.equal(await c.evaluate("Boolean(document.querySelector('[data-dsh-terminal-dock]'))"), false)
   assert.equal(await c.evaluate("getComputedStyle(document.body).getPropertyValue('--dsh-sidebar-motion-duration').trim()"), '')
@@ -258,11 +266,11 @@ try {
     for (const seat of ['mobile-left', 'mobile-right']) {
       for (let i = 0; i < 2; i++) {
         const steps = await sample(seat)
-        assert.ok(animated ? steps > 3 : steps <= 2, `${seat}: ${animation}/${reduced}/${mode}, steps=${steps}`)
+        assert.ok(animated && seat === 'mobile-left' ? steps > 3 : steps <= 2, `${seat}: ${animation}/${reduced}/${mode}, steps=${steps}`)
       }
     }
   }
-  pass('phone drawers and previews animate both ways, follow the same preference, and stop in vanilla')
+  pass('phone right previews switch immediately while left drawers follow the animation preference')
   assert.deepEqual(report.pageErrors, [])
 } catch (error) {
   report.error = error.stack

@@ -8,6 +8,21 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
   const h = React.createElement
   const LogoutIcon = createLogoutIcon(React)
   const UpdateBadge = createUpdateBadge(React, ui)
+  function RefreshStatus({ refreshing, text }) {
+    const label = React.useRef(null), motion = React.useRef(null)
+    const [present, setPresent] = React.useState(refreshing)
+    React.useLayoutEffect(() => {
+      motion.current = createPopoverMotion(document, () => setPresent(false))
+      return () => { motion.current.dispose(); motion.current = null }
+    }, [])
+    React.useLayoutEffect(() => {
+      if (refreshing) setPresent(true)
+      motion.current.update(refreshing, label.current)
+    }, [refreshing, present])
+    return (refreshing || present) && h('span', { ref: label, className: 'dshAccount__refreshStatus',
+      role: 'status', 'aria-live': 'polite', 'aria-hidden': refreshing ? undefined : true,
+      'data-state': refreshing ? 'refreshing' : 'closing' }, text)
+  }
   function AccountLauncher(props) {
     if (typeof props.useAccount !== 'function' || typeof props.contactUs !== 'function' || typeof props.start !== 'function'
       || typeof props.signOut !== 'function' || typeof props.hasRunningAccountTasks !== 'function') {
@@ -252,12 +267,14 @@ export function createAccountLauncher(React, ReactDOM, ui, Original) {
           : h(ui.IconUserOutlineMedium, { size: 20 })),
         h('span', { className: 'dshAccount__name', title: name }, name),
         iconButton(t('signOut'), 'dshAccount__logout', requestSignOut, h(LogoutIcon, { size: 14 }), checking),
-        h('div', { className: 'dshAccount__contact' }, h('span', { className: 'dshAccount__phone', title: contact }, contact))),
+        h('div', { className: 'dshAccount__contact' }, h('span', { className: 'dshAccount__phone', title: contact }, contact),
+          h('span', { className: 'dshAccount__refreshSlot', 'data-label': desktopText('刷新中…') },
+            h(RefreshStatus, { refreshing, text: desktopText('刷新中…') })))),
       h('div', { className: 'dshAccount__finance' }, wallet(false), wallet(true)),
-      (unavailable || refreshing) && h('div', { className: 'dshAccount__readStatus', 'aria-busy': refreshing },
-        h('p', { role: 'status', 'aria-live': 'polite' }, desktopText(refreshing ? '正在刷新账号信息…' : '登录信息已保存，账号资料或余额未能加载。请检查系统时间和网络后重试。')),
+      unavailable && h('div', { className: 'dshAccount__readStatus', 'aria-busy': refreshing },
+        h('p', { role: 'status', 'aria-live': 'polite' }, desktopText('登录信息已保存，账号资料或余额未能加载。请检查系统时间和网络后重试。')),
         typeof props.refreshAccount === 'function' && h('button', { type: 'button', className: 'dshAccount__retry',
-          disabled: refreshing, onClick: refreshDetails }, desktopText(refreshing ? '刷新中…' : '重试'))),
+          disabled: refreshing, onClick: refreshDetails }, desktopText('重试'))),
       actionFailed && h('p', { className: 'dshAccount__error', role: 'alert' }, t('failed'))), document.body),
       signedIn && impact !== undefined && h(ui.Modal, { open: true, title: t('signOut'), closeLabel: t('close'),
         onClose: dismissSignOut, description: t(impact === 'unknown' ? 'signOutUnknownDescription' : impact ? 'signOutRunningDescription' : 'signOutDescription'),

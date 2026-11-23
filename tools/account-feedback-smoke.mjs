@@ -245,17 +245,48 @@ try {
   await page.locator('[data-dsh-account-trigger]').click()
   const accountPanel = page.locator('[data-dsh-account-popover]')
   await accountPanel.getByText('登录信息已保存，账号资料或余额未能加载。请检查系统时间和网络后重试。', { exact: true }).waitFor()
+  await accountPanel.locator('.dshAccount__refreshStatus').waitFor({ state: 'detached' })
   assert.equal(await accountPanel.getByText('余额暂不可用', { exact: true }).count(), 2)
   assert.equal(await accountPanel.getByText('前往开放平台查看', { exact: true }).count(), 0)
   assert.equal(await accountPanel.locator('.dshAccount__amount').count(), 0, 'failed balances must never appear as zero')
   assert.ok((await page.locator('[data-dsh-account-trigger]').textContent()).includes('已登录 DeepSeek'))
   await page.screenshot({ path: join(root, 'account-unavailable.png') })
-  failedReads = new Set(['balance']); readDelay = 400
+  failedReads = new Set(['balance']); readDelay = 1200
   const retry = accountPanel.getByRole('button', { name: '重试', exact: true })
   await retry.click()
-  await accountPanel.getByRole('button', { name: '刷新中…', exact: true }).waitFor()
-  assert.equal(await accountPanel.getByRole('button', { name: '刷新中…', exact: true }).isDisabled(), true)
+  const refreshStatus = accountPanel.locator('.dshAccount__refreshStatus')
+  await refreshStatus.waitFor()
+  assert.equal(await refreshStatus.textContent(), '刷新中…')
+  assert.equal(await retry.isDisabled(), true)
+  assert.equal(await accountPanel.getByText('正在刷新账号信息…', { exact: true }).count(), 0)
+  const refreshGeometry = await refreshStatus.evaluate(node => {
+    const animation = node.getAnimations()[0]
+    if (animation) { animation.pause(); animation.currentTime = 80 }
+    window.refreshExitOpacity = new Promise(resolve => {
+      const observer = new MutationObserver(() => {
+        if (node.dataset.state !== 'closing') return
+        const animation = node.getAnimations()[0]
+        animation.pause(); animation.currentTime = 80
+        observer.disconnect(); resolve(Number(getComputedStyle(node).opacity))
+      })
+      observer.observe(node, { attributes: true, attributeFilter: ['data-state'] })
+    })
+    const status = node.getBoundingClientRect(), panel = node.closest('.dshAccount')
+    return { opacity: Number(getComputedStyle(node).opacity), status: status.toJSON(),
+      logout: panel.querySelector('.dshAccount__logout').getBoundingClientRect().toJSON(),
+      contact: panel.querySelector('.dshAccount__phone').getBoundingClientRect().toJSON() }
+  })
+  assert.ok(refreshGeometry.opacity > 0 && refreshGeometry.opacity < 1, 'refresh label fades in')
+  assert.ok(refreshGeometry.status.top > refreshGeometry.logout.bottom, 'refresh label sits below sign-out')
+  assert.ok(Math.abs(refreshGeometry.status.right - refreshGeometry.logout.right) < 1, 'right edges align')
+  assert.ok(refreshGeometry.contact.right < refreshGeometry.status.left, 'refresh label keeps clear of contact text')
+  await refreshStatus.evaluate(node => node.getAnimations().forEach(animation => animation.finish()))
+  await page.screenshot({ path: join(root, 'account-refreshing.png') })
   await accountPanel.locator('.dshAccount__name').filter({ hasText: 'Fixture account' }).waitFor()
+  const exitingOpacity = await page.evaluate(() => window.refreshExitOpacity)
+  assert.ok(exitingOpacity > 0 && exitingOpacity < 1, 'refresh label fades out before removal')
+  await refreshStatus.evaluate(node => node.getAnimations().forEach(animation => animation.finish()))
+  await refreshStatus.waitFor({ state: 'detached' })
   await retry.waitFor()
   assert.equal(await accountPanel.getByText('余额暂不可用', { exact: true }).count(), 2)
   failedReads = new Set()
@@ -264,8 +295,21 @@ try {
   await accountPanel.locator('.dshAccount__readStatus').waitFor({ state: 'detached' })
   assert.equal((await accountPanel.locator('.dshAccount__amount').first().textContent()).trim(), '¥12.34')
   assert.equal((await accountPanel.locator('.dshAccount__amount').last().textContent()).trim(), '¥0.00')
-  readDelay = 0
+  await refreshStatus.waitFor({ state: 'detached' })
   await page.screenshot({ path: join(root, 'account-restored.png') })
+  readDelay = 700
+  for (const [value, reduced, animated] of [['off', 'no-preference', false], ['system', 'reduce', false],
+    ['on', 'reduce', true], ['system', 'no-preference', true]]) {
+    await page.keyboard.press('Escape'); await accountPanel.waitFor({ state: 'detached' })
+    await preference(value, reduced)
+    await page.locator('[data-dsh-account-trigger]').click(); await refreshStatus.waitFor()
+    const entering = await refreshStatus.evaluate(node => node.getAnimations().length)
+    assert.equal(entering > 0, animated, `refresh label follows ${value}/${reduced}`)
+    assert.equal(await accountPanel.locator('.dshAccount__readStatus').count(), 0, 'successful refresh uses only the profile label')
+    await refreshStatus.waitFor({ state: 'detached' })
+  }
+  await preference('on'); readDelay = 0
+  pass('refresh label sits below sign-out, fades in/out, and follows on/off/system and reduced-motion preferences')
   await page.keyboard.press('Escape')
   await sidebar(true)
   pass('failed and partial account reads keep credentials, expose retry and restore profile and exact balances')

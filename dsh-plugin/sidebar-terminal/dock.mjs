@@ -1,6 +1,6 @@
 import { t, useLocale } from '../i18n/api.mjs'
 import { currentSessionId } from './session-context.mjs'
-import { createDockMotion } from './dock-motion.mjs'
+import { createDockLayout } from './dock-layout.mjs'
 import { observeChrome } from '../observe-chrome.mjs'
 
 const PREFIX = 'dsh-resource://desktop-terminal/'
@@ -336,7 +336,7 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
     const state = store.getSnapshot(), hidden = (isVanilla() && !state.shortcutVisible) || state.workspaceKey === null
     const open = !hidden && !state.collapsed
     const [present, setPresent] = React.useState(false)
-    const motion = React.useRef(null)
+    const layout = React.useRef(null)
     const rendered = !hidden && (open || present)
     React.useEffect(() => { setTabMenu(null) }, [state.workspaceKey, state.collapsed, hidden])
     const desktop = Boolean(window.__TAURI__?.core?.Channel)
@@ -363,12 +363,12 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
     // which keeps its full height. Only the visible panel needs this measurement.
     React.useLayoutEffect(() => rendered ? trackLeftEdge(document) : undefined, [rendered])
     React.useLayoutEffect(() => {
-      motion.current = createDockMotion(document, () => setPresent(false))
-      return () => { motion.current.dispose(); motion.current = null }
+      layout.current = createDockLayout(document, () => setPresent(false))
+      return () => { layout.current.dispose(); layout.current = null }
     }, [])
     React.useLayoutEffect(() => {
       if (open) setPresent(true)
-      motion.current.update(open, state.height, root.current, hidden)
+      layout.current.update(open, state.height)
     }, [open, hidden, state.height])
     React.useLayoutEffect(() => {
       if (!ui.Body && rendered && v && host.current) v.mount(host.current)
@@ -400,8 +400,8 @@ export function createDockComponent(React, registry, store, ui, isVanilla) {
       const title = (typeof info.title === 'string' && info.title.trim()) || t('终端 ') + tab.number
       return { ...info, title, description: [title, info.description].filter(Boolean).join('\n') }
     }
-    // A retained native terminal is display:none and inert after its closing
-    // slide. It reserves no space and cannot take focus or keyboard input.
+    // A retained native terminal is immediately display:none and inert when
+    // collapsed. It reserves no space and cannot take focus or keyboard input.
     if (!mounted) return null
     const tabKey = (e, tab) => {
       if (ui.TabMenu && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) {

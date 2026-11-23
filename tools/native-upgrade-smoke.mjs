@@ -21,6 +21,12 @@ if(report.error){(report.previousFailures??=[]).push(report.error);delete report
 const save=()=>writeFile(join(root,'report.json'),JSON.stringify(report,null,2))
 const pass=async name=>{if(!report.checks.includes(name))report.checks.push(name);await save();console.log('PASS: '+name)}
 await mkdir(home,{recursive:true});await mkdir(workspace,{recursive:true})
+if (process.env.DSH_UPGRADE_BIND_ADDRESS && !process.env.DSH_UPGRADE_RESUME) {
+  const listener=createServer();await new Promise(r=>listener.listen(0,process.env.DSH_UPGRADE_BIND_ADDRESS,r))
+  const port=listener.address().port;await new Promise(r=>listener.close(r))
+  await writeFile(join(root,'remote-control.json'),JSON.stringify({version:1,enabled:true,
+    bindAddress:process.env.DSH_UPGRADE_BIND_ADDRESS,port,trustedHosts:[]}))
+}
 if(!process.env.DSH_UPGRADE_RESUME) await writeFile(join(home,'cordis.patch.yml'),offlineModelPatch)
 if(!process.env.DSH_UPGRADE_RESUME && process.env.DSH_UPGRADE_PERF_DATA_SOURCE)
   await cp(resolve(process.env.DSH_UPGRADE_PERF_DATA_SOURCE),join(home,'update-perf-data'),{recursive:true})
@@ -255,7 +261,11 @@ try {
   if(initial.runtime.managed)assert.equal(await lstat(join(root,'runtime/versions',initial.runtime.managed.id)).then(()=>true,()=>false),false)
   assert.equal(await lstat(bin).then(()=>true,()=>false),true)
   await pass('full update commit retains only the current runtime and reclaims previous versions and installation staging')
-  assert.equal((await page.locator('[contenteditable=true]').first().textContent()).includes(draft),false)
+  // Newer DSH retains its own draft across a fresh page. The desktop upgrade
+  // still must not require a UI snapshot, and any retained draft must be intact.
+  const reopenedDraft=await page.locator('[contenteditable=true]').first().textContent()
+  assert.ok(reopenedDraft==='' || reopenedDraft===draft)
+  report.upstreamDraftRetained=reopenedDraft===draft
   assert.equal((await lstat(moduleLink)).isSymbolicLink(),true)
   assert.equal(await readlink(moduleLink),external)
   assert.equal(await readFile(join(external,'sentinel'),'utf8'),'external dependency is untouched')

@@ -287,26 +287,17 @@ html[data-dsh-browser] .xterm-helper-textarea { font-size: 16px !important; }
 html[data-dsh-browser] [data-dockkit-tab] [data-dockkit-tab-close] {
   opacity: 1; visibility: visible;
 }
-/* Keep the preview paintable through its closing fade. Hiding its content in
-   the first closed frame used to cut off every descendant's exit animation. */
+/* The right preview opens and closes immediately, including its contents. */
 html[data-dsh-browser] body #root [data-sidebar-right-panel] {
   opacity: 0;
-  transition: opacity 220ms ease-out, visibility 0s 220ms, content-visibility 0s 220ms;
-  transition-behavior: allow-discrete;
+  transition: none !important;
 }
 html[data-dsh-browser] body #root [data-sidebar-right-panel][data-sidebar-right-open] {
   opacity: 1;
-  transition-delay: 0s;
-}
-@starting-style {
-  html[data-dsh-browser]:not([data-dsh-ui='vanilla']) body #root [data-sidebar-right-panel][data-sidebar-right-open] { opacity: 0; }
 }
 html[data-dsh-browser] body #root [data-sidebar-right-panel] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
   transform: none;
-  transition: visibility 0s 220ms;
-}
-html[data-dsh-browser] body #root [data-sidebar-right-panel][data-sidebar-right-open] :is([data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
-  transition-delay: 0s;
+  transition: none !important;
 }
 html[data-dsh-browser]:is([data-dsh-ui='vanilla'], [data-dsh-desktop-animation='off']) :is([class*='_frame'], [class*='_sidebarCol'], .dshMobile__backdrop, [data-sidebar-right-panel], [data-dockkit-host='dock'], [data-dockkit-empty], [data-dockkit-divider]) {
   transition: none !important;
