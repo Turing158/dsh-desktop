@@ -1,0 +1,3 @@
+# The editor client embeds the hash of this generated asset's exact bytes.
+# Keep both its line endings and the indentation in generated template literals.
+/dsh-plugin/file-editor/editor.lazy.mjs -text whitespace=-blank-at-eol

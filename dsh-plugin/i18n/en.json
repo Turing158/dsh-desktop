@@ -1200,5 +1200,6 @@
   "升级恢复快照空间已满。请在“故障诊断”的恢复列表中处理待恢复内容后重试；现有草稿已保留。": "Update recovery snapshot storage is full. Review pending content in the Diagnostics recovery list, then retry. Existing drafts have been preserved.",
   "草稿恢复空间已满，请在“故障诊断”中处理历史恢复记录；现有草稿已保留。": "Draft recovery storage is full. Review historical recovery records in Diagnostics. Existing drafts have been preserved.",
   "无法安全访问恢复目录，更新已停止。请检查目录权限并查看故障诊断。": "The recovery directory cannot be safely accessed, so the update stopped. Check directory permissions and Diagnostics.",
-  "无法保存升级恢复快照。请检查磁盘空间和目录写入权限；当前版本和草稿已保留。": "Could not save the update recovery snapshot. Check free disk space and directory write permissions. The current version and drafts have been preserved."
+  "无法保存升级恢复快照。请检查磁盘空间和目录写入权限；当前版本和草稿已保留。": "Could not save the update recovery snapshot. Check free disk space and directory write permissions. The current version and drafts have been preserved.",
+  "编辑器加载失败，请重试": "Could not load the editor. Please try again."
 }

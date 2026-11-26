@@ -1,0 +1,84 @@
+{
+  "date": "2026-11-25",
+  "timezone": "Asia/Shanghai",
+  "runtimeVersion": "0.2.3-alpha.2",
+  "nodeVersion": "v24.18.0",
+  "immutableRuntimeExclusionEnabled": true,
+  "checks": [
+    "configured direct and managed MCP servers do not start for an idle session",
+    "editor engine is not requested during ordinary startup",
+    "lazy editor asset rejects unauthenticated requests",
+    "closed plugin settings send zero periodic status requests",
+    "mounted plugin settings refresh their live state",
+    "closing plugin settings releases its polling timer",
+    "visible idle backend and browser CPU averages below 1% combined",
+    "background idle preserves the connection and keeps CPU/memory stable",
+    "first task includes both MCP schemas in the model request and executes both tools",
+    "explicit MCP restart starts a fresh server immediately",
+    "mutable client bundles still reload through the original authenticated HMR transport"
+  ],
+  "samples": [
+    {
+      "scenario": "visible-idle",
+      "durationMs": 30000,
+      "backend": {
+        "cpuPercent": 0,
+        "workingSetBytes": 467492864,
+        "processCount": 1,
+        "exitedProcessCount": 0
+      },
+      "browser": {
+        "cpuPercent": 0,
+        "workingSetBytes": 799465472,
+        "processCount": 11,
+        "exitedProcessCount": 2
+      },
+      "cpuPercent": 0
+    },
+    {
+      "scenario": "background-idle",
+      "durationMs": 600000,
+      "backend": {
+        "cpuPercent": 0.11665808656161514,
+        "workingSetBytes": 458563584,
+        "processCount": 1,
+        "exitedProcessCount": 0
+      },
+      "browser": {
+        "cpuPercent": 0.008331723231984615,
+        "workingSetBytes": 821792768,
+        "processCount": 12,
+        "exitedProcessCount": 0
+      },
+      "cpuPercent": 0.12498980979359975
+    }
+  ],
+  "backgroundHidden": true,
+  "firstTask": {
+    "modelTools": [
+      "list_mcp_resource_templates",
+      "list_mcp_resources",
+      "mcp__idle_direct__idle_ping",
+      "mcp__idle_managed__idle_ping",
+      "read_mcp_resource"
+    ],
+    "errors": []
+  },
+  "hmr": {
+    "before": "2257d7a417c5",
+    "after": "6ab3c06f1fb1",
+    "client": {
+      "revision": 2,
+      "entries": {
+        "syncing": false,
+        "failures": []
+      }
+    }
+  },
+  "limits": [
+    "Isolated backend plus Edge, not an installed native desktop before/after comparison.",
+    "Browser CPU excludes retired processes; their count is recorded.",
+    "Summed working sets include shared pages.",
+    "Background page restoration is distinct from minimal-mode UI destruction/recreation."
+  ]
+}

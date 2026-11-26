@@ -504,6 +504,67 @@ html[data-dsh-desktop-animation=off] .dshPlugins *,html[data-dsh-desktop-animati
     };
   }
 
+  // dsh-plugin/plugin-control/visible-refresh.mjs
+  function createVisibleRefresh({
+    refresh,
+    document: document2,
+    repeat = setInterval,
+    cancel = clearInterval,
+    intervalMs = 2e3,
+    onIdle = () => {
+    },
+    schedule = setTimeout,
+    unschedule = clearTimeout,
+    idleMs = 6e4
+  }) {
+    let subscribers = 0, timer = null, disposed = false, expiry = null;
+    const active = () => !disposed && subscribers > 0 && !document2.hidden;
+    function sync() {
+      if (!active()) {
+        if (timer !== null) cancel(timer);
+        timer = null;
+        return;
+      }
+      if (timer !== null) return;
+      void refresh();
+      timer = repeat(() => {
+        if (active()) void refresh();
+      }, intervalMs);
+    }
+    document2.addEventListener("visibilitychange", sync);
+    return {
+      acquire() {
+        if (disposed) return () => {
+        };
+        if (expiry !== null) unschedule(expiry);
+        expiry = null;
+        subscribers++;
+        sync();
+        let released = false;
+        return () => {
+          if (released || disposed) return;
+          released = true;
+          subscribers--;
+          sync();
+          if (!subscribers) expiry = schedule(() => {
+            expiry = null;
+            if (!disposed && !subscribers) onIdle();
+          }, idleMs);
+        };
+      },
+      changed() {
+        if (active()) void refresh();
+      },
+      dispose() {
+        disposed = true;
+        sync();
+        if (expiry !== null) unschedule(expiry);
+        expiry = null;
+        document2.removeEventListener("visibilitychange", sync);
+      }
+    };
+  }
+
   // dsh-plugin/plugin-control/client-entry.mjs
   window.__ModuleLoader__.load({ id: "@dsh-desktop/plugin-control", factory(require2) {
     const React = require2("react"), h = React.createElement;
@@ -626,6 +687,16 @@ html[data-dsh-desktop-animation=off] .dshPlugins *,html[data-dsh-desktop-animati
           polling = false;
         }
       }
+      const visibleRefresh = createVisibleRefresh({
+        refresh,
+        document,
+        onIdle: () => {
+          revision++;
+          snapshot = null;
+          error = "";
+        }
+      });
+      const offModules = ctx.modules.entries.state.subscribe(() => visibleRefresh.changed());
       async function change(id, enabled, source) {
         if (busy || restarting || snapshot?.marketplace?.installing) return;
         revision++;
@@ -688,8 +759,12 @@ html[data-dsh-desktop-animation=off] .dshPlugins *,html[data-dsh-desktop-animati
         React.useEffect(() => {
           const fn = () => rerender((n) => n + 1);
           listeners.add(fn);
+          const release = visibleRefresh.acquire();
           fn();
-          return () => listeners.delete(fn);
+          return () => {
+            listeners.delete(fn);
+            release();
+          };
         }, []);
         return snapshot;
       }
@@ -869,19 +944,22 @@ html[data-dsh-desktop-animation=off] .dshPlugins *,html[data-dsh-desktop-animati
       const style = document.createElement("style");
       style.textContent = style_default + inventory_style_default;
       document.head.appendChild(style);
-      const offSettings = ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({ name: "settings.plugins.tab", id: "desktop-builtins", order: 5, label: () => t("\u5185\u7F6E\u63D2\u4EF6") }, Settings));
-      const offInventory = ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({ name: "settings.plugins.tab", id: "all", order: 10, label: () => t("\u63D2\u4EF6\u5217\u8868") }, Inventory));
+      const offViews = ["settings.plugins.tab", "plugins.tab"].flatMap((slot) => [
+        ctx.slots.inject(slot, () => ctx.slots.register(
+          { name: slot, id: "desktop-builtins", order: 5, label: () => t("\u5185\u7F6E\u63D2\u4EF6") },
+          slot === "plugins.tab" ? () => h(React.Fragment, null, h(MarketplacePrompt), h(Settings)) : Settings
+        )),
+        ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, id: "all", order: 10, label: () => t("\u63D2\u4EF6\u5217\u8868") }, Inventory))
+      ]);
       const offHeadings = renameSettingsHeadings();
       const offMarketplace = mountMarketplaceHeader(React, createRoot, MarketplacePrompt);
-      refresh();
-      const timer = setInterval(refresh, 2e3);
       return () => {
         disposed = true;
-        clearInterval(timer);
+        visibleRefresh.dispose();
+        offModules();
         offMarketplace();
         offHeadings();
-        offSettings();
-        offInventory();
+        offViews.forEach((off) => off());
         offRestart?.();
         style.remove();
         listeners.clear();

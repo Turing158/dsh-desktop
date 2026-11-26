@@ -16,25 +16,7 @@ export function apply(ctx) {
   ctx.inject?.(['sessionPersistence','sessions','agents'], child => {
     const directory = process.env.DSH_DESKTOP_UPDATE_CONTROL
     if (!directory) return
-    let working = false, last
-    const timer = setInterval(async () => {
-      if (working) return
-      let request
-      try { request = JSON.parse(readFileSync(join(directory,'request.json'),'utf8')) } catch { return }
-      if (typeof request.id !== 'string' || request.id === last) return
-      working = true; last = request.id
-      try {
-        await flushUpdateSessions(child)
-        // Recheck after every asynchronous drain. No new event can run between
-        // this final check and process.exit; the host retains the process tree.
-        if (JSON.parse(readFileSync(join(directory,'request.json'),'utf8')).id !== request.id) return
-        writeFileSync(join(directory,'reply.json'),JSON.stringify({id:request.id,flushed:true}))
-        process.exit(0)
-      } catch {
-        try { writeFileSync(join(directory,'reply.json'),JSON.stringify({id:request.id,flushed:false})) } catch {}
-      } finally { working = false }
-    },100)
-    child.effect(() => () => clearInterval(timer))
+    child.effect(() => watchUpdateControl({ directory, flush: () => flushUpdateSessions(child) }))
   })
   ctx.inject?.(['sessionPersistence','profileContext','settings'], child => {
     const emit = async () => {
@@ -61,10 +43,11 @@ export function apply(ctx) {
     table.push({kind:'script',placement:'head',text:bridge})
   }))
 }
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PROFILE_SWITCH_FILE } from '../plugin-control/profile-model.mjs'
 import { runtimeImport } from '../runtime-import.mjs'
+import { watchUpdateControl } from './update-control.mjs'
 const bridge = readFileSync(new URL('./capability-bridge.js',import.meta.url),'utf8').replace(/<\/script/gi,'<\\/script')
 function credentialClassification(settings) {
   try {

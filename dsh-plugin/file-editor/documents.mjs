@@ -2,10 +2,27 @@ import { t } from '../i18n/api.mjs'
 import { parseFile } from './protocol.mjs'
 
 /** Documents outlive React seats; two occurrences of one address share a draft. */
-export function createDocuments(remote) {
+export function createDocuments(remote, { maxCachedDocuments = 16, maxCachedBytes = 8 * 1024 * 1024 } = {}) {
   const documents = new Map()
+  function prune() {
+    const unused = [...documents.values()].filter(doc => !doc.observed() && !doc.dirty()
+      && !doc.getSnapshot().loading && !doc.getSnapshot().saving)
+    const bytes = doc => {
+      const state = doc.getSnapshot()
+      return (state.text.length + (state.text === state.base ? 0 : state.base.length)) * 2
+    }
+    let retained = unused.length, size = unused.reduce((sum, doc) => sum + bytes(doc), 0)
+    for (const doc of unused) {
+      if (retained <= maxCachedDocuments && size <= maxCachedBytes) break
+      documents.delete(doc.address); retained--; size -= bytes(doc)
+    }
+  }
   function get(address) {
-    if (documents.has(address)) return documents.get(address)
+    if (documents.has(address)) {
+      const doc = documents.get(address)
+      documents.delete(address); documents.set(address, doc)
+      return doc
+    }
     const file = parseFile(address)
     if (!file) throw Error(t('无法识别文件地址'))
     let state = { text: '', base: '', version: null, loading: false, saving: false, error: '', conflict: false, eol: '\n', bom: false }
@@ -16,7 +33,8 @@ export function createDocuments(remote) {
     const doc = {
       file, address,
       getSnapshot: () => state,
-      subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
+      subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); prune() } },
+      observed: () => listeners.size > 0,
       dirty: () => state.version !== null && state.text !== state.base,
       edit(text) { generation++; patch({ text, error: state.conflict ? state.error : '' }) },
       async load(force = false) {
@@ -29,7 +47,7 @@ export function createDocuments(remote) {
             const loaded = value(await remote.read(file.sessionId, file.path, new AbortController().signal))
             if (requestGeneration === generation) patch({ ...loaded, base: loaded.text, error: '', conflict: false })
           } catch (error) { if (requestGeneration === generation) patch({ error: error.message || t('读取失败，请重试') }) }
-          finally { pendingRead = null; patch({ loading: false }) }
+          finally { pendingRead = null; patch({ loading: false }); prune() }
         })()
         return pendingRead
       },
@@ -47,17 +65,18 @@ export function createDocuments(remote) {
           } catch (error) {
             patch({ error: error.message || t('保存失败，请重试'), conflict: String(error.code).includes('FS_STALE_VERSION') })
             return false
-          } finally { pendingSave = null; patch({ saving: false }) }
+          } finally { pendingSave = null; patch({ saving: false }); prune() }
         })()
         return pendingSave
       },
       restore(saved) { generation++; patch({ ...saved, loading: false, saving: false }) },
     }
     documents.set(address, doc)
+    prune()
     return doc
   }
   return {
-    get, documents,
+    get, documents, prune,
     unsettled: () => [...documents.values()].some(doc => doc.dirty() || doc.getSnapshot().saving),
     capture() {
       if ([...documents.values()].some(doc => doc.getSnapshot().saving || doc.getSnapshot().loading)) throw Error(t('文件正在读写，请完成后再重启'))

@@ -26,20 +26,7 @@ await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/session-links/clien
 console.log('Built session link client.')
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/plugin-control/client-entry.mjs'], outfile: root + 'dsh-plugin/plugin-control/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline' })
 console.log('Built builtin plugin settings client.')
-const editorBuild = await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/file-editor/client-entry.mjs'], outfile: root + 'dsh-plugin/file-editor/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline', loader: { '.css': 'text' }, metafile: true })
-const editorPackages = [...new Set(Object.keys(editorBuild.metafile.inputs).flatMap(file => file.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\//)?.[1] || []))].sort()
-let editorLicenses = ''
-for (const name of editorPackages) {
-  const pkg = JSON.parse(await readFile(root + 'node_modules/' + name + '/package.json', 'utf8'))
-  let license
-  for (const file of ['LICENSE', 'LICENSE.md', 'LICENSE.txt']) {
-    try { license = await readFile(root + 'node_modules/' + name + '/' + file, 'utf8'); break } catch (error) { if (error.code !== 'ENOENT') throw error }
-  }
-  if (!license) throw Error('Missing editor dependency license: ' + name)
-  editorLicenses += `${name} ${pkg.version}\n${license}\n\n`
-}
-await writeFile(root + 'dsh-plugin/file-editor/LICENSES.txt', editorLicenses)
-console.log('Built sidebar file editor client.')
+await import('./build-file-editor.mjs')
 await build({ absWorkingDir: root, entryPoints: ['dsh-plugin/directory-picker/client-entry.mjs'], outfile: root + 'dsh-plugin/directory-picker/client.js', bundle: true, format: 'iife', target: 'es2022', legalComments: 'inline', loader: { '.css': 'text' } })
 console.log('Built remote directory picker client.')
 await import('./build-account-popover.mjs')

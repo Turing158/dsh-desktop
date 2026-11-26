@@ -464,16 +464,29 @@ fn web_args(patch_file: &Path, config: &crate::remote_control::Config) -> Vec<st
 /// A running `dsh web` child, its job object, and its output stream.
 pub struct DshProcess {
     child: Child,
+    // Drop the open overlay before removing its private control directory.
+    _plugin_boot: tempfile::NamedTempFile,
     update_control: tempfile::TempDir,
     /// Exact local sockets requested from this backend, published only after readiness.
     pub listeners: Vec<crate::remote_control::ListenerAddress>,
-    _plugin_boot: tempfile::NamedTempFile,
     /// Kept alive so the job outlives the child handle: dropping it kills the tree.
     _job: crate::winjob::JobObject,
     /// The output stream, handed to its single consumer by [`DshProcess::take_events`].
     events: Option<Receiver<ChildEvent>>,
     /// Child stderr, kept for diagnostics.
     stderr: Arc<Mutex<Vec<String>>>,
+}
+
+/// Only a verified managed selection can omit bundle-file observations. Custom
+/// installations and profile plugins retain their normal change monitoring.
+fn immutable_runtime_root(runtime: &Runtime) -> Option<&Path> {
+    if runtime.source != DshSource::Managed { return None; }
+    let managed = runtime.managed.as_ref()?;
+    runtime.dsh_bin.ancestors().find(|path| {
+        path.file_name().is_some_and(|name| name == "tree")
+            && path.parent().and_then(Path::file_name)
+                .is_some_and(|name| name == std::ffi::OsStr::new(&managed.id))
+    })
 }
 
 impl DshProcess {
@@ -491,7 +504,10 @@ impl DshProcess {
         let job = crate::winjob::JobObject::new()?;
 
         let plugin_file = changes_dir.parent().unwrap_or(changes_dir).join("desktop-plugins.json");
-        let plugin_boot = crate::builtin_plugins::boot_patch(&plugin_file)?;
+        // HMR observes patch-file parents. A private directory avoids scanning
+        // the shared Windows Temp directory whenever unrelated apps write there.
+        let update_control = tempfile::Builder::new().prefix("dsh-update-control-").tempdir()?;
+        let plugin_boot = crate::builtin_plugins::boot_patch_in(&plugin_file, update_control.path())?;
         let preload = profile_preload(patch_file)?;
         let mut args = web_args(patch_file, config);
         // Both launcher overlays must precede the first web-app option.
@@ -505,7 +521,6 @@ impl DshProcess {
             vec![]
         };
 
-        let update_control = tempfile::Builder::new().prefix("dsh-update-control-").tempdir()?;
         let mut child = Command::new(&runtime.node_exe)
             // Prepare the temporary overlay before the entry script, sharing
             // Node and the upstream boot module cache with the real backend.
@@ -521,6 +536,8 @@ impl DshProcess {
             .env("NODE_COMPILE_CACHE", std::env::var_os("NODE_COMPILE_CACHE")
                 .unwrap_or_else(|| changes_dir.parent().unwrap_or(changes_dir).join("node-compile-cache").into_os_string()))
             .env("DSH_DESKTOP_DSH_BIN", &runtime.dsh_bin)
+            .env("DSH_DESKTOP_IMMUTABLE_RUNTIME_ROOT", immutable_runtime_root(runtime)
+                .map(|path| path.as_os_str().to_os_string()).unwrap_or_default())
             .env("DSH_DESKTOP_PLUGINS_FILE", &plugin_file)
             .env("DSH_DESKTOP_CHANGES_DIR", changes_dir)
             .env("DSH_DESKTOP_UPDATE_CONTROL", update_control.path())
@@ -797,6 +814,27 @@ pub fn read_to_string(mut reader: impl Read) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn immutable_runtime_watch_exclusion_requires_the_matching_managed_tree() {
+        let root = std::env::current_dir().unwrap().join("runtime-fixture/verified/tree");
+        let mut runtime = Runtime {
+            node_exe: "node.exe".into(),
+            dsh_bin: root.join("node_modules/@deepseek-ai/dsh/lib/bin.js"),
+            source: DshSource::Managed, version: Some("0.2.3".into()),
+            managed: Some(crate::runtime_store::ManagedRuntime {
+                id: "verified".into(), fingerprint: "verified".into(), committed: true,
+            }),
+        };
+        assert_eq!(immutable_runtime_root(&runtime), Some(root.as_path()));
+        for source in [DshSource::Configured, DshSource::Private, DshSource::Global] {
+            runtime.source = source;
+            assert_eq!(immutable_runtime_root(&runtime), None);
+        }
+        runtime.source = DshSource::Managed;
+        runtime.managed.as_mut().unwrap().id = "another-tree".into();
+        assert_eq!(immutable_runtime_root(&runtime), None);
+    }
 
     #[test]
     fn managed_version_comes_from_verified_manifest_but_mutable_versions_are_probed() {

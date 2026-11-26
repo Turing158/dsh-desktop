@@ -2,6 +2,10 @@
 use std::{io::{self, Write}, path::Path};
 
 pub fn boot_patch(file: &Path) -> io::Result<tempfile::NamedTempFile> {
+    boot_patch_in(file, &std::env::temp_dir())
+}
+
+pub fn boot_patch_in(file: &Path, directory: &Path) -> io::Result<tempfile::NamedTempFile> {
     let catalog: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../dsh-plugin/plugin-control/catalog.json"))?;
     let saved = match std::fs::read(file) {
         Ok(bytes) => {
@@ -22,7 +26,7 @@ pub fn boot_patch(file: &Path) -> io::Result<tempfile::NamedTempFile> {
     let core: Vec<String> = serde_json::from_str(include_str!("../../dsh-plugin/plugin-control/core.json"))?;
     patches.extend(core.iter().map(|id| serde_json::json!({ "id": id, "disabled": false })));
     if let Some(parent) = file.parent() { std::fs::create_dir_all(parent)?; }
-    let mut patch = tempfile::Builder::new().prefix("desktop-plugins-").suffix(".json").tempfile()?;
+    let mut patch = tempfile::Builder::new().prefix("desktop-plugins-").suffix(".json").tempfile_in(directory)?;
     patch.write_all(serde_json::to_string(&patches)?.as_bytes())?;
     patch.flush()?;
     Ok(patch)
@@ -31,6 +35,17 @@ pub fn boot_patch(file: &Path) -> io::Result<tempfile::NamedTempFile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_boot_overlay_uses_its_private_parent_without_modifying_preferences() {
+        let root = tempfile::tempdir().unwrap();
+        let control = tempfile::tempdir_in(root.path()).unwrap();
+        let file = root.path().join("desktop-plugins.json");
+        let saved = r#"{"version":1,"enabled":{"desktop-notify":false}}"#;
+        std::fs::write(&file, saved).unwrap();
+        let patch = boot_patch_in(&file, control.path()).unwrap();
+        assert_eq!(patch.path().parent(), Some(control.path()));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), saved);
+    }
     #[test]
     fn legacy_appearance_and_core_switches_migrate_at_boot() {
         let dir = tempfile::tempdir().unwrap();

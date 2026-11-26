@@ -1281,7 +1281,8 @@
   /** Wait for the app to mount, then keep watching it. */
   function begin() {
     if (pass()) {
-      timer = setInterval(pass, WATCH_MS)
+      timer = setInterval(function () { if (!document.hidden) pass() }, WATCH_MS)
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) pass() })
       return
     }
     if (polls++ < MOUNT_MAX_POLLS) {

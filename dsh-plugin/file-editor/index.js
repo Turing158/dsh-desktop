@@ -1,10 +1,17 @@
 import { runtimeImport } from '../runtime-import.mjs'
 import { FileEditorApi, errorMessage } from './host.mjs'
 import { contribution } from './protocol.mjs'
+import { editorAssetHandler } from './editor-asset.mjs'
 
 export const name = 'desktop-file-editor'
 export const inject = ['fs', 'sessions', 'typert']
 export async function apply(ctx) {
+  ctx.inject(['webServer', 'connection'], child => child.effect(() => child.webServer.register({
+    kind: 'exact', path: '/__dsh-desktop/file-editor/editor.mjs',
+    // Older runtimes expose the trust gate here. New runtimes authenticate
+    // registered WebServer routes centrally (the default is owner admission).
+    handler: editorAssetHandler({ reject: req => child.connection.requestRejection?.(req) }),
+  }), 'desktop-file-editor: lazy editor asset'))
   const { TypertRemoteService, RemoteError } = await runtimeImport('@deepseek-ai/dsh-typert-protocol')
   const api = new FileEditorApi(ctx.fs)
   class DesktopFileEditor extends TypertRemoteService {

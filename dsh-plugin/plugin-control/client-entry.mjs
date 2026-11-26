@@ -5,6 +5,7 @@ import styles from './style.mjs'
 import inventoryStyles from './inventory-style.mjs'
 import { createInventoryView, renderPluginColumns } from './inventory-view.mjs'
 import { createMarketplacePrompt, mountMarketplaceHeader } from './marketplace-view.mjs'
+import { createVisibleRefresh } from './visible-refresh.mjs'
 
 window.__ModuleLoader__.load({ id: '@dsh-desktop/plugin-control', factory(require) {
   const React = require('react'), h = React.createElement
@@ -80,6 +81,9 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/plugin-control', factory(requir
       catch (e) { if (!disposed && current === revision) { error = errorText(e); publish() } }
       finally { polling = false }
     }
+    const visibleRefresh = createVisibleRefresh({ refresh, document,
+      onIdle: () => { revision++; snapshot = null; error = '' } })
+    const offModules = ctx.modules.entries.state.subscribe(() => visibleRefresh.changed())
     async function change(id, enabled, source) {
       if (busy || restarting || snapshot?.marketplace?.installing) return
       revision++; busy = true; error = ''; restartError = ''; publish()
@@ -113,7 +117,13 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/plugin-control', factory(requir
     }
     function useStatus() {
       const [, rerender] = React.useState(0)
-      React.useEffect(() => { const fn = () => rerender(n => n + 1); listeners.add(fn); fn(); return () => listeners.delete(fn) }, [])
+      React.useEffect(() => {
+        const fn = () => rerender(n => n + 1)
+        listeners.add(fn)
+        const release = visibleRefresh.acquire()
+        fn()
+        return () => { listeners.delete(fn); release() }
+      }, [])
       return snapshot
     }
     function RestartCard({ state }) {
@@ -209,13 +219,16 @@ window.__ModuleLoader__.load({ id: '@dsh-desktop/plugin-control', factory(requir
     const style = document.createElement('style')
     style.textContent = styles + inventoryStyles
     document.head.appendChild(style)
-    const offSettings = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({ name: 'settings.plugins.tab', id: 'desktop-builtins', order: 5, label: () => t('内置插件') }, Settings))
-    const offInventory = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({ name: 'settings.plugins.tab', id: 'all', order: 10, label: () => t('插件列表') }, Inventory))
+    // Stable releases host these tabs in Settings; 0.2.3 hosts them on the
+    // main Plugins page. Both use the same demand-owned status subscriptions.
+    const offViews = ['settings.plugins.tab', 'plugins.tab'].flatMap(slot => [
+      ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, id: 'desktop-builtins', order: 5, label: () => t('内置插件') },
+        slot === 'plugins.tab' ? () => h(React.Fragment, null, h(MarketplacePrompt), h(Settings)) : Settings)),
+      ctx.slots.inject(slot, () => ctx.slots.register({ name: slot, id: 'all', order: 10, label: () => t('插件列表') }, Inventory)),
+    ])
     const offHeadings = renameSettingsHeadings()
     const offMarketplace = mountMarketplaceHeader(React, createRoot, MarketplacePrompt)
-    refresh()
-    const timer = setInterval(refresh, 2000)
-    return () => { disposed = true; clearInterval(timer); offMarketplace(); offHeadings(); offSettings(); offInventory(); offRestart?.(); style.remove(); listeners.clear() }
+    return () => { disposed = true; visibleRefresh.dispose(); offModules(); offMarketplace(); offHeadings(); offViews.forEach(off => off()); offRestart?.(); style.remove(); listeners.clear() }
   }
   return { inject: ['slots', 'remote', 'sessions', 'workspaces', 'uiWorkspace', 'conversation', 'layout', 'locale', 'modules'], async apply(ctx) {
     const off = await ctx.remote.$mount(contribution)

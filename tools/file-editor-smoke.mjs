@@ -34,7 +34,7 @@ await writeFile(join(root, 'patch.yml'), patch + offlineModelPatch)
 let child, browser, page, output = ''
 const report = { root, checks: [] }, sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 try {
-  child = spawn(process.execPath, [dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], { cwd: workspace, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes'), DSH_UI_SMOKE_KEY: 'offline-fixture' }, stdio: ['ignore', 'pipe', 'pipe'] })
+  child = spawn(process.execPath, ['--import', pathToFileURL(resolve('dsh-plugin/plugin-control/prepare-boot.mjs')).href, dshBin, 'web', '--patch', join(root, 'patch.yml'), '--no-open', '--port', '0'], { cwd: workspace, windowsHide: true, env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_DESKTOP_CHANGES_DIR: join(root, 'changes'), DSH_UI_SMOKE_KEY: 'offline-fixture' }, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { output += data })
   let url
   for (let i = 0; i < 400; i++) { url = output.match(/dsh web: (http:\/\/[^\s\u001b]+)/)?.[1]; if (url) break; if (child.exitCode !== null) throw Error(output); await sleep(100) }

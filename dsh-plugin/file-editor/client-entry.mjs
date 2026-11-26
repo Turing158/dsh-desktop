@@ -1,7 +1,7 @@
 import { t, useLocale } from '../i18n/api.mjs'
 import { contribution, ID, PLAIN_ID, CODE_ID, HTML_ID, parseFile } from './protocol.mjs'
 import { createDocuments } from './documents.mjs'
-import { mountEditor } from './editor.mjs'
+import { loadEditor } from './lazy-editor.mjs'
 import { createStateProvider } from './state-provider.mjs'
 import { createCloseGuard } from './close-guard.mjs'
 import { bindReloadGuard } from './reload-guard.mjs'
@@ -50,6 +50,9 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       const { tab, doc, state, section, sessionId, viewer } = useFileTab(props)
       const host = React.useRef(null), editor = React.useRef(null)
       const [cursor, setCursor] = React.useState({ line: 1, column: 1 })
+      const [engineError, setEngineError] = React.useState(''), [engineAttempt, retryEngine] = React.useState(0)
+      const wrapping = React.useRef(props.wrap)
+      wrapping.current = props.wrap
       const content = props.content
       React.useEffect(() => { void doc.load() }, [doc])
       // Native reloads can remount the renderer; a dirty draft always wins.
@@ -66,10 +69,15 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
       const ready = state.version !== null
       React.useLayoutEffect(() => {
         if (!ready || !host.current) return
-        editor.current = mountEditor(host.current, doc, { mode: props.mode, wrap: props.wrap, onCursor: setCursor,
-          scrollportRef: props.scrollportRef, line: tab.navigation.params?.line })
-        return () => { editor.current?.destroy(); editor.current = null }
-      }, [doc, ready, props.mode])
+        let current = true
+        setEngineError('')
+        void loadEditor().then(({ mountEditor }) => {
+          if (!current || !host.current) return
+          editor.current = mountEditor(host.current, doc, { mode: props.mode, wrap: wrapping.current, onCursor: setCursor,
+            scrollportRef: props.scrollportRef, line: tab.navigation.params?.line })
+        }).catch(() => { if (current) setEngineError(t('编辑器加载失败，请重试')) })
+        return () => { current = false; editor.current?.destroy(); editor.current = null }
+      }, [doc, ready, props.mode, engineAttempt])
       React.useEffect(() => { editor.current?.wrap(props.wrap) }, [props.wrap])
       React.useEffect(() => { if (tab.visible) editor.current?.measure() }, [tab.visible])
       const reload = () => closeGuard.reload(sessionId, tab, doc)
@@ -79,8 +87,9 @@ window.__ModuleLoader__.load({ id: ID, factory(require) {
         canPreview && h('div', { className: 'dshFileEditor__toolbar' },
           h('button', { type: 'button', className: 'dshFileEditor__button', disabled: !ready || state.loading,
             onClick: () => viewer.actions.selected(tab.id, HTML_ID) }, t('预览 HTML'))),
-        state.error && h('div', { className: 'dshFileEditor__error', role: 'alert' }, state.error,
-          h('button', { type: 'button', className: 'dshFileEditor__button', onClick: reload, disabled: state.loading || state.saving }, ready ? t('重新读取') : t('重试'))),
+        (state.error || engineError) && h('div', { className: 'dshFileEditor__error', role: 'alert' }, state.error || engineError,
+          h('button', { type: 'button', className: 'dshFileEditor__button', onClick: engineError ? () => retryEngine(n => n + 1) : reload,
+            disabled: state.loading || state.saving }, engineError ? t('重试') : ready ? t('重新读取') : t('重试'))),
         ready ? h('div', { ref: host, className: 'dshFileEditor__host' }) : h('div', { className: 'dshFileEditor__empty' }, state.loading ? t('正在读取完整文件…') : t('文件内容未载入。')),
         ready && h('div', { className: 'dshFileEditor__footer' }, h('span', null, t("第 {0} 行，第 {1} 列", [cursor.line, cursor.column])),
           h('span', null, state.bom ? 'UTF-8 BOM' : 'UTF-8'), h('span', null, state.eol === '\r\n' ? 'CRLF' : state.eol === '\r' ? 'CR' : 'LF')))
