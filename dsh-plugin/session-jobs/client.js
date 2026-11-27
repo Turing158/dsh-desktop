@@ -81,6 +81,7 @@
   var HEADER_SLOT = "conversation.session.header.utilities";
   var CONTROL_ID = "desktop-session-jobs";
   var MODE_ATTRIBUTE = "data-dsh-ui";
+  var PANEL_SECTION_SLOT = "conversation.session.panel.section";
   var PANEL_ID = "dsh-session-jobs-panel";
   var FAILED_HINT_MS = 4e3;
   function isVanilla(doc = globalThis.document) {
@@ -404,11 +405,24 @@
         style.textContent = style_default;
         document.head.append(style);
         const Control = createControl(React, ReactDOM, ctx);
-        const off = ctx.slots.inject(HEADER_SLOT, () => ctx.slots.register({
-          name: HEADER_SLOT,
-          id: CONTROL_ID,
-          order: 2
-        }, Control));
+        const off = ctx.slots.inject(HEADER_SLOT, () => {
+          let removeControl;
+          const sync = () => {
+            const nativeJobs = ctx.slots.entriesOfSlot?.(PANEL_SECTION_SLOT)?.some((entry) => entry.options.id === "background-jobs");
+            if (nativeJobs) {
+              removeControl?.();
+              removeControl = void 0;
+            } else {
+              removeControl ??= ctx.slots.register({ name: HEADER_SLOT, id: CONTROL_ID, order: 2 }, Control);
+            }
+          };
+          const unsubscribe = ctx.slots.subscribe?.(PANEL_SECTION_SLOT, sync);
+          sync();
+          return () => {
+            unsubscribe?.();
+            removeControl?.();
+          };
+        });
         if (window.__DSH_UI_BOOT__?.smoke) window.__DSH_SESSION_JOBS_SMOKE__ = { seatGeometry, panelGeometry, CONTROL_ID };
         return () => {
           off?.();

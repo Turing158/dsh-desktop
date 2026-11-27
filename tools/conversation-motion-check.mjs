@@ -92,6 +92,101 @@ test('replacement tab buttons are not a view switch; actual selections are', asy
   }
 })
 
+test('the view toggle keeps the active tab appearance and respects the hover motion preference', async t => {
+  const page = await browser.newPage({ reducedMotion: 'reduce' })
+  t.after(() => page.close())
+  await page.setContent(`
+    <style>
+      .nativeTab { position: relative; background: transparent; border: 0; padding: 0 0 9px; font-size: 13px; }
+      .nativeActive { color: rgb(65, 118, 230); }
+      .nativeActive::after { content: ''; position: absolute; inset: auto 0 -1px; height: 2px; background: currentColor; }
+    </style>
+    <div data-conversation-tabs role="tablist">
+      <button class="nativeTab nativeActive" role="tab" aria-selected="true">对话</button>
+      <button class="nativeTab" role="tab" aria-selected="false">轨迹</button>
+    </div>`)
+  await page.addStyleTag({ content: readFileSync('dsh-plugin/ui-overlay/theme.css', 'utf8') })
+  const tabs = page.locator('[role="tab"]')
+  const tabStyle = node => [getComputedStyle(node).backgroundColor, getComputedStyle(node).color,
+    getComputedStyle(node).padding, getComputedStyle(node).fontSize, getComputedStyle(node, '::after').backgroundColor]
+  const originalStyle = await tabs.first().evaluate(tabStyle)
+  await tabs.evaluateAll(nodes => nodes.forEach(tab => {
+    tab.onclick = () => nodes.forEach(other => {
+      other.setAttribute('aria-selected', String(other === tab))
+      other.classList.toggle('nativeActive', other === tab)
+    })
+  }))
+  await page.addScriptTag({ content: source })
+  const toggle = page.getByRole('button', { name: '当前视图：会话。切换到轨迹' })
+  assert.deepEqual(await toggle.evaluate(tabStyle), originalStyle)
+  const bounds = await toggle.boundingBox()
+  const labels = toggle.locator('[data-view-label]')
+  const opacities = () => labels.evaluateAll(nodes => nodes.map(node => Number(getComputedStyle(node).opacity)))
+  for (const [preference, reducedMotion, duration] of [
+    ['system', 'reduce', '0s'], ['on', 'reduce', '0.16s'],
+    ['off', 'no-preference', '0s'], ['system', 'no-preference', '0.16s'],
+  ]) {
+    await page.emulateMedia({ reducedMotion })
+    await page.locator('html').evaluate((root, value) => {
+      if (value === 'system') root.removeAttribute('data-dsh-desktop-animation')
+      else root.dataset.dshDesktopAnimation = value
+    }, preference)
+    assert.equal(await labels.last().evaluate(node => getComputedStyle(node).transitionDuration), duration)
+    assert.deepEqual(await opacities(), [1, 0])
+    await toggle.hover()
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-view-label="next"]')).opacity === '1')
+    assert.deepEqual(await opacities(), [0, 1])
+    assert.deepEqual(await toggle.boundingBox(), bounds)
+    await page.mouse.move(0, 0)
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-view-label="current"]')).opacity === '1')
+    assert.deepEqual(await opacities(), [1, 0])
+  }
+  await toggle.click()
+  const switched = page.getByRole('button', { name: '当前视图：轨迹。切换到会话' })
+  await switched.click()
+  assert.deepEqual(await toggle.locator('[data-view-label]').allTextContents(), ['会话', '轨迹'])
+  assert.deepEqual(await toggle.evaluate(tabStyle), originalStyle)
+})
+
+test('session tab edge fades animate independently and respect the desktop motion preference', async t => {
+  const page = await browser.newPage()
+  t.after(() => page.close())
+  await page.setContent('<div class="dshSessionTabs"><button>Session</button></div>')
+  await page.addStyleTag({ content: readFileSync('dsh-plugin/ui-overlay/theme.css', 'utf8') })
+  const strip = page.locator('.dshSessionTabs')
+  for (const [preference, reducedMotion, animated] of [
+    ['on', 'reduce', true], ['off', 'no-preference', false],
+    ['system', 'reduce', false], ['system', 'no-preference', true],
+  ]) {
+    await page.emulateMedia({ reducedMotion })
+    const samples = await strip.evaluate((node, preference) => {
+      const root = document.documentElement
+      if (preference === 'system') root.removeAttribute('data-dsh-desktop-animation')
+      else root.dataset.dshDesktopAnimation = preference
+      const edges = ['left', 'right']
+      const alphas = () => edges.map(edge => Number(getComputedStyle(node).getPropertyValue(`--dsh-session-tabs-${edge}-alpha`)))
+      alphas()
+      return [[true, false], [false, true], [false, false]].map(overflow => {
+        edges.forEach((edge, i) => node.toggleAttribute(`data-overflow-${edge}`, overflow[i]))
+        const transitions = node.getAnimations()
+        for (const transition of transitions) transition.currentTime = 90
+        const halfway = alphas()
+        for (const transition of transitions) transition.finish()
+        return { halfway, end: alphas(), transitions: transitions.length }
+      })
+    }, preference)
+    const endpoints = [[0, 1], [1, 0], [1, 1]]
+    assert.deepEqual(samples.map(sample => sample.end), endpoints)
+    assert.deepEqual(samples.map(sample => sample.transitions), animated ? [1, 2, 1] : [0, 0, 0])
+    if (animated) {
+      const [[showLeft, stillRight], [hideLeft, showRight], [stillLeft, hideRight]] = samples.map(sample => sample.halfway)
+      for (const alpha of [showLeft, hideLeft, showRight, hideRight]) assert.ok(alpha > 0 && alpha < 1)
+      assert.equal(stillLeft, 1)
+      assert.equal(stillRight, 1)
+    } else assert.deepEqual(samples.map(sample => sample.halfway), endpoints)
+  }
+})
+
 test('retained ARIA panels animate on revisit without reacting to button replacement', async t => {
   const page = await fixture(t, '<div role="tablist"><button role="tab" aria-controls="a" aria-selected="true">A</button><button role="tab" aria-controls="b" aria-selected="false">B</button></div><div role="tabpanel" id="a">A</div><div role="tabpanel" id="b" hidden>B</div>')
   for (const id of ['b', 'a', 'b']) {

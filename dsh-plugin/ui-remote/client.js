@@ -348,6 +348,10 @@ const React = require('react'), h = React.createElement
     }
     return { inject: ['slots'], apply(ctx) {
       ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'remote-control', order: 6, label: () => t('远程控制'), children: {} }, RemoteSection))
+      // The settings shell renders each nav icon by section id. Mark the native
+      // entry without changing its login provider or relying on localized text.
+      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({ name: 'settings.section.icon', id: 'remote-connection' },
+        () => h('span', { 'data-dsh-hide-remote-connection': '' })))
     }, validateHost, localListener }
   },
 })

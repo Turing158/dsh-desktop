@@ -61,6 +61,43 @@ test('preload preserves the CLI entrypoint and argv, shares imports, and does no
   assert.deepEqual(readFileSync(f.trace, 'utf8').trim().split('\n'), ['main-import', 'prepare', 'worker-import'])
 })
 
+test('desktop preload sends the GitHub provider’s multiline GraphQL field through stdin on Windows', () => {
+  const f = fixture()
+  const modules = join(f.root, 'runtime/node_modules')
+  const provider = join(modules, '@deepseek-ai/dsh-experimental-forge-github/lib')
+  const execa = join(modules, 'execa')
+  mkdirSync(provider, { recursive: true })
+  mkdirSync(execa, { recursive: true })
+  writeFileSync(join(provider, '../package.json'), '{"type":"module","exports":"./lib/index.js"}')
+  writeFileSync(join(provider, 'index.js'), `export { execa } from 'execa'`)
+  writeFileSync(join(execa, 'package.json'), '{"type":"module","exports":"./index.js"}')
+  writeFileSync(join(execa, 'index.js'), 'export const execa = (file, args, options) => ({ file, args, options })')
+  writeFileSync(f.entry, `
+    import { execa as run } from '@deepseek-ai/dsh-experimental-forge-github'
+    import { execa as other } from 'execa'
+    import { writeFileSync } from 'node:fs'
+    const query = 'query {\\r\\n  # comment\\n  viewer { login }\\n}'
+    const args = ['api', 'graphql', '--hostname', 'github.com', '-f', 'query=' + query, '-F', 'first=50']
+    const options = { stdin: 'ignore', timeout: 30000 }
+    const results = [run('custom-gh', args, options), other('custom-gh', args, options),
+      run('gh', ['api', 'graphql', '--input', '-'], { input: '{"query":"mutation {}"}' }),
+      run('gh', ['api', 'graphql', '-f', 'query={viewer{login}}'], options)]
+    writeFileSync(process.env.TEST_RESULT, JSON.stringify({ results, query, args, options }))
+  `)
+  f.env.DSH_DESKTOP_IDLE_OPTIMIZATIONS = '0'
+  const run = f.run()
+  assert.equal(run.status, 0, run.stderr)
+  const { results, query, args, options } = JSON.parse(readFileSync(f.result, 'utf8'))
+  const [adapted, other, mutation, singleLine] = results
+  assert.deepEqual(other, { file: 'custom-gh', args, options })
+  assert.deepEqual(adapted, process.platform === 'win32' ? {
+    file: 'custom-gh', args: ['api', 'graphql', '--hostname', 'github.com', '-F', 'query=@-', '-F', 'first=50'],
+    options: { ...options, stdin: 'pipe', input: query },
+  } : other)
+  assert.deepEqual(mutation, { file: 'gh', args: ['api', 'graphql', '--input', '-'], options: { input: '{"query":"mutation {}"}' } })
+  assert.deepEqual(singleLine, { file: 'gh', args: ['api', 'graphql', '-f', 'query={viewer{login}}'], options })
+})
+
 for (const fileOverlays of [false, true]) for (const enabled of [false, true]) {
   test(`saved plugin intent applies before startup with ${fileOverlays ? 'preview file' : 'stable parsed'} overlays (${enabled})`, () => {
     const f = fixture({ fileOverlays }), saved = JSON.stringify({ version: 1, entries: [

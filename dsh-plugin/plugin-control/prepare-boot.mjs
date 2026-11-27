@@ -7,10 +7,12 @@ import { isMainThread } from 'node:worker_threads'
 import { runtimeImport } from '../runtime-import.mjs'
 import { PROFILE_SWITCH_FILE, parseSwitches, startupSwitches } from './profile-model.mjs'
 import { installIdleRuntimeHooks } from '../idle/runtime-hooks.mjs'
+import { installGitHubCliHook } from '../compatibility/forge-github.mjs'
 
 // --import also runs in DSH worker threads; each isolate needs its own resolver.
 // Startup/profile overlays remain one-shot and main-thread-only below.
 installIdleRuntimeHooks(process.env.DSH_DESKTOP_DSH_BIN)
+if (process.env.DSH_DESKTOP_DSH_BIN) installGitHubCliHook()
 
 export async function prepareBoot(overlayPath, bootPath) {
   const { resolveProfileDir, loadProfileDirectory, loadOverlayPatches, readProfilePatches, composeEntries } = await runtimeImport('@deepseek-ai/dsh-app-boot')

@@ -15,6 +15,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
 import {
   cancellableJobs, orderCancellable, liveSummary, formatDuration,
   triggerLabel, badgeText, summaryText, isCancellable,
@@ -108,4 +109,51 @@ test('the packaged client is the built bundle, not a stale copy', () => {
   assert.ok(bundle.includes('@dsh-desktop/session-jobs'), 'the built client must announce the plugin id')
   assert.ok(bundle.includes('conversation.session.header.utilities'), 'the built client must register in the header utilities')
   assert.ok(bundle.includes('dshSessionJobs__seat'), 'the built client must carry its stylesheet')
+})
+
+test('the desktop control follows availability of the native background jobs section', () => {
+  const bundle = readFileSync(new URL('./session-jobs/client.js', import.meta.url), 'utf8')
+  let apply
+  const style = { dataset: {}, remove() {} }
+  runInNewContext(bundle, {
+    window: { __ModuleLoader__: { load({ factory }) { apply = factory(() => ({})).apply } } },
+    document: { createElement: () => style, head: { append() {} } },
+  })
+
+  const section = 'conversation.session.panel.section'
+  const header = 'conversation.session.header.utilities'
+  const listeners = new Set(), controls = new Set()
+  let native = true
+  const slots = {
+    entriesOfSlot(name) {
+      assert.equal(name, section)
+      return [{ options: { id: native ? 'background-jobs' : 'environment' } }]
+    },
+    subscribe(name, listener) {
+      assert.equal(name, section)
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    inject(name, mount) { assert.equal(name, header); return mount() },
+    register(options) {
+      assert.equal(options.name, header)
+      assert.equal(options.id, 'desktop-session-jobs')
+      assert.equal(controls.size, 0)
+      controls.add(options)
+      return () => controls.delete(options)
+    },
+  }
+  const update = value => { native = value; listeners.forEach(listener => listener()) }
+  const dispose = apply({ slots, jobs: {} })
+  assert.equal(controls.size, 0)
+  update(false)
+  update(false)
+  assert.equal(controls.size, 1)
+  update(true)
+  assert.equal(controls.size, 0)
+  update(false)
+  assert.equal(controls.size, 1)
+  dispose()
+  assert.equal(controls.size, 0)
+  assert.equal(listeners.size, 0)
 })

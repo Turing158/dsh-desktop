@@ -1,221 +1,217 @@
-﻿<#
+﻿#requires -Version 5.1
+<#
 .SYNOPSIS
-    Start the dsh desktop app in development mode, throttled so a
-    rebuild does not saturate the machine.
-
-.DESCRIPTION
-    `tauri dev` recompiles the Rust side on every change. On a many-core machine
-    cargo happily runs one `rustc` per core, which pins every CPU and makes the
-    desktop unusable while you wait. This script runs the same command but bounds
-    the resource it uses, using three independent levers:
-
-      1. -Jobs bounds how many `rustc` processes cargo runs at once. This is the
-         main lever: bytes-compiled-per-second is roughly proportional to it.
-      2. The whole process tree is lowered to BelowNormal priority, so the build
-         yields to whatever you are actually doing. Windows inherits the priority
-         class at process creation, so lowering this script before spawning means
-         cargo, rustc, and link all arrive throttled - no race to retag them.
-      3. The build runs at a lower I/O priority, so it does not fight the disk.
-
-    Compile parallelism is capped, not compile quality: this still produces a
-    normal debug build with full debug info, so breakpoints and backtraces work
-    exactly as they do with `npm run dev`.
-
-.PARAMETER Jobs
-    Maximum concurrent `rustc` processes. Defaults to a fraction of the logical
-    cores (2 on a 20-core box, 1 on a 4-core box). Lower = gentler.
-
-.PARAMETER Priority
-    Process priority for the build tree: Idle, BelowNormal (default), Normal.
-
-.PARAMETER Release
-    Build with optimizations instead of the debug profile. Much slower to compile.
-
-.PARAMETER NoWatch
-    Build and run once, without the file watcher. Useful for a one-off launch.
-
-.PARAMETER Quiet
-    Hide cargo's progress bars. Compiler errors and warnings are still printed -
-    only the animated progress display is suppressed.
+    Start the dsh desktop development server, or use -Web for browser preview.
 
 .EXAMPLE
-    .\dev.ps1
-    Start with the default throttle (2 cores' worth of compilation).
+    .\dev.ps1 -Check
+    Check desktop prerequisites without starting the app.
 
 .EXAMPLE
-    .\dev.ps1 -Jobs 1 -Priority Idle
-    Barely noticeable: one compiler thread, at the lowest priority.
+    .\dev.ps1 -Web -Port 1530
+    Serve the dsh Web UI with the desktop plugins on a local port.
 
 .EXAMPLE
-    .\dev.ps1 -Jobs 8
-    When you want the rebuild to finish quickly and have cores to spare.
-
-.NOTES
-    Windows / PowerShell only. This is a development convenience; it does not
-    affect the release build (`npm run build`).
-
-    IMPORTANT - file encoding: this file MUST be saved as UTF-8 **with BOM**.
-    Windows PowerShell 5.1 (the default `powershell.exe`) assumes the ANSI code
-    page for BOM-less files, which mangles the Chinese messages below and breaks
-    string parsing with confusing errors. Most editors strip the BOM on save, so
-    after editing, re-add it:
-
-        $p = 'dev.ps1'
-        $t = [IO.File]::ReadAllText($p, (New-Object Text.UTF8Encoding($false)))
-        [IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($true)))
-
-    Verify with a parse that must report 0 errors:
-
-        $errors = $null
-        [Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path dev.ps1), [ref]$null, [ref]$errors)
+    .\dev.ps1 -DataDir '.\.runtime\profile' -Jobs 2
+    Start the desktop app with a separate dsh data directory.
 #>
-
 [CmdletBinding()]
 param(
+    [switch]$Web,
+    [switch]$Check,
+    [switch]$InstallDependencies,
+    [string]$DataDir,
+    [ValidateRange(1024, 65535)]
+    [int]$Port = 1530,
     [ValidateRange(1, 64)]
     [int]$Jobs,
-
     [ValidateSet('Idle', 'BelowNormal', 'Normal')]
     [string]$Priority = 'BelowNormal',
-
     [switch]$Release,
     [switch]$NoWatch,
     [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 
-# ── locate the project ──────────────────────────────────────────────────────
+function Get-AvailableDevelopmentPort {
+    param([int]$PreferredPort)
+
+    $lastPort = [Math]::Min(65535, $PreferredPort + 99)
+    for ($candidate = $PreferredPort; $candidate -le $lastPort; $candidate++) {
+        $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $candidate)
+        try {
+            $probe.Server.ExclusiveAddressUse = $true
+            $probe.Start()
+            if ($candidate -ne $PreferredPort) {
+                Write-Host "端口 $PreferredPort 不可用，改用 $candidate。"
+            }
+            return $candidate
+        } catch [Net.Sockets.SocketException] {
+            if ($_.Exception.SocketErrorCode -notin @('AddressAlreadyInUse', 'AccessDenied')) {
+                throw
+            }
+        } finally {
+            $probe.Stop()
+        }
+    }
+    throw "$PreferredPort 到 $lastPort 之间没有可用端口，请使用 -Port 指定其他端口。"
+}
+
+function Assert-DesktopPrerequisites {
+    foreach ($command in @('cargo.exe', 'rustc.exe')) {
+        if (-not (Get-Command $command -CommandType Application -ErrorAction SilentlyContinue)) {
+            throw "缺少 $command，请安装 Rust MSVC 工具链。"
+        }
+    }
+    $rustHost = & rustc.exe -vV | Where-Object { $_ -like 'host:*' }
+    if ($LASTEXITCODE -ne 0 -or $rustHost -notmatch '^host: (i686|x86_64|aarch64)-pc-windows-msvc$') {
+        throw '请使用 Rust Windows MSVC 工具链。'
+    }
+    $sdkArch = @{ i686 = 'x86'; x86_64 = 'x64'; aarch64 = 'arm64' }[$Matches[1]]
+    $component = if ($sdkArch -eq 'arm64') { 'ARM64' } else { 'x86.x64' }
+    $programFiles86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    $vswhere = Join-Path $programFiles86 'Microsoft Visual Studio\Installer\vswhere.exe'
+    $sdkLib = Join-Path $programFiles86 "Windows Kits\10\Lib\*\um\$sdkArch\kernel32.lib"
+    if (-not (Test-Path -LiteralPath $vswhere) -or
+        -not (& $vswhere -latest -products '*' -requires "Microsoft.VisualStudio.Component.VC.Tools.$component" -property installationPath) -or
+        -not (Test-Path -Path $sdkLib)) {
+        throw "请安装 Visual Studio C++ 生成工具和 Windows 10/11 SDK（$sdkArch）。"
+    }
+
+    $webViewKey = 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    foreach ($hive in @('LocalMachine', 'CurrentUser')) {
+        foreach ($view in @('Registry32', 'Registry64')) {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+            $key = $null
+            try {
+                $key = $base.OpenSubKey($webViewKey)
+                $version = if ($key) { $key.GetValue('pv') }
+                if ($version -and $version -ne '0.0.0.0') { return }
+            } finally {
+                if ($key) { $key.Dispose() }
+                $base.Dispose()
+            }
+        }
+    }
+    throw '缺少 Microsoft Edge WebView2 Runtime，请先安装。'
+}
+
+function Get-WebRuntime {
+    if ($env:DSH_DESKTOP_DSH) {
+        $entry = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($env:DSH_DESKTOP_DSH)
+        if (-not (Test-Path -LiteralPath $entry -PathType Leaf)) {
+            throw "DSH_DESKTOP_DSH 指定的入口不存在：$entry"
+        }
+        return $entry
+    }
+
+    $globalModules = & npm.cmd root -g
+    $entryFile = '@deepseek-ai\dsh\lib\bin.js'
+    if ($LASTEXITCODE -eq 0 -and $globalModules) {
+        $entry = Join-Path $globalModules $entryFile
+        if (Test-Path -LiteralPath $entry -PathType Leaf) { return $entry }
+    }
+    $entry = Join-Path $env:APPDATA "DeepseekHarness\runtime\node_modules\$entryFile"
+    if (Test-Path -LiteralPath $entry -PathType Leaf) { return $entry }
+
+    throw '浏览器预览需要 dsh。请安装 @deepseek-ai/dsh 或通过 DSH_DESKTOP_DSH 指定入口。'
+}
+
 $root = $PSScriptRoot
-if ([string]::IsNullOrEmpty($root)) { $root = (Get-Location).Path }
-
-$tauriConf = Join-Path $root 'src-tauri\tauri.conf.json'
-$cargoToml = Join-Path $root 'src-tauri\Cargo.toml'
-
-if (-not (Test-Path $tauriConf) -or -not (Test-Path $cargoToml)) {
-    Write-Error "找不到项目：$root 下缺少 src-tauri\tauri.conf.json。请把 dev.ps1 放在仓库根目录。"
-    exit 1
-}
-
-# ── pick a sensible default job count ───────────────────────────────────────
-# Roughly a quarter of the cores, clamped to 1..4, so a 4-core laptop still gets
-# useful parallelism while a 20-core workstation stays responsive.
-if (-not $PSBoundParameters.ContainsKey('Jobs')) {
-    $cores = [Environment]::ProcessorCount
-    $Jobs = [Math]::Max(1, [Math]::Min(4, [Math]::Floor($cores / 4)))
-}
-
-# ── lower our own priority FIRST ────────────────────────────────────────────
-# This must happen before anything is spawned: Windows assigns the priority
-# class at process creation and does not propagate a later change to existing
-# children, so lowering now is what makes cargo, rustc, and link arrive throttled.
-$wanted = [System.Diagnostics.ProcessPriorityClass]::$Priority
+$previousOutputEncoding = [Console]::OutputEncoding
+$previousDshHome = $env:DSH_HOME
+$previousDshBin = $env:DSH_DESKTOP_DSH_BIN
+$previousJobs = $env:CARGO_BUILD_JOBS
+$previousCargoProgress = $env:CARGO_TERM_PROGRESS_WHEN
 $originalPriority = $null
-$lowered = $false
-if ($Priority -ne 'Normal') {
-    try {
-        $me = Get-Process -Id $PID
-        $originalPriority = $me.PriorityClass
-        $me.PriorityClass = $wanted
-        # Verify rather than assume: a silent failure here would give an
-        # unthrottled build while the banner still claimed otherwise.
-        $lowered = ((Get-Process -Id $PID).PriorityClass -eq $wanted)
-    } catch {
-        $lowered = $false
-    }
-}
-
-# ── clamp cargo's parallelism ───────────────────────────────────────────────
-# CARGO_BUILD_JOBS is read by cargo itself and reaches the `cargo run` that
-# `tauri dev` invokes, so compilation is bounded without changing how the app is
-# built (the debug profile, and therefore debugging, is untouched).
-$env:CARGO_BUILD_JOBS = "$Jobs"
-
-if ($Quiet) {
-    # Only the animated progress display is disabled; warnings and errors still
-    # print, because a quiet build that hides warnings is a trap.
-    $env:CARGO_TERM_PROGRESS_WHEN = 'never'
-}
-
-# ── locate the tauri CLI ────────────────────────────────────────────────────
-$tauriJs = Join-Path $root 'node_modules\@tauri-apps\cli\tauri.js'
-if (-not (Test-Path $tauriJs)) {
-    Write-Host ''
-    Write-Host '尚未安装依赖（找不到 @tauri-apps/cli）。' -ForegroundColor Yellow
-    Write-Host '请先运行：  npm install' -ForegroundColor Yellow
-    Write-Host ''
-    exit 1
-}
-
-foreach ($tool in @('node', 'cargo')) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        Write-Error "找不到 $tool，请确认它已安装并在 PATH 中。"
-        exit 1
-    }
-}
-
-# ── report what we are about to do ──────────────────────────────────────────
-$profileName = if ($Release) { 'release' } else { 'debug' }
-Write-Host ''
-Write-Host '  dsh desktop 开发服务器' -ForegroundColor Cyan
-Write-Host "  项目        $root"
-Write-Host "  编译并发    $Jobs 个 rustc（共 $([Environment]::ProcessorCount) 逻辑核心）"
-if ($lowered) {
-    Write-Host "  进程优先级  $Priority（已生效，cargo/rustc 将继承）" -ForegroundColor Green
-} else {
-    Write-Host "  进程优先级  未生效（继续以当前优先级运行）" -ForegroundColor Yellow
-}
-Write-Host "  构建配置    $profileName"
-if ($NoWatch) { Write-Host '  文件监视    关闭（-NoWatch）' -ForegroundColor Yellow }
-Write-Host ''
-if ($NoWatch) {
-    Write-Host '  正在编译并启动（-NoWatch：不重建，应用退出后本脚本结束）。'
-} else {
-    Write-Host '  提示：首次编译需要几分钟。之后改 Rust 代码会自动增量重编。'
-    Write-Host '        按 Ctrl+C 停止。' -ForegroundColor DarkGray
-}
-Write-Host ''
-
-# ── run ─────────────────────────────────────────────────────────────────────
-# Every argument after `dev` is forwarded to the Tauri CLI; `tauri dev` in turn
-# spawns `cargo run`, which reads CARGO_BUILD_JOBS from this environment.
-$tauriArgs = @($tauriJs, 'dev')
-if ($Release) { $tauriArgs += '--release' }
-if ($NoWatch) { $tauriArgs += '--no-watch' }
-
-$exitCode = 0
 try {
-    Push-Location $root
-    & node @tauriArgs
-    $exitCode = $LASTEXITCODE
-} catch {
-    Write-Host ''
-    Write-Error "启动失败：$($_.Exception.Message)"
-    $exitCode = 1
-} finally {
-    Pop-Location
-
-    # `tauri dev` can leave the app running when interrupted; stop only the
-    # binary we started, so an unrelated instance is never touched.
-    $leftover = Get-Process -Name 'deepseek-harness-desktop' -ErrorAction SilentlyContinue
-    if ($leftover) {
-        Write-Host ''
-        Write-Host '  正在停止残留的应用进程…' -ForegroundColor DarkGray
-        $leftover | Stop-Process -Force -ErrorAction SilentlyContinue
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    foreach ($command in @('node.exe', 'npm.cmd')) {
+        if (-not (Get-Command $command -CommandType Application -ErrorAction SilentlyContinue)) {
+            throw "缺少 $command，请安装 Node.js 22 或更新版本。"
+        }
+    }
+    $nodeVersion = & node.exe --version
+    if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 22) {
+        throw '请安装 Node.js 22 或更新版本。'
     }
 
-    # Restore this shell's own priority. Leaving it lowered would persist for the
-    # rest of the session as an invisible side effect.
-    if ($lowered -and $originalPriority) {
+    if ($Web) {
+        $dshBin = Get-WebRuntime
+    } else {
+        Assert-DesktopPrerequisites
+    }
+    if ($Check) {
+        Write-Host '开发环境检查通过。'
+        exit 0
+    }
+
+    if ($DataDir) {
+        $env:DSH_HOME = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DataDir)
+    }
+    Push-Location -LiteralPath $root
+    try {
+        & npm.cmd ls --depth=0 --silent *> $null
+        $tauriCli = Join-Path $root 'node_modules\@tauri-apps\cli\tauri.js'
+        if ($InstallDependencies -or $LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $tauriCli -PathType Leaf)) {
+            Write-Host '正在安装开发依赖…'
+            $installCommand = if ($InstallDependencies -and (Test-Path -LiteralPath 'package-lock.json')) { 'ci' } else { 'install' }
+            & npm.cmd $installCommand --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm $installCommand 失败，退出代码 $LASTEXITCODE。" }
+        }
+
+        if ($Web) {
+            & node.exe tools/build-terminal.mjs
+            if ($LASTEXITCODE -ne 0) { throw "前端资源构建失败，退出代码 $LASTEXITCODE。" }
+        }
+
+        $Port = Get-AvailableDevelopmentPort -PreferredPort $Port
+        $dshHomeDisplay = if ([string]::IsNullOrWhiteSpace($env:DSH_HOME)) { '~/.dsh' } else { $env:DSH_HOME }
+        Write-Host "预览端口 $Port（127.0.0.1）"
+        Write-Host "dsh 数据目录 $dshHomeDisplay"
+        if ($Web) {
+            $env:DSH_DESKTOP_DSH_BIN = $dshBin
+            $patch = Join-Path $root 'dsh-plugin\desktop-notify.patch.yml'
+            & node.exe --max-http-header-size=1048576 $dshBin web --patch $patch --host 127.0.0.1 --port $Port --no-open
+            exit $LASTEXITCODE
+        }
+
+        if (-not $PSBoundParameters.ContainsKey('Jobs')) {
+            $Jobs = [Math]::Max(1, [Math]::Min(4, [Math]::Floor([Environment]::ProcessorCount / 4)))
+        }
+        $env:CARGO_BUILD_JOBS = [string]$Jobs
+        if ($Quiet) { $env:CARGO_TERM_PROGRESS_WHEN = 'never' }
+        if ($Priority -ne 'Normal') {
+            try {
+                $process = Get-Process -Id $PID
+                $originalPriority = $process.PriorityClass
+                $process.PriorityClass = [Diagnostics.ProcessPriorityClass]::$Priority
+            } catch {
+                Write-Warning "无法调整编译进程优先级：$($_.Exception.Message)"
+            }
+        }
+
+        Write-Host "Cargo 编译并发 $Jobs"
+        $tauriArgs = @($tauriCli, 'dev', '--port', [string]$Port)
+        if ($Release) { $tauriArgs += '--release' }
+        if ($NoWatch) { $tauriArgs += '--no-watch' }
+        & node.exe @tauriArgs
+        exit $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+} finally {
+    if ($null -ne $originalPriority) {
         try { (Get-Process -Id $PID).PriorityClass = $originalPriority } catch { }
     }
+    $env:CARGO_TERM_PROGRESS_WHEN = $previousCargoProgress
+    $env:CARGO_BUILD_JOBS = $previousJobs
+    $env:DSH_DESKTOP_DSH_BIN = $previousDshBin
+    if ($DataDir) { $env:DSH_HOME = $previousDshHome }
+    [Console]::OutputEncoding = $previousOutputEncoding
 }
-
-if ($exitCode -ne 0) {
-    Write-Host ''
-    Write-Host "tauri dev 退出，代码 $exitCode。" -ForegroundColor Yellow
-    Write-Host '若为编译错误，上面已打印具体位置。' -ForegroundColor DarkGray
-}
-
-exit $exitCode

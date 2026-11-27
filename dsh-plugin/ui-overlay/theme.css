@@ -92,6 +92,166 @@ html:not([data-dsh-ui='vanilla']) body [data-turn-trigger] > button:focus-visibl
   border-radius: inherit;
 }
 
+html:not([data-dsh-ui='vanilla']) body [data-conversation-tabs] {
+  --dsh-conversation-view-toggle: 1;
+}
+html body .dshConversationViewToggle,
+html:not([data-dsh-ui='vanilla']) body [data-conversation-tabs] > .dshConversationViewToggle ~ button[role='tab'] {
+  display: none;
+}
+html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle {
+  display: grid;
+  place-items: center;
+}
+html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-link);
+  outline-offset: 1px;
+}
+html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle > [data-view-label] {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+}
+html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle > [data-view-label='next'] {
+  opacity: 0;
+}
+@media (hover: hover) {
+  html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle > [data-view-label] {
+    transition: opacity var(--dsh-conversation-view-motion-duration, 160ms) ease-out;
+  }
+  html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle:hover > [data-view-label='current'] {
+    opacity: 0;
+  }
+  html:not([data-dsh-ui='vanilla']) body .dshConversationViewToggle:hover > [data-view-label='next'] {
+    opacity: 1;
+  }
+}
+
+html body { --dsh-session-tabs: 1; }
+html body .dshSessionTabs { display: none; }
+html body .dshSessionTabs__menu { visibility: hidden; }
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__menu { visibility: visible; }
+html:not([data-dsh-ui='vanilla']) body {
+  --dsh-session-tab-motion-duration: 180ms;
+}
+
+html:not([data-dsh-ui='vanilla']) body [data-conversation-tabs]:has(> .dshSessionTabs) {
+  gap: 12px;
+  min-width: 0;
+}
+
+/* A sidebar can narrow the header while a long tab strip is still visible. */
+html:not([data-dsh-ui='vanilla']) body [data-conversation-tabs]:has(> .dshConversationViewToggle) {
+  flex-wrap: nowrap;
+}
+
+/* Leave room for the jobs control when it occupies the right end of this row. */
+html:not([data-dsh-ui='vanilla']) body header:has(.dshSessionJobs__seat) .dshSessionTabs {
+  margin-inline-end: 32px;
+}
+
+@property --dsh-session-tabs-left-alpha {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+@property --dsh-session-tabs-right-alpha {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs {
+  display: flex;
+  align-self: end;
+  align-items: end;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  padding-inline: 1px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  mask-image: linear-gradient(to right, rgb(0 0 0 / var(--dsh-session-tabs-left-alpha, 1)), black 8px,
+    black calc(100% - 8px), rgb(0 0 0 / var(--dsh-session-tabs-right-alpha, 1)));
+  transition: --dsh-session-tabs-left-alpha var(--dsh-session-tab-motion-duration) ease-out,
+    --dsh-session-tabs-right-alpha var(--dsh-session-tab-motion-duration) ease-out;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs[data-overflow-left] {
+  --dsh-session-tabs-left-alpha: 0;
+}
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs[data-overflow-right] {
+  --dsh-session-tabs-right-alpha: 0;
+}
+
+/* Single-view and blank conversations can have a header without a view row. */
+html:not([data-dsh-ui='vanilla']) body header > .dshSessionTabs {
+  grid-column: 1 / -1;
+  margin-block-start: 6px;
+  padding-inline-start: 8px;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 72px;
+  max-width: 192px;
+  height: 26px;
+  padding: 0 10px;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(128 128 128 / 25%));
+  border-radius: 8px 8px 0 0;
+  background: var(--dsw-alias-turn-trigger-bg);
+  color: var(--dsw-alias-label-primary, inherit);
+  font: inherit;
+  font-size: 12px;
+  line-height: 24px;
+  text-align: start;
+  cursor: pointer;
+  transition: min-width var(--dsh-session-tab-motion-duration) ease,
+    max-width var(--dsh-session-tab-motion-duration) ease,
+    background-color var(--dsh-session-tab-motion-duration) ease;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab:hover {
+  background: var(--dsw-alias-turn-trigger-bg-hover);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab:focus-visible {
+  outline: 2px solid var(--dsw-alias-link);
+  outline-offset: -2px;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[aria-current='true'] {
+  min-width: 32px;
+  max-width: 32px;
+  border-color: color-mix(in srgb, var(--dsw-alias-link) 46%, var(--dsw-alias-border-l2));
+  background: color-mix(in srgb, var(--dsw-alias-link) 14%, var(--dsw-alias-turn-trigger-bg));
+  color: var(--dsw-alias-link);
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity var(--dsh-session-tab-motion-duration) ease;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  opacity: 0;
+  transition: opacity var(--dsh-session-tab-motion-duration) ease;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[aria-current='true'] .dshSessionTabs__title { opacity: 0; }
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[aria-current='true'] .dshSessionTabs__icon { opacity: 1; }
+
 /* The selected sidebar row uses an opaque neutral fill; tint it with the accent
    so the active workspace reads as "selected" rather than merely darker. */
 html:not([data-dsh-ui='vanilla']) body [class*='_sessionRow'][class*='_selected'] {
@@ -375,45 +535,52 @@ html:not([data-dsh-ui='vanilla']) body [data-plugin-module] > button:focus-visib
   opacity: 1;
 }
 
-/* Composer effects change the surface, never text or controls.
-   No clipping layer: completion menus remain usable. */
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body [data-dsh-desktop='composer'] {
+/* The composer and session panel share the same material settings. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body :is([data-dsh-desktop='composer'], [data-session-panel]) {
+  --dsh-composer-surface: var(--dsw-alias-bg-module-platform);
   /* Two linear ranges keep the previous tint at the default 50% strength,
      reach full transparency at zero, and keep changing through 100%. */
   --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 144%), calc(48% + var(--dsh-composer-strength) * 48%));
   --dsh-composer-shine: rgb(255 255 255 / min(100%, calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-shine, 120%))));
   --dsh-composer-blur: calc(var(--dsh-composer-strength) * 36px);
 }
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body [data-session-panel] {
+  --dsh-composer-surface: var(--dsw-alias-bg-layer-1);
+}
 /* Opaque keeps the original theme surface, including its subtle border. */
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body[data-ds-dark-theme] [data-dsh-desktop='composer'] {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material] body[data-ds-dark-theme] :is([data-dsh-desktop='composer'], [data-session-panel]) {
   --dsh-composer-tint: min(calc(var(--dsh-composer-strength) * 116%), calc(26% + var(--dsh-composer-strength) * 64%));
   --dsh-composer-shine: rgb(255 255 255 / calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-shine, 24%)));
 }
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body [data-dsh-desktop='composer'] {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body :is([data-dsh-desktop='composer'], [data-session-panel]) {
   --dsh-composer-strength: var(--dsh-composer-glass-strength, .5);
   background: var(--dsh-surface-overlay, none), linear-gradient(135deg, rgb(255 255 255 / calc(var(--dsh-composer-strength) * var(--dsh-composer-glass-highlight, 24%))), transparent 55%),
-    color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
-  box-shadow: inset 0 1px 0 var(--dsh-composer-shine), inset 0 0 0 1px var(--dsh-composer-shine), 0 8px 24px rgb(0 0 0 / calc(var(--dsh-composer-strength) * 24%));
+    color-mix(in srgb, var(--dsh-composer-surface) var(--dsh-composer-tint), transparent);
   -webkit-backdrop-filter: blur(var(--dsh-composer-blur)) saturate(var(--dsh-composer-glass-saturation, calc(100% + var(--dsh-composer-strength) * 60%)));
   backdrop-filter: blur(var(--dsh-composer-blur)) saturate(var(--dsh-composer-glass-saturation, calc(100% + var(--dsh-composer-strength) * 60%)));
 }
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='frosted'] body [data-dsh-desktop='composer'] {
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='frosted'] body :is([data-dsh-desktop='composer'], [data-session-panel]) {
   --dsh-composer-strength: var(--dsh-composer-frosted-strength, .5);
-  background: var(--dsh-surface-overlay, none) color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-tint), transparent);
-  box-shadow: none;
+  background: var(--dsh-surface-overlay, none) color-mix(in srgb, var(--dsh-composer-surface) var(--dsh-composer-tint), transparent);
   -webkit-backdrop-filter: blur(var(--dsh-composer-blur));
   backdrop-filter: blur(var(--dsh-composer-blur));
 }
-html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body [data-dsh-desktop='composer'] {
-  background: var(--dsh-surface-overlay, none) color-mix(in srgb, var(--dsw-alias-bg-module-platform) var(--dsh-composer-transparent-tint, 80%), transparent);
-  box-shadow: none;
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='transparent'] body :is([data-dsh-desktop='composer'], [data-session-panel]) {
+  background: var(--dsh-surface-overlay, none) color-mix(in srgb, var(--dsh-composer-surface) var(--dsh-composer-transparent-tint, 80%), transparent);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
+/* The session panel keeps the elevation of its docked or overlay presentation. */
+html:not([data-dsh-ui='vanilla'])[data-dsh-composer-material='glass'] body [data-dsh-desktop='composer'] {
+  box-shadow: inset 0 1px 0 var(--dsh-composer-shine), inset 0 0 0 1px var(--dsh-composer-shine), 0 8px 24px rgb(0 0 0 / calc(var(--dsh-composer-strength) * 24%));
+}
+html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='frosted'], [data-dsh-composer-material='transparent']) body [data-dsh-desktop='composer'] {
+  box-shadow: none;
+}
 /* Keep glass readable in older browsers without backdrop filtering. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='glass'], [data-dsh-composer-material='frosted']) body [data-dsh-desktop='composer'] {
-    background: var(--dsh-surface-overlay, none) var(--dsw-alias-bg-module-platform);
+  html:not([data-dsh-ui='vanilla']):is([data-dsh-composer-material='glass'], [data-dsh-composer-material='frosted']) body :is([data-dsh-desktop='composer'], [data-session-panel]) {
+    background: var(--dsh-surface-overlay, none) var(--dsh-composer-surface);
   }
 }
 
@@ -994,6 +1161,16 @@ html:not([data-dsh-ui='vanilla']) body [role='menu'] [class*='_footer'] {
   border-top: 1px solid var(--dsh-menu-border);
 }
 
+/* The desktop menu occupies the session header's More action. */
+html:not([data-dsh-ui='vanilla']) body [data-slot='conversation.session.header.utilities']:has([data-dsh-header-menu-trigger]) + [data-context-menu-trigger] {
+  display: none;
+}
+html:not([data-dsh-ui='vanilla']) body [data-dsh-header-menu-trigger] {
+  width: 28px;
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* The session header already supplies explicit group dividers. Keep the
    viewport and footer aligned, without drawing another line at their boundary. */
 html:not([data-dsh-ui='vanilla']) body [role='menu'][data-dsh-header-session-id] > :is([class*='_viewport'], [class*='_footer']) {
@@ -1457,6 +1634,38 @@ html body [data-dsh-ghost='layer'] [role='dialog'] {
   to { opacity: 0; translate: 0 5px; scale: .99; }
 }
 
+/* Keep the native animationend signal when the desktop switch suppresses
+   motion. The session panel uses it to detach its closing surface. */
+html:not([data-dsh-ui='vanilla']) body [data-session-panel][data-session-panel-motion] {
+  animation-duration: var(--dsh-session-panel-motion-duration, 160ms);
+}
+html:not([data-dsh-ui='vanilla']) body [data-conversation-content]:has([data-session-panel-moving]) {
+  --dsh-chat-end-reserve-transition: var(--dsh-session-panel-motion-duration, 160ms) cubic-bezier(.4, 0, .2, 1);
+}
+
+/* A panel mounted without a native phase still enters when motion is enabled. */
+html:not([data-dsh-ui='vanilla']) body [data-session-panel]:not([data-session-panel-motion], [data-dsh-ghost]) {
+  transition: opacity var(--dsh-session-panel-motion-duration, 160ms) cubic-bezier(.4, 0, .2, 1),
+    translate var(--dsh-session-panel-motion-duration, 160ms) cubic-bezier(.4, 0, .2, 1);
+}
+@starting-style {
+  html:not([data-dsh-ui='vanilla']) body [data-session-panel]:not([data-session-panel-motion], [data-dsh-ghost]) {
+    opacity: 0;
+    translate: var(--panel-edge, 8px) 0;
+  }
+}
+
+html body [data-dsh-ghost='session-panel'] {
+  display: none;
+}
+html:not([data-dsh-ui='vanilla']) body [data-slot='conversation.chat.aside']:not(:has(> [data-session-panel]:not([data-dsh-ghost]))) > [data-dsh-ghost='session-panel'] {
+  display: block;
+  animation: dsh-desktop-session-panel-out var(--dsh-session-panel-motion-duration, 160ms) cubic-bezier(.4, 0, .2, 1) forwards;
+}
+@keyframes dsh-desktop-session-panel-out {
+  to { opacity: 0; translate: var(--panel-edge, 8px) 0; }
+}
+
 
 @keyframes dsh-desktop-fade-out {
   to {
@@ -1771,6 +1980,9 @@ html:not([data-dsh-ui='vanilla']) body svg[viewBox='0 0 16 16']:has(> path[d^='M
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body {
     --dsh-loading-spin: none;
     --dsh-loading-dash: none;
+    --dsh-conversation-view-motion-duration: 0ms;
+    --dsh-session-tab-motion-duration: 0ms;
+    --dsh-session-panel-motion-duration: 0s;
   }
 
   html:not([data-dsh-ui='vanilla']):not([data-dsh-desktop-animation='on']) body button,
@@ -1833,6 +2045,9 @@ html:not([data-dsh-ui='vanilla']) body svg[viewBox='0 0 16 16']:has(> path[d^='M
 html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body {
   --dsh-loading-spin: none;
   --dsh-loading-dash: none;
+  --dsh-conversation-view-motion-duration: 0ms;
+  --dsh-session-tab-motion-duration: 0ms;
+  --dsh-session-panel-motion-duration: 0s;
 }
 
 html:not([data-dsh-ui='vanilla'])[data-dsh-desktop-animation='off'] body button,
@@ -2945,6 +3160,24 @@ html:not([data-dsh-ui='vanilla']) body .dshTerminal__hint {
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
+}
+
+/* Let the conversation's theme fill or custom image show through Trajectory. */
+html:not([data-dsh-ui='vanilla']) body [data-conversation-composer-overlay]:has([data-trajectory-scroll]),
+html:not([data-dsh-ui='vanilla']) body [data-conversation-composer-overlay]:has([data-trajectory-scroll]) :is(
+  [role='toolbar'],
+  section > [class$='_plot'],
+  :has(> [data-trajectory-scroll]),
+  [data-trajectory-scroll] > table
+) {
+  background-color: transparent;
+}
+
+/* The details panel overlays the records at narrower widths. */
+@media (width > 760px) {
+  html:not([data-dsh-ui='vanilla']) body [data-conversation-composer-overlay] [data-trajectory-scroll] + aside {
+    background-color: transparent;
+  }
 }
 
 /* Each enabled region paints three layers: an opaque neutral canvas, the

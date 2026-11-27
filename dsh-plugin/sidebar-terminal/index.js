@@ -39,8 +39,30 @@ SettingsSchema['~standard'] = { version: 1, vendor: 'dsh-desktop', validate(valu
     : value?.shellPath !== undefined && normalize({ shellPath: value.shellPath }) === undefined ? 'shellPath' : 'layout'
   return resolved ? { value: resolved } : { issues: [{ message: 'Invalid terminal preference: ' + field, path: [field] }] }
 } }
+
+function installShellFallback(controller) {
+  const original = controller.create
+  async function create(agent, request, signal) {
+    try {
+      return await original.call(this, agent, request, signal)
+    } catch (error) {
+      if (request.shellPath === undefined || error?.message !== 'Selected shell is not available in this execution environment') throw error
+      // DSH rejects this selection before spawning and clears the pending launch.
+      // The same terminal ID keeps DSH's close and concurrent-create checks in force.
+      signal.throwIfAborted()
+      const { shellPath, ...automatic } = request
+      return original.call(this, agent, automatic, signal)
+    }
+  }
+  controller.create = create
+  return () => { if (controller.create === create) controller.create = original }
+}
+
 function apply(ctx) {
   ctx.effect(installRuntimeConptyFallback, 'desktop Windows ConPTY compatibility')
+  ctx.inject(['terminalController'], child => child.effect(
+    () => installShellFallback(child.terminalController), 'desktop terminal shell fallback',
+  ))
   ctx.settings.register('desktop-terminal-dock', SettingsSchema)
 }
 export { apply, inject, name, SettingsSchema }

@@ -13,6 +13,16 @@ function plugin() {
   vm.runInNewContext(source, { window, URL })
   return value
 }
+
+function settingsEntries() {
+  const entries = new Map()
+  plugin().apply({ slots: {
+    inject(_, mount) { mount() },
+    register(options, render) { entries.set(options.name, { options, render }); return () => {} },
+  } })
+  return entries
+}
+
 test('client rejects noncanonical authorities and preserves explicit default ports', () => {
   const { validateHost } = plugin()
   for (const text of cases.valid) assert.equal(validateHost(text), '', text)
@@ -69,14 +79,24 @@ test('shared authority corpus agrees with installed upstream canonical check', t
   for (const value of cases.invalid) assert.throws(() => upstream(value), value)
 })
 test('browser settings show the desktop instruction and outside tutorial without desktop controls', () => {
-  let component, row
-  plugin().apply({ slots: { inject(_, fn) { fn() }, register(options, render) { row = options; component = render; return () => {} } } })
+  const { options: row, render: component } = settingsEntries().get('settings.section')
   assert.equal(row.id, 'remote-control'); assert.equal(row.order, 6)
   const tree = JSON.stringify(component())
   assert.match(tree, /请在电脑桌面应用中修改远程控制设置/)
   assert.match(tree, /Cloudflare Tunnel/)
   assert.doesNotMatch(tree, /"tag":"(?:input|button|select)"/)
   assert.doesNotMatch(tree, /待实现|暂不支持外网访问/)
+})
+
+test('the native remote connection nav item is hidden by id independently of desktop appearance', async () => {
+  const { options, render } = settingsEntries().get('settings.section.icon')
+  assert.equal(options.id, 'remote-connection')
+  assert.equal(render().props['data-dsh-hide-remote-connection'], '')
+  const { apply } = await import('./ui-remote/index.js')
+  const injections = []
+  apply({ on(event, listener) { assert.equal(event, 'webserver/index-inject'); listener(injections) } })
+  assert.equal(injections[0].kind, 'style')
+  assert.match(injections[0].text, /nav button:has\(\[data-dsh-hide-remote-connection\]\)\s*\{\s*display: none;/)
 })
 test('functional remote and mobile resources ship in the packaged overlay', () => {
   const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))

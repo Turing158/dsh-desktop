@@ -186,7 +186,7 @@
   // Chrome discovery must stop at those boundaries, while still admitting menus
   // and dialogs mounted inside them (not every plugin uses a body portal).
   var CONTENT_ROOTS = '[data-conversation-region="chat"], [data-chat-flow], [data-code-block-content], [data-textpreview-plain], [data-document-markdown], .xterm-screen'
-  var CONTENT_SURFACES = '[role="menu"], [role="dialog"], [role="alertdialog"], [role="presentation"], [role="status"], [role="tooltip"], [aria-modal="true"], [data-sidebar-right-panel], [data-sidebar-right-float-host], [data-trigger-menu], [data-testid="todo-panel"], [data-goal-bar], [style*="position: fixed"], [style*="position:fixed"]'
+  var CONTENT_SURFACES = '[role="menu"], [role="dialog"], [role="alertdialog"], [role="presentation"], [role="status"], [role="tooltip"], [aria-modal="true"], [data-sidebar-right-panel], [data-sidebar-right-float-host], [data-trigger-menu], [data-testid="todo-panel"], [data-goal-bar], [data-session-panel], [style*="position: fixed"], [style*="position:fixed"]'
   var contentSurfaces = new Set()
 
   function rememberContentSurfaces(node) {
@@ -2342,6 +2342,8 @@
   /** The ghost value for a full-surface dialog layer. */
   var GHOST_LAYER = 'layer'
 
+  var GHOST_SESSION_PANEL = 'session-panel'
+
   /**
    * The ghost value for a collapse body.
    *
@@ -2516,6 +2518,85 @@
       attributeFilter: [MODE_ATTRIBUTE, 'data-sidebar-collapsed', 'data-rightbar-collapsed', 'data-sidebar-right-open'] })
   }
 
+  /** Keep the native tabs as the source of selection and view persistence. */
+  function watchConversationViewToggle() {
+    if (typeof MutationObserver !== 'function' || window.__dshConversationViewToggle) return
+    window.__dshConversationViewToggle = true
+    var selector = '[data-conversation-tabs]'
+    var buttonSelector = ':scope > .dshConversationViewToggle'
+    var tabSelector = ':scope > button[role="tab"]'
+
+    function sync(list) {
+      var toggle = list.querySelector(buttonSelector)
+      var tabs = Array.from(list.querySelectorAll(tabSelector))
+      var chat = tabs.find(function (tab) { return /^(对话|会话|Chat)$/.test(tab.textContent.trim()) })
+      var trace = tabs.find(function (tab) { return /^(轨迹|Trajectory)$/.test(tab.textContent.trim()) })
+      var selected = tabs.find(function (tab) { return tab.getAttribute('aria-selected') === 'true' })
+      if (isVanilla() || tabs.length !== 2 || !chat || !trace || !selected) {
+        if (toggle) {
+          list.setAttribute('role', 'tablist')
+          toggle.remove()
+        }
+        return
+      }
+
+      if (!toggle) {
+        // The host can load the DOM tier with the stylesheet disabled.
+        if (getComputedStyle(list).getPropertyValue('--dsh-conversation-view-toggle').trim() !== '1') return
+        toggle = document.createElement('button')
+        toggle.type = 'button'
+        for (var state of ['current', 'next']) {
+          var label = document.createElement('span')
+          label.dataset.viewLabel = state
+          label.setAttribute('aria-hidden', 'true')
+          toggle.appendChild(label)
+        }
+        toggle.addEventListener('click', function () {
+          if (!isVanilla()) list.querySelector(tabSelector + '[aria-selected="false"]')?.click()
+        })
+        list.removeAttribute('role')
+        list.prepend(toggle)
+      }
+
+      // Use the selected tab's native typography, colour and underline.
+      var toggleClasses = ('dshConversationViewToggle ' + selected.className).trim()
+      if (toggle.className !== toggleClasses) toggle.className = toggleClasses
+
+      var chatLabel = chat.textContent.trim().replace(/^对话$/, '会话')
+      var traceLabel = trace.textContent.trim()
+      var current = selected === chat ? chatLabel : traceLabel
+      var next = selected === chat ? traceLabel : chatLabel
+      if (toggle.firstChild.textContent !== current) toggle.firstChild.textContent = current
+      if (toggle.lastChild.textContent !== next) toggle.lastChild.textContent = next
+      var name = t('当前视图：{current}。切换到{next}', { current: current, next: next })
+      if (toggle.getAttribute('aria-label') !== name) toggle.setAttribute('aria-label', name)
+    }
+
+    function syncExisting() { document.querySelectorAll(selector).forEach(sync) }
+
+    var observer = new MutationObserver(function (records) {
+      var changed = new Set()
+      records.forEach(function (record) {
+        if (record.attributeName === MODE_ATTRIBUTE) { syncExisting(); return }
+        var target = record.target.nodeType === 1 ? record.target : record.target.parentElement
+        var list = target?.closest(selector)
+        if (list) { changed.add(list); return }
+        if (record.type !== 'childList' || target?.closest(CONTENT_ROOTS)) return
+        record.addedNodes.forEach(function (node) {
+          if (node.nodeType !== 1 || node.matches(CONTENT_ROOTS)) return
+          if (node.matches(selector)) changed.add(node)
+          else node.querySelectorAll(selector).forEach(function (found) { changed.add(found) })
+        })
+      })
+      changed.forEach(function (list) { if (list.isConnected) sync(list) })
+    })
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true,
+      attributes: true, attributeFilter: ['aria-selected'] })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
+    document.addEventListener('dsh-desktop:locale', syncExisting)
+    syncExisting()
+  }
+
   /** Animate navigation identities, never transcript or terminal output updates.
    * Slots and ARIA selections also cover keyboard/programmatic navigation. Keep
    * React's real nodes in place so drafts, scroll, focus and terminals survive.
@@ -2600,7 +2681,7 @@
         var active = nav.querySelector('[aria-current="true"]')
         if (active) present(dialog.querySelector('[class*="_options"]'), selectionIdentity(active, nav, 'button, a, [role="tab"]'), 'x', nav)
       })
-      document.querySelectorAll('[role="tablist"]').forEach(function (list) {
+      document.querySelectorAll('[role="tablist"], [data-conversation-tabs]').forEach(function (list) {
         // Sidebar tabs and disclosures update in place without content motion.
         if (list.closest('[data-sidebar-right-panel], [data-dsh-terminal-dock]')) return
         var selected = list.querySelector('[role="tab"][aria-selected="true"]')
@@ -2647,7 +2728,7 @@
     document.addEventListener('beforeinput', cancelAll, true)
     document.addEventListener('input', cancelAll, true)
     window.addEventListener('blur', function () { composing = false; cancelAll() })
-    var navigationNodes = '[data-conversation-content], [data-slot="main"], [role="dialog"], [role="menu"], [role="tooltip"], [role="tablist"], [role="tabpanel"], [data-dockkit-content], [data-sidebar-right-panel]'
+    var navigationNodes = '[data-conversation-content], [data-conversation-tabs], [data-slot="main"], [role="dialog"], [role="menu"], [role="tooltip"], [role="tablist"], [role="tabpanel"], [data-dockkit-content], [data-sidebar-right-panel]'
     var observer = new MutationObserver(function (records) {
       // Text streaming and xterm paints do not require a document-wide scan.
       var relevant = records.some(function (record) {
@@ -2694,6 +2775,10 @@
    */
   function ghostKindFor(node) {
     if (node.getAttribute(GHOST_ATTRIBUTE)) return null
+    if (node.hasAttribute('data-session-panel')) {
+      // The native renderer retains its animated exits through animationend.
+      return node.hasAttribute('data-session-panel-motion') ? null : GHOST_SESSION_PANEL
+    }
     if (['reveal-submenu', 'copy-submenu'].includes(node.getAttribute('data-dsh-desktop'))) return null
     // Composer command lists and anchored statistics dialogs are not full-screen
     // dialog layers. Preserve their own coordinates for the menu-style exit.
@@ -2760,6 +2845,8 @@
     // back, and re-hosting the fade elsewhere would paint it in the wrong place.
     // `isConnected` is the DOM's own answer, the same one the submenu cleanup uses.
     if (typeof parent.isConnected === 'boolean' && !parent.isConnected) return
+    if (kind === GHOST_SESSION_PANEL &&
+        (!parent.querySelector(':scope > [data-session-panel-probe]') || parent.querySelector(':scope > [data-session-panel]'))) return
     // Dock tabs and document previews already manage their presentation. Do not
     // deep-clone their removed trees just to test whether they were a dialog.
     if (isRemotePage() && typeof parent.closest === 'function' &&
@@ -2817,9 +2904,11 @@
     }
     // Child animations bubble: a card finishing must not prematurely remove
     // the entire closing group (which can contain hundreds of cards).
-    clone.addEventListener('animationend', function (event) {
+    function end(event) {
       if (event.target === clone) retire()
-    })
+    }
+    clone.addEventListener('animationend', end)
+    if (kind === GHOST_SESSION_PANEL) clone.addEventListener('animationcancel', end)
     setTimeout(retire, GHOST_MAX_LIFETIME_MS)
   }
 
@@ -5016,6 +5105,7 @@
   watchRemovalGhosts()
   watchWorkspaceMotion()
   watchSidebarDisclosure()
+  watchConversationViewToggle()
   watchViewMotion()
   watchModelDisclosures()
   installFileReferenceSelection()

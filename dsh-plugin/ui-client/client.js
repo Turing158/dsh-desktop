@@ -283,19 +283,19 @@ var React = require('react')
     ]
     function reasoningControl(section) { return section?.reasoningControl === 'slider' ? 'slider' : 'select' }
 
+    function selectedSessionId(list) {
+      if (list.current != null) return list.current
+      return Object.keys(list.byId || {}).find(function (id) { return (list.byId[id].retainedBy?.mainView || 0) > 0 })
+    }
+
     // Replace the root menu's effort row with an inline panel. Read and write
     // through the same session directory as the original model picker.
     function installReasoningMenu(store, ctx) {
       if (typeof MutationObserver === 'undefined') return function () {}
       var entry = null, disposed = false, frame = 0, directory = null, offDirectory = function () {}
       var triggerSelector = '[data-slot="conversation.input.model"] button[aria-expanded="true"][aria-controls]'
-      function activeSessionId() {
-        var list = ctx.sessions.list.getSnapshot()
-        if (list.current != null) return list.current
-        return Object.keys(list.byId || {}).find(function (id) { return (list.byId[id].retainedBy?.mainView || 0) > 0 })
-      }
       function modelState() {
-        var sessionId = activeSessionId()
+        var sessionId = selectedSessionId(ctx.sessions.list.getSnapshot())
         if (!sessionId || ctx.sessions.subagentAddress?.(sessionId) !== undefined) return null
         var owner = ctx.modelDirectories.directoryFor(sessionId)
         var state = owner.store.getSnapshot(), selection = state.current
@@ -1429,6 +1429,372 @@ var React = require('react')
       })
     }
 
+    /** Keep all conversation views directly in the desktop tab strip. */
+    function bindConversationTabs(ctx) {
+      if (typeof ctx.slots.entries !== 'function' || typeof ctx.slots.subscribe !== 'function') return
+      var slot = 'conversation.session.header'
+      var actionsSlot = slot + '.views.actions'
+      ctx.slots.inject(slot, function () {
+        var entry, restore
+        var enabled = true
+        var noUnpinnedTabs = []
+        function desktopSource(source, value) {
+          return {
+            getSnapshot: () => enabled && document.documentElement.getAttribute(MODE_ATTRIBUTE) !== VANILLA
+              ? value : source.getSnapshot(),
+            subscribe: function (listener) {
+              var unsubscribe = source.subscribe(listener)
+              document.addEventListener(CHANGE_EVENT, listener)
+              return function () { document.removeEventListener(CHANGE_EVENT, listener); unsubscribe() }
+            },
+          }
+        }
+        function sync() {
+          var next = ctx.slots.entries(slot).find(function (candidate) {
+            return candidate.children?.[actionsSlot] && typeof candidate.inject === 'function'
+          })
+          if (next === entry) return
+          restore?.()
+          entry = next
+          restore = undefined
+          if (!next || !Object.getOwnPropertyDescriptor(next, 'inject')?.writable) return
+          // Keep the native header and its child slots. Disabling view actions
+          // makes the native header render all pinned views directly as tabs.
+          var inject = next.inject
+          function injectTabs(...args) {
+            var props = inject(...args)
+            if (!props.hooks?.entryActions || !props.hooks?.entryPins) return props
+            return Object.assign({}, props, { hooks: Object.assign({}, props.hooks, {
+              entryActions: desktopSource(props.hooks.entryActions, false),
+              entryPins: desktopSource(props.hooks.entryPins, noUnpinnedTabs),
+            }) })
+          }
+          next.inject = injectTabs
+          restore = function () { if (next.inject === injectTabs) next.inject = inject }
+        }
+        var unsubscribe = ctx.slots.subscribe(slot, sync)
+        sync()
+        return function () {
+          unsubscribe()
+          restore?.()
+          enabled = false
+          announceUiMode(document.documentElement.getAttribute(MODE_ATTRIBUTE))
+        }
+      })
+    }
+
+    /** Keep the split conversation header resident while its session slots rebind. */
+    function bindResidentConversationHeader(ctx) {
+      const host = ctx.slots.hostFace?.()
+      if (!host?.factoryOf || !host.scope) return
+      const native = { ...host }
+      const sessionHeader = 'conversation.session.header'
+      const components = {
+        'main.conversation': 'ConversationRoot',
+        'conversation.header': 'ConversationHeader',
+        [sessionHeader]: 'ConversationSessionHeader',
+      }
+      const names = Object.keys(components)
+      const residentSpecs = new WeakMap(), residentEntries = new WeakMap(), originalEntries = new WeakMap()
+      const hooks = new WeakMap()
+      const absent = { subscribe: () => () => {}, getSnapshot: () => undefined }
+      const identity = value => value
+
+      function hook(source = absent) {
+        if (!hooks.has(source)) {
+          const subscribe = listener => source.subscribe(listener)
+          const snapshot = () => source.getSnapshot()
+          hooks.set(source, (select = identity) => React.useSyncExternalStore(subscribe, () => select(snapshot())))
+        }
+        return hooks.get(source)
+      }
+
+      function resident(name) {
+        if (!names.includes(name) || document.documentElement.getAttribute(MODE_ATTRIBUTE) === VANILLA) return false
+        // The earlier monolithic layout does not have a separately scoped body.
+        return native.factoryOf('conversation.content')?.scope === 'session-maybe' && names.every(slot => {
+          const entry = native.entriesOfSlot(slot)[0]
+          const strict = slot === sessionHeader
+          return native.specOf(slot)?.scope === (strict ? 'session' : 'session-maybe') &&
+            entry?.component.name === components[slot] && (strict ? entry.store && entry.inject : !entry.store && !entry.inject)
+        })
+      }
+
+      function residentEntry(entry) {
+        if (residentEntries.has(entry)) return residentEntries.get(entry)
+        const Component = entry.component
+        function ConversationHeaderWhileLoading(props) {
+          const hasHistory = props.useSessions(list => list.byId[props.sessionId]?.blank === false)
+          function useHeaderSession(select) {
+            const session = props.useSession(identity)
+            // The live binding starts blank until history arrives. Opening an
+            // existing conversation should keep the view row in place.
+            return select(hasHistory && session?.blank ? { ...session, blank: false } : session)
+          }
+          return h(Component, { ...props, useSession: useHeaderSession })
+        }
+        const Header = entry.children?.[sessionHeader] ? ConversationHeaderWhileLoading : Component
+        const wrapped = { ...entry, store: undefined, inject: undefined, component: function ResidentHeaderEntry(props) {
+          hook(native.scopeRevision)()
+          const binding = hook(native.scope('session')?.current)()
+          const scoped = React.useMemo(() => {
+            if (!binding) return {}
+            const { key, hooks: sources } = binding
+            const sourceProps = { sessionId: key, useSession: hook(sources.session), useConversation: hook(sources.conversation) }
+            if (!entry.store || key === undefined) return sourceProps
+            const store = native.storeOf(entry, binding)
+            const { hooks: injectedSources, ...injected } = entry.inject(key, store.actions)
+            // Rebind every observable declared by the native header. Newer DSH
+            // adds its view pin and action sources beside the view list.
+            const injectedHooks = Object.fromEntries(Object.entries(injectedSources || {}).map(([name, source]) =>
+              ['use' + name[0].toUpperCase() + name.slice(1), hook(source)]))
+            return { ...sourceProps, useStore: hook(store), actions: store.actions, ...injected, ...injectedHooks }
+          }, [binding])
+          if (entry.store && binding?.key === undefined) return null
+          return h(Header, { ...props, ...scoped })
+        } }
+        residentEntries.set(entry, wrapped)
+        originalEntries.set(wrapped, entry)
+        return wrapped
+      }
+
+      ctx.effect(function () {
+        const overrides = {
+          specOf(name) {
+            const spec = native.specOf(name)
+            if (!resident(name)) return spec
+            if (!residentSpecs.has(spec)) residentSpecs.set(spec, { ...spec, scope: 'root' })
+            return residentSpecs.get(spec)
+          },
+          entriesOfSlot(name) {
+            const entries = native.entriesOfSlot(name)
+            return resident(name) ? [residentEntry(entries[0]), ...entries.slice(1)] : entries
+          },
+          isLive: entry => native.isLive(originalEntries.get(entry) || entry),
+          reportEntryError: (name, entry, ...args) => native.reportEntryError(name, originalEntries.get(entry) || entry, ...args),
+          subscribe(name, listener) {
+            const unsubscribe = native.subscribe(name, listener)
+            if (!names.includes(name)) return unsubscribe
+            document.addEventListener(CHANGE_EVENT, listener)
+            return () => { document.removeEventListener(CHANGE_EVENT, listener); unsubscribe() }
+          },
+          getVersion: name => names.includes(name) ? native.getVersion(name) * 2 + Number(resident(name)) : native.getVersion(name),
+        }
+        Object.assign(host, overrides)
+        return () => {
+          for (const name of Object.keys(overrides)) if (host[name] === overrides[name]) host[name] = native[name]
+          announceUiMode(document.documentElement.getAttribute(MODE_ATTRIBUTE))
+        }
+      })
+    }
+
+    /** The shell owns the open tabs across conversation navigation. */
+    function bindSessionTabs(ctx) {
+      if (!Menu) return
+      ctx.inject(['sessions', 'uiWorkspace', 'workspaces'], function (child) {
+        const { createPortal } = require('react-dom')
+        const list = child.sessions.list
+        const workspaces = child.workspaces.list
+        const main = '[data-slot="main.conversation"]'
+        const views = '[data-conversation-tabs]'
+        const leading = '[data-conversation-header-leading]'
+        const anchors = [main, views, leading].join(', ')
+        const transcript = '[data-conversation-content], [data-dsh-ghost]'
+        const rowSelector = '[role="treeitem"]:is([data-row-key^="session:"], [class*="_sessionRow"], [class*="_searchResultRow"])'
+
+        function TabsMenu({ menu, count, dismiss, select }) {
+          React.useEffect(() => {
+            // The portal is measured and revealed after its first render.
+            const frame = requestAnimationFrame(() => {
+              document.querySelector('.dshSessionTabs__menu:not([data-dsh-ghost]) [role="menuitem"]')?.focus({ preventScroll: true })
+            })
+            return () => cancelAnimationFrame(frame)
+          }, [menu])
+          return h(Menu, {
+            open: true, anchor: null, portal: true, compact: true, autoFocus: true,
+            listClassName: 'dshSessionTabs__menu', onClose: dismiss, onSelect: select,
+            getAnchorRect: () => menu.point,
+            items: [
+              { id: 'one', label: t('关闭该标签') },
+              { id: 'others', label: t('关闭其他标签'), disabled: count === 1 },
+              { id: 'all', label: t('关闭所有标签') },
+            ],
+          })
+        }
+
+        function updateScrollEdges(track) {
+          const max = track.scrollWidth - track.clientWidth
+          const left = max > 0 ? track.scrollLeft + (getComputedStyle(track).direction === 'rtl' ? max : 0) : 0
+          track.toggleAttribute('data-overflow-left', left > 1)
+          track.toggleAttribute('data-overflow-right', max - left > 1)
+        }
+
+        function SessionTabs() {
+          useLocale(React)
+          const [seat, setSeat] = React.useState(null)
+          const [active, setActive] = React.useState(null)
+          const [tabs, setTabs] = React.useState([])
+          const [menu, setMenu] = React.useState(null)
+          const strip = React.useRef(null)
+
+          React.useLayoutEffect(function () {
+            if (getComputedStyle(document.body).getPropertyValue('--dsh-session-tabs').trim() !== '1') return
+            let host = null, findHost = true, frame = 0, lastActive, clicked, initialSession
+            function sync() {
+              frame = 0
+              if (document.documentElement.getAttribute(MODE_ATTRIBUTE) === VANILLA) {
+                host = null
+                findHost = true
+                clicked = undefined
+                setSeat(null)
+                setMenu(null)
+                return
+              }
+              if (findHost || !host?.isConnected) {
+                const conversation = document.querySelector(main)
+                const nextHost = conversation?.querySelector(views) || conversation?.querySelector(leading)?.closest('header') || null
+                if (host !== nextHost) setMenu(null)
+                host = nextHost
+                findHost = false
+                setSeat(host)
+              }
+              const snapshot = list.getSnapshot()
+              const current = selectedSessionId(snapshot)
+              const summary = snapshot.byId[current]
+              const archived = workspaces.getSnapshot().archivedSessionIds || []
+              // Opening the already-selected sidebar row can reopen a closed tab.
+              const explicit = current && clicked === current
+              // Skip the untouched welcome session until it becomes a conversation.
+              if (initialSession === undefined && summary) initialSession = summary.blank ? current : null
+              const opened = summary && (explicit || current !== initialSession || !summary.blank || host?.closest('[data-phase="active"]'))
+              const add = opened && !archived.includes(current) && (current !== lastActive || explicit)
+              clicked = undefined
+              if (opened) initialSession = null
+              if (!current || opened) lastActive = current
+              setActive(current)
+              setTabs(previous => {
+                const next = previous.flatMap(tab => {
+                  const row = snapshot.byId[tab.id]
+                  if (archived.includes(tab.id) || (!row && snapshot.phase === 'ready')) return []
+                  const title = row?.title || row?.displayTitle || tab.title
+                  return [title === tab.title ? tab : { ...tab, title }]
+                })
+                if (add && !next.some(tab => tab.id === current)) {
+                  next.push({ id: current, title: summary.title || summary.displayTitle || current })
+                }
+                return next.length === previous.length && next.every((tab, i) => tab === previous[i]) ? previous : next
+              })
+            }
+            function schedule() { if (!frame) frame = requestAnimationFrame(sync) }
+            function onRowClick(event) {
+              const row = event.target.closest?.(rowSelector)
+              if (!row || event.button !== 0 || row.closest('[data-dsh-ghost]')) return
+              if (event.target.closest('button, [role="button"], [role="menuitem"], a')?.closest(rowSelector) === row) return
+              clicked = row.getAttribute('data-row-key')?.slice('session:'.length)
+                || (row.getAttribute('aria-selected') === 'true' ? lastActive : undefined)
+              schedule()
+            }
+            const observer = new MutationObserver(records => {
+              if ((host && !host.isConnected) || records.some(record => record.type === 'attributes' ||
+                (!record.target.closest?.(transcript) && Array.from(record.addedNodes).some(node =>
+                  node.nodeType === 1 && !node.matches(transcript) && (node.matches(anchors) || node.querySelector(anchors)))))) {
+                findHost = true
+                schedule()
+              }
+            })
+            observer.observe(document.body, { childList: true, subtree: true })
+            observer.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
+            document.addEventListener('click', onRowClick, true)
+            const offList = list.subscribe(schedule)
+            const offWorkspaces = workspaces.subscribe(schedule)
+            sync()
+            return function () {
+              offList()
+              offWorkspaces()
+              observer.disconnect()
+              document.removeEventListener('click', onRowClick, true)
+              cancelAnimationFrame(frame)
+            }
+          }, [])
+
+          function revealCurrent() {
+            const track = strip.current
+            const current = track?.querySelector('[aria-current="true"]')
+            if (!current) return
+            const viewport = track.getBoundingClientRect(), tab = current.getBoundingClientRect()
+            if (tab.right > viewport.right) track.scrollLeft += tab.right - viewport.right
+            else if (tab.left < viewport.left) track.scrollLeft += tab.left - viewport.left
+          }
+          React.useLayoutEffect(revealCurrent, [seat, active, tabs])
+          React.useLayoutEffect(() => {
+            const track = strip.current
+            if (!track) return
+            const update = () => updateScrollEdges(track)
+            update()
+            if (typeof ResizeObserver !== 'function') return
+            const sizes = new ResizeObserver(update)
+            sizes.observe(track)
+            for (const tab of track.children) sizes.observe(tab)
+            return () => sizes.disconnect()
+          }, [seat, tabs])
+
+          if (!seat || tabs.length === 0) return null
+          function openMenu(event, id, keyboard) {
+            event.preventDefault()
+            event.stopPropagation()
+            const button = event.currentTarget
+            const point = keyboard ? button.getBoundingClientRect() : { left: event.clientX, bottom: event.clientY }
+            setMenu({ id, button, point: { left: point.left, right: point.left, top: point.bottom, bottom: point.bottom } })
+          }
+          function dismissMenu() {
+            if (document.activeElement?.closest('.dshSessionTabs__menu')) menu.button.focus({ preventScroll: true })
+            setMenu(null)
+          }
+          function closeTabs(action) {
+            const buttons = Array.from(strip.current.children)
+            const index = buttons.indexOf(menu.button)
+            const nextFocus = action === 'others' ? menu.button : action === 'one' ? buttons[index + 1] || buttons[index - 1] : null
+            setTabs(previous => previous.filter(tab => action === 'others' ? tab.id === menu.id : action === 'one' && tab.id !== menu.id))
+            setMenu(null)
+            const focus = nextFocus || seat.querySelector('.dshConversationViewToggle, button[aria-selected="true"]')
+            focus?.focus()
+          }
+          const bar = h('div', {
+            className: 'dshSessionTabs', role: 'group', 'aria-label': t('会话标签'), ref: strip,
+            onScroll: event => updateScrollEdges(event.currentTarget),
+            onWheel: event => {
+              const track = event.currentTarget
+              if (!event.deltaX && !event.ctrlKey && !event.shiftKey && event.deltaY && track.scrollWidth > track.clientWidth) {
+                track.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? track.clientWidth : 1)
+              }
+            },
+            onTransitionEnd: event => { if (event.propertyName === 'min-width') revealCurrent() },
+          }, tabs.map(tab => {
+            const icon = h('svg', { className: 'dshSessionTabs__icon', width: 15, height: 15, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
+              h('path', { d: 'M3.5 2.5H12A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H7l-3.5 3v-3A1.5 1.5 0 0 1 2 9V4a1.5 1.5 0 0 1 1.5-1.5ZM5 5.5h5.5M5 8h4',
+                fill: 'none', stroke: 'currentColor', strokeWidth: 1.25, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+            return h('button', {
+              key: tab.id, className: 'dshSessionTabs__tab', type: 'button', title: tab.title,
+              'data-dsh-session-tab': tab.id,
+              'aria-label': tab.title, 'aria-current': tab.id === active ? 'true' : undefined,
+              'aria-haspopup': 'menu', 'aria-expanded': menu?.id === tab.id,
+              onClick: () => { if (tab.id !== active) child.uiWorkspace.openSession(tab.id) },
+              onContextMenu: event => openMenu(event, tab.id, event.clientX === 0 && event.clientY === 0),
+              onKeyDown: event => {
+                if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event, tab.id, true)
+              },
+            }, h('span', { className: 'dshSessionTabs__title', 'aria-hidden': 'true' }, tab.title), icon)
+          }))
+          return h(React.Fragment, null, createPortal(bar, seat), menu && tabs.some(tab => tab.id === menu.id) &&
+            h(TabsMenu, { menu, count: tabs.length, dismiss: dismissMenu, select: closeTabs }))
+        }
+
+        child.slots.inject('shell.overlay', function () {
+          return child.slots.register({ name: 'shell.overlay', id: 'desktop-session-tabs' }, SessionTabs)
+        })
+      })
+    }
+
     /** Keep the account launcher intact and add a separate settings action beside it. */
     function bindSettingsLauncher(ctx) {
       var IconSettings = primitives && (primitives.IconSettingsOutline16 || primitives.IconSettingsOutlineRegular || primitives.IconSettingsOutlineMedium)
@@ -1627,6 +1993,9 @@ var React = require('react')
     function apply(ctx) {
       bindSettingsLauncher(ctx)
       bindTranscriptViewport(ctx)
+      bindConversationTabs(ctx)
+      bindResidentConversationHeader(ctx)
+      bindSessionTabs(ctx)
       if (Tooltip) {
         var TriggerMenuTooltips = createTriggerMenuTooltips()
         ctx.slots.inject('shell.overlay', function () {

@@ -9,6 +9,7 @@ import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { offlineModelPatch } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -37,6 +38,7 @@ await writeFile(join(probe, 'client.js'), `window.__ModuleLoader__.load({
 })\n`)
 const originalPatch = await readFile('dsh-plugin/desktop-notify.patch.yml', 'utf8')
 const patch = originalPatch.replace(/name: \.\/([^\s]+)/g, (_, file) => 'name: ' + pathToFileURL(resolve('dsh-plugin', file)).href)
+  + offlineModelPatch
   + '\n- insert:\n    - id: desktop-settings-smoke\n      name: ' + pathToFileURL(join(probe, 'index.js')).href + '\n'
 const patchPath = join(root, 'desktop.patch.yml')
 await writeFile(patchPath, patch)
@@ -48,7 +50,7 @@ async function start() {
   output = ''
   child = spawn(process.execPath, [dshBin, 'web', '--patch', patchPath, '--no-open', '--port', '0'], {
     cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin },
+    env: { ...process.env, DSH_HOME: home, DSH_DESKTOP_DSH_BIN: dshBin, DSH_UI_SMOKE_KEY: 'offline-fixture' },
   })
   child.stdout.on('data', data => { output += data })
   child.stderr.on('data', data => { output += data })
@@ -106,6 +108,31 @@ try {
   const shells=await page.evaluate(()=>{const c=window.__SETTINGS_SMOKE__;return c.webTerminals.launchShells(c.sidebarRight.mounted.getSnapshot())})
   assert.ok(shells.shells.length)
   const chosen=shells.shells[0].path
+  const staleShell=join(root,'removed-shell.exe')
+  await page.evaluate(async path=>{
+    await window.__SETTINGS_SMOKE__.configForms.get('desktop-terminal-dock').set('shellPath',path)
+    window.__DSH_UPSTREAM_DOCK_SMOKE__.dock.open()
+  },staleShell)
+  const recovered=await (await page.waitForFunction(()=>{
+    const {dock,registry}=window.__DSH_UPSTREAM_DOCK_SMOKE__
+    const tab=dock.getSnapshot().tabs[0]
+    const model=tab&&registry.view(tab)?.model
+    const state=model?.state.getSnapshot()
+    return state?.writable||state?.phase==='failed' ? {state,requested:model.shellPath} : null
+  })).jsonValue()
+  assert.equal(recovered.requested,staleShell)
+  assert.equal(recovered.state.writable,true,recovered.state.error)
+  assert.equal(recovered.state.info.shell.path,chosen)
+  await page.evaluate(()=>{
+    const {dock,registry}=window.__DSH_UPSTREAM_DOCK_SMOKE__
+    registry.view(dock.getSnapshot().tabs[0]).model.write('echo DSH_SHELL_FALLBACK_OK\r')
+  })
+  await page.waitForFunction(()=>(document.querySelector('[data-dsh-terminal-dock] .xterm-rows')?.textContent||'').split('DSH_SHELL_FALLBACK_OK').length>=3)
+  await page.evaluate(()=>{
+    const {dock}=window.__DSH_UPSTREAM_DOCK_SMOKE__
+    dock.close(dock.getSnapshot().tabs[0].contentId)
+  })
+  console.log('PASS: a saved unavailable shell starts the default shell in the same dock tab')
   await page.locator('button[aria-haspopup="dialog"]').first().evaluate(e=>e.click())
   await page.getByRole('button',{name:'默认终端类型',exact:true}).click()
   await page.getByText(shells.shells[0].name,{exact:true}).last().click()
@@ -195,7 +222,7 @@ try {
   await page.evaluate(()=>{const d=window.__DSH_UPSTREAM_DOCK_SMOKE__.dock;for(const t of d.getSnapshot().tabs)d.close(t.contentId);const c=window.__SETTINGS_SMOKE__;for(const t of c.sidebarRight.openTabs.getSnapshot())if(t.kind==='terminal')c.sidebarRight.close(t.tabId)})
   assert.deepEqual(pageErrors,[])
   console.log('PASS: persisted shell and position reload with exactly two settings rows')
-  report.checks={settings:true,shell:true,titles:true,closeLastAndReopen:true,position:true,reload:true,noPageErrors:true}
+  report.checks={settings:true,shell:true,shellFallback:true,titles:true,closeLastAndReopen:true,position:true,reload:true,noPageErrors:true}
 } catch (error) {
   report.error = error.stack
   throw error

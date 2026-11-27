@@ -3046,9 +3046,8 @@ var React = require('react')
       })
     }
 
-    // Mirror the sidebar's live slot entries, including their injected services,
-    // into the existing header menu. The original export/feedback component keeps
-    // owning its trigger, menu, dialogs and callbacks.
+    // Compose the desktop header menu from sidebar actions and the native
+    // download and feedback handlers in either DSH menu contract.
     function bindHeaderSessionMenu(ctx) {
       if (typeof ctx.slots.entriesOfSlot !== 'function' || typeof ctx.slots.spec !== 'function') return
       var headerSlot = 'conversation.session.header.utilities'
@@ -3057,11 +3056,10 @@ var React = require('react')
       var iconSlot = 'desktop.session.header.menu.icon'
       ctx.slots.inject(sourceSlot, function () {
         return ctx.slots.inject(headerSlot, function () {
-          var original, removeHeader, removeItems = [], disposed = false
+          var original, registry, mounted, removeHeader, removeItems = [], disposed = false, syncing = false
           function clear() {
             removeItems.splice(0).reverse().forEach(function (dispose) { dispose() })
             if (removeHeader) { var dispose = removeHeader; removeHeader = undefined; dispose() }
-            original = undefined
           }
           function syncItems() {
             if (!removeHeader) return
@@ -3078,27 +3076,55 @@ var React = require('react')
             })
           }
           function syncHeader() {
-            if (disposed) return
+            if (disposed || syncing) return
             var next = ctx.slots.entries(headerSlot).find(function (entry) {
-              return entry.options.id === 'session-log-download' && entry.component !== HeaderSessionMenu
+              return entry.options.id === 'session-log-download' && typeof entry.component === 'function' && entry.component !== HeaderSessionMenu
             })
-            if (document.documentElement.getAttribute(MODE_ATTRIBUTE) === VANILLA) next = undefined
-            if (original === next) return
-            clear()
-            if (!next || typeof next.component !== 'function') return
-            original = next
-            removeHeader = ctx.slots.register(Object.assign({}, next.options, {
-              name: headerSlot, priority: (next.options.priority || 0) - 1,
-              inject: next.inject, locale: next.locale, store: next.store,
-              children: Object.assign({ [mirrorSlot]: ctx.slots.spec(sourceSlot) }, ctx.slots.spec('contextMenu.icon')
-                ? { [iconSlot]: ctx.slots.spec('contextMenu.icon') } : {}),
-            }), HeaderSessionMenu)
-            syncItems()
+            var platform = registry?.resolve && registry.registeredKinds?.getSnapshot().includes('sessionHeader') ? registry : undefined
+            var target = readUiMode() === VANILLA ? undefined : next || platform
+            if (target === mounted) return
+            syncing = true
+            try {
+              clear()
+              mounted = target
+              original = next
+              if (!target) return
+              var children = { [mirrorSlot]: ctx.slots.spec(sourceSlot) }
+              var icons = ctx.slots.spec('contextMenu.icon')
+              if (icons) children[iconSlot] = icons
+              removeHeader = next ? ctx.slots.register(Object.assign({}, next.options, {
+                name: headerSlot, priority: (next.options.priority || 0) - 1,
+                inject: next.inject, locale: next.locale, store: next.store, children: children,
+              }), HeaderSessionMenu) : ctx.slots.register({ name: headerSlot, id: 'desktop-session-menu', children: children }, ModernHeaderSessionMenu)
+              syncItems()
+            } finally { syncing = false }
           }
           function HeaderSessionMenu(props) {
             useLocale(React)
             var registry = ctx.get('contextMenus')
-            return registry?.resolve ? h(RegistryHeaderSessionMenu, Object.assign({}, props, { registry: registry })) : h(LegacyHeaderSessionMenu, props)
+            return registry?.resolve ? h(SlotRegistryHeaderSessionMenu, Object.assign({}, props, { registry: registry })) : h(LegacyHeaderSessionMenu, props)
+          }
+          function SlotRegistryHeaderSessionMenu(props) {
+            var tree = original.component(props)
+            return React.cloneElement(tree, undefined, React.Children.map(tree.props.children, function (child) {
+              return React.isValidElement(child) && child.type === primitives.Menu
+                ? h(RegistryHeaderSessionMenu, Object.assign({}, props, { menu: child.props })) : child
+            }))
+          }
+          function ModernHeaderSessionMenu(props) {
+            useLocale(React)
+            var state = React.useState(false), open = state[0], setOpen = state[1]
+            var label = ctx.get('locale').bind('conversation')('header.more')
+            var anchor = h(primitives.Button, {
+              size: 'sm', type: 'button', 'data-dsh-header-menu-trigger': '', 'aria-label': label,
+              'aria-haspopup': 'menu', 'aria-expanded': open,
+              onClick: function () { setOpen(function (wasOpen) { return !wasOpen }) },
+              icon: h(primitives.IconEllipsisOutlineRegular, { size: 15 }),
+            })
+            return h(RegistryHeaderSessionMenu, Object.assign({}, props, { registry: registry, modern: true, menu: {
+              open: open, onClose: function () { setOpen(false) }, portal: true, dense: true, align: 'end',
+              anchor: h(primitives.Tooltip, { label: label, side: 'bottom', align: 'end', portal: true }, anchor),
+            } }))
           }
           function HeaderMenuExtras(props) {
             var anchor = React.useRef(null)
@@ -3117,27 +3143,40 @@ var React = require('react')
             }, [props.sessionId, props.cwd])
             return h('div', { ref: anchor, 'data-dsh-header-menu-extras': '' })
           }
-          function RegistryHeaderSessionMenu(props) {
-            var summary = props.useSessions(function (state) { return state.byId[props.sessionId] })
-            var title = summary?.displayTitle ?? summary?.title ?? ''
-            var resolved = React.useState(null), occurrence = resolved[0], setOccurrence = resolved[1]
-            var rows = React.useState([]), items = rows[0], setItems = rows[1]
-            // Keep the upstream component's own download, feedback and dialog
-            // hooks, but compose its Menu from the same registry as right-click.
-            var tree = original.component(props)
-            var nativeMenu = React.Children.toArray(tree.props.children).find(function (child) { return child.type === primitives.Menu })
-            var open = nativeMenu?.props.open === true
-            var close = nativeMenu?.props.onClose
-            var menuState = [open, function (value) { if (!value) close?.() }]
+          function useMenuActions(registry, kind, sessionId, title, open) {
+            var state = React.useState(null), result = state[0], setResult = state[1]
             React.useEffect(function () {
-              if (!open) { setItems([]); setOccurrence(null); return }
-              var current = props.registry.resolve({ kind: 'session', value: { sessionId: props.sessionId, displayTitle: title } })
-              var publish = function () { setItems(current.source.getSnapshot()) }
+              if (!open) { setResult(null); return }
+              var current = registry.resolve({ kind: kind, value: { sessionId: sessionId, displayTitle: title } })
+              var publish = function () { setResult({ sessionId: sessionId, items: current.source.getSnapshot(), occurrence: current }) }
               var off = current.source.subscribe(publish)
-              setOccurrence(current)
               publish()
               return function () { off(); current.dispose() }
-            }, [open, props.registry, props.sessionId, title])
+            }, [open, registry, kind, sessionId, title])
+            return open && result?.sessionId === sessionId ? result : null
+          }
+          function RegistryHeaderSessionMenu(props) {
+            var summary = props.useSessions(function (state) { return state.byId[props.sessionId] })
+            var workingDirectory = props.useSessions(function (state) {
+              return state.projectionsBySession?.[props.sessionId]?.values?.workingDirectory
+                ?? state.byId[props.sessionId]?.projectionValues?.workingDirectory
+            })
+            var path = typeof workingDirectory === 'string' ? workingDirectory : summary?.cwd
+            var title = summary?.displayTitle ?? summary?.title ?? ''
+            var open = props.menu.open, close = props.menu.onClose
+            var session = useMenuActions(props.registry, 'session', props.sessionId, title, open)
+            var header = useMenuActions(props.registry, 'sessionHeader', props.sessionId, undefined, open && props.modern)
+            var items = session?.items || []
+            if (props.modern) items = items.flatMap(function (item) {
+              if (item.id === 'session.read-state/mark') return []
+              if (item.id !== 'open-in-app.openWith/openWith') return [item]
+              // The desktop Open submenu supplies the full catalog. Keep the
+              // original one-click folder action using the same resolved path.
+              var folder = item.children?.find(function (action) { return /\/app%3A(?:explorer|finder|filemanager)$/.test(action.id) })
+              return folder ? [Object.assign({}, folder, {
+                label: ctx.get('locale').bind('open-in-app')('menu.reveal'), icon: { key: 'open-in-app.reveal' },
+              })] : []
+            })
             var catalog = ctx.get('shortcuts')?.catalog.getSnapshot() || []
             function entries(actions) {
               return actions.flatMap(function (action) {
@@ -3149,23 +3188,24 @@ var React = require('react')
                 return action.separatorBefore ? [{ type: 'separator', id: action.id + ':separator' }, item] : [item]
               })
             }
-            var children = React.Children.map(tree.props.children, function (child) {
-              if (!React.isValidElement(child) || child.type !== primitives.Menu) return child
-              return React.cloneElement(child, {
-                items: entries(items.filter(function (item) { return !item.afterContent })),
-                footer: entries(items.filter(function (item) { return item.afterContent })).concat(
-                  [{ type: 'separator', id: 'desktop-session-divider' }],
-                  child.props.items.filter(function (item) { return item.id === 'download' || item.id === 'feedback' })),
-                onSelect: function (id) {
-                  if (id === 'download' || id === 'feedback') child.props.onSelect(id)
-                  else { occurrence?.select(id); child.props.onClose() }
-                },
-                children: h(React.Fragment, null,
-                  props.renderSlot(mirrorSlot, { sessionId: props.sessionId, displayTitle: title }, { hookContext: menuState }),
-                  h(HeaderMenuExtras, { sessionId: props.sessionId, cwd: summary?.cwd })),
-              })
-            })
-            return React.cloneElement(tree, undefined, children)
+            var footerActions = props.modern ? entries((header?.items || []).filter(function (item) {
+              return item.id === 'session-log-download.export/download' || item.id === 'session-log-download.feedback/feedback'
+            }).map(function (item) { return Object.assign({}, item, { separatorBefore: false }) })) :
+              props.menu.items.filter(function (item) { return item.id === 'download' || item.id === 'feedback' })
+            return h(primitives.Menu, Object.assign({}, props.menu, {
+              items: entries(items.filter(function (item) { return !item.afterContent })),
+              footer: entries(items.filter(function (item) { return item.afterContent })).concat(
+                [{ type: 'separator', id: 'desktop-session-divider' }], footerActions),
+              onSelect: function (id) {
+                if (!props.modern && (id === 'download' || id === 'feedback')) { props.menu.onSelect(id); return }
+                if (footerActions.some(function (item) { return item.id === id })) header?.occurrence.select(id)
+                else session?.occurrence.select(id)
+                close()
+              },
+              children: h(React.Fragment, null,
+                props.renderSlot(mirrorSlot, { sessionId: props.sessionId, displayTitle: title }, { hookContext: [open, function (value) { if (!value) close() }] }),
+                h(HeaderMenuExtras, { sessionId: props.sessionId, cwd: path })),
+            }))
           }
           function LegacyHeaderSessionMenu(props) {
             useLocale(React)
@@ -3243,10 +3283,16 @@ var React = require('react')
           var offHeader = ctx.slots.subscribe(headerSlot, syncHeader)
           var offItems = ctx.slots.subscribe(sourceSlot, syncItems)
           var offIcons = ctx.slots.subscribe('contextMenu.icon', syncItems)
+          var offRegistry = ctx.inject(['contextMenus'], function (scope) {
+            registry = scope.contextMenus
+            var off = registry.registeredKinds?.subscribe(syncHeader)
+            syncHeader()
+            return function () { off?.(); registry = undefined; syncHeader() }
+          })
           var modeObserver = new MutationObserver(syncHeader)
           modeObserver.observe(document.documentElement, { attributes: true, attributeFilter: [MODE_ATTRIBUTE] })
           syncHeader()
-          return function () { disposed = true; modeObserver.disconnect(); offHeader(); offItems(); offIcons(); clear() }
+          return function () { disposed = true; modeObserver.disconnect(); offRegistry?.(); offHeader(); offItems(); offIcons(); clear() }
         })
       })
     }

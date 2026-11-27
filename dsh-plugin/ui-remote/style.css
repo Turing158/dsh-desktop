@@ -1,3 +1,8 @@
+/* The desktop settings provide their own remote-control entry. */
+[data-shortcut-modal='settings'] nav button:has([data-dsh-hide-remote-connection]) {
+  display: none;
+}
+
 /* Remote-control settings, dressed in the app's own control idiom. Every number
  * below is copied from the DSH client's own stylesheets rather than invented:
  *

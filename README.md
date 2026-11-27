@@ -216,12 +216,16 @@ DeepSeek 网关会回传历史中的原始推理文本，包括 `reasoning_detai
 在仓库根目录执行：
 
 ```powershell
-npm install
-npm run dev          # 限制编译并发与优先级，减少开发时的资源占用
-npm run dev:fast     # 直接运行 tauri dev
+npm run dev                           # 启动桌面版，按需安装前端依赖
+npm run dev -- -Web                   # 启动浏览器预览，访问终端打印的 dsh 地址
+npm run dev -- -Check                 # 检查开发环境，可与 -Web 一起使用
+npm run dev -- -Port 1540 -DataDir .\.runtime\profile
+npm run dev:fast                      # 直接运行 tauri dev
 ```
 
-启动时自动查找可用的 dsh；非标准安装位置可使用 `DSH_DESKTOP_NODE` 指定 Node 可执行文件，使用 `DSH_DESKTOP_DSH` 指定 dsh 入口脚本。数据根遵循 dsh 的 `DSH_HOME` 设置。
+`dev.ps1` 从本机端口 `1530` 起查找空闲端口，最多检查连续 100 个端口。`-Port` 可修改起始端口，`-InstallDependencies` 可重新安装前端依赖。桌面版可用 `-Jobs` 和 `-Priority` 调整编译资源占用。
+
+桌面版和浏览器预览默认沿用 dsh 的现有数据目录。dsh 优先读取 `DSH_HOME`，未设置时使用 `~/.dsh`。可以用 `-DataDir` 为本次启动指定其他目录。浏览器预览需要已安装的 dsh，桌面版会自动查找可用的运行时。非标准安装位置可使用 `DSH_DESKTOP_DSH` 指定 dsh 入口，桌面版也支持使用 `DSH_DESKTOP_NODE` 指定 Node 可执行文件。
 
 ### 检查与构建
 

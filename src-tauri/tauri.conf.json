@@ -54,6 +54,7 @@
       "../dsh-plugin/desktop-maintenance/capability-bridge.js": "dsh-plugin/desktop-maintenance/capability-bridge.js",
       "../dsh-plugin/compatibility/selectors.mjs": "dsh-plugin/compatibility/selectors.mjs",
       "../dsh-plugin/compatibility/compatibility-matrix.json": "dsh-plugin/compatibility/compatibility-matrix.json",
+      "../dsh-plugin/compatibility/forge-github.mjs": "dsh-plugin/compatibility/forge-github.mjs",
       "../dsh-plugin/desktop-notify.mjs": "dsh-plugin/desktop-notify.mjs",
       "../dsh-plugin/session-links.mjs": "dsh-plugin/session-links.mjs",
       "../dsh-plugin/session-links/index.js": "dsh-plugin/session-links/index.js",
