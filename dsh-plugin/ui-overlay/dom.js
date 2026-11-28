@@ -459,20 +459,27 @@
     return changed
   }
 
+  const SETTINGS_NAVIGATION_LABELS = {
+    'settings-appearance': '外观',
+    'settings-sound': '声音提醒',
+    'settings-session-navigation': '会话导航',
+    'settings-remote': '远程控制',
+  }
+
   /** The settings shell gives unknown section ids a gear and accepts no icon
-   * slot. Mark our two fixed labels; CSS replaces only their decorative glyphs,
+   * slot. Mark the localized labels so CSS can replace their decorative glyphs,
    * leaving React's nodes and the navigation's accessible names intact. */
   function markSettingsNavigationIcons() {
+    var markers = Object.keys(SETTINGS_NAVIGATION_LABELS)
     overlayQueryAll('[role="dialog"] [class*="_navList"] > button').forEach(function (button) {
       var label = button.querySelector('[class*="_navLabel"]')
       var icon = button.querySelector('[class*="_navIcon"]')
       var text = label ? label.textContent.trim() : ''
-      var wanted = icon && text === t('外观') ? 'settings-appearance'
-        : icon && text === t('远程控制') ? 'settings-remote' : null
+      var wanted = icon ? (markers.find(marker => text === t(SETTINGS_NAVIGATION_LABELS[marker])) ?? null) : null
       var current = button.getAttribute('data-dsh-desktop')
       if (current === wanted) return
       if (wanted) button.setAttribute('data-dsh-desktop', wanted)
-      else if (current === 'settings-appearance' || current === 'settings-remote') {
+      else if (markers.includes(current)) {
         button.removeAttribute('data-dsh-desktop')
       }
     })
@@ -2814,11 +2821,17 @@
 
   // CSS anchors are removed with their owning Menu. Remember the live geometry
   // before React unmounts it so its exit copy cannot fall back to the body edge.
+  var ANCHORED_MENU_SELECTOR = '[data-anchor-side], [data-submenu-layout]'
   var anchoredMenuBounds = new WeakMap()
 
+  function usesMenuAnchor(node) {
+    // Upstream portalled submenus set position-anchor through a stylesheet.
+    return node.hasAttribute('data-submenu-layout') ||
+      (node.hasAttribute('data-anchor-side') && !!node.style.positionAnchor && node.style.positionAnchor !== 'none')
+  }
+
   function rememberAnchoredMenu(node) {
-    if (!node.isConnected || node.getAttribute(GHOST_ATTRIBUTE) || !node.hasAttribute('data-anchor-side') ||
-        !node.style.positionAnchor || node.style.positionAnchor === 'none') return
+    if (node.style.visibility === 'hidden') return
     var rect = node.getBoundingClientRect()
     if (rect.width && rect.height) anchoredMenuBounds.set(node, rect)
   }
@@ -2854,7 +2867,7 @@
 
     var clone = node.cloneNode(true)
     if (!clone || clone.nodeType !== 1) return
-    if (kind === GHOST_MENU && node.hasAttribute('data-anchor-side') && node.style.positionAnchor) {
+    if (kind === GHOST_MENU && usesMenuAnchor(node)) {
       var bounds = anchoredMenuBounds.get(node)
       // A menu mounted and removed in one commit never painted an exit to replay.
       if (!bounds) return
@@ -2930,14 +2943,19 @@
     if (window.__dshDesktopGhostWatcher === true) return
     window.__dshDesktopGhostWatcher = true
     var anchoredMenus = new Set()
+    function trackAnchoredMenu(menu) {
+      if (!menu.isConnected || menu.hasAttribute(GHOST_ATTRIBUTE) || !usesMenuAnchor(menu)) return
+      anchoredMenus.add(menu)
+      rememberAnchoredMenu(menu)
+    }
     function rememberLiveMenus() {
       anchoredMenus.forEach(function (menu) {
         if (!menu.isConnected) anchoredMenus.delete(menu)
         else rememberAnchoredMenu(menu)
       })
     }
-    // Capture runs before selection, Escape or an outside click removes the menu.
-    ['pointerdown', 'click', 'keydown'].forEach(function (event) {
+    // Capture runs before a hover change, selection or dismissal removes the menu.
+    ['pointerout', 'pointerdown', 'click', 'keydown'].forEach(function (event) {
       document.addEventListener(event, rememberLiveMenus, true)
     })
     window.addEventListener('resize', rememberLiveMenus)
@@ -2945,10 +2963,12 @@
     var observer = new MutationObserver(function (records) {
       if (!affectsOverlay(records)) return
       records.forEach(function (record) {
+        // A submenu can mount hidden and acquire its layout after measurement.
+        if (record.type === 'attributes') trackAnchoredMenu(record.target)
         Array.from(record.addedNodes || []).forEach(function (node) {
           if (node.nodeType !== 1 || !node.isConnected || node.getAttribute(GHOST_ATTRIBUTE)) return
-          var menus = node.hasAttribute('data-anchor-side') ? [node] : node.querySelectorAll('[data-anchor-side]:not([data-dsh-ghost])')
-          Array.from(menus).forEach(function (menu) { anchoredMenus.add(menu); rememberAnchoredMenu(menu) })
+          if (node.matches(ANCHORED_MENU_SELECTOR)) trackAnchoredMenu(node)
+          else node.querySelectorAll(ANCHORED_MENU_SELECTOR).forEach(trackAnchoredMenu)
         })
       })
       anchoredMenus.forEach(function (menu) { if (!menu.isConnected) anchoredMenus.delete(menu) })
@@ -2978,11 +2998,8 @@
         }
       }
     })
-    observer.observe(document.body, { childList: true, subtree: true })
-    document.querySelectorAll('[data-anchor-side]:not([data-dsh-ghost])').forEach(function (menu) {
-      anchoredMenus.add(menu)
-      rememberAnchoredMenu(menu)
-    })
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-submenu-layout'] })
+    document.querySelectorAll(ANCHORED_MENU_SELECTOR).forEach(trackAnchoredMenu)
   }
 
   /**

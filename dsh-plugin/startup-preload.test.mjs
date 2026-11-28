@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { withGitHubCliCompatibility } from './compatibility/forge-github.mjs'
 
 const preload = resolve('dsh-plugin/plugin-control/prepare-boot.mjs')
 function fixture({ fileOverlays = false } = {}) {
@@ -79,9 +80,9 @@ test('desktop preload sends the GitHub provider’s multiline GraphQL field thro
     const query = 'query {\\r\\n  # comment\\n  viewer { login }\\n}'
     const args = ['api', 'graphql', '--hostname', 'github.com', '-f', 'query=' + query, '-F', 'first=50']
     const options = { stdin: 'ignore', timeout: 30000 }
-    const results = [run('custom-gh', args, options), other('custom-gh', args, options),
+    const results = await Promise.all([run('custom-gh', args, options), other('custom-gh', args, options),
       run('gh', ['api', 'graphql', '--input', '-'], { input: '{"query":"mutation {}"}' }),
-      run('gh', ['api', 'graphql', '-f', 'query={viewer{login}}'], options)]
+      run('gh', ['api', 'graphql', '-f', 'query={viewer{login}}'], options)])
     writeFileSync(process.env.TEST_RESULT, JSON.stringify({ results, query, args, options }))
   `)
   f.env.DSH_DESKTOP_IDLE_OPTIMIZATIONS = '0'
@@ -96,6 +97,29 @@ test('desktop preload sends the GitHub provider’s multiline GraphQL field thro
   } : other)
   assert.deepEqual(mutation, { file: 'gh', args: ['api', 'graphql', '--input', '-'], options: { input: '{"query":"mutation {}"}' } })
   assert.deepEqual(singleLine, { file: 'gh', args: ['api', 'graphql', '-f', 'query={viewer{login}}'], options })
+})
+
+test('concurrent GitHub reads share the Windows CLI lookup and recover on refresh', { skip: process.platform !== 'win32' }, async () => {
+  const calls = []
+  let available = false
+  const reply = { exitCode: 4, stderr: 'Run gh auth login to authenticate.' }
+  const run = withGitHubCliCompatibility(async (file, args, options) => {
+    calls.push({ file, args, options })
+    return file.endsWith('where.exe') ? { exitCode: available ? 0 : 1 } : reply
+  })
+  const args = ['api', 'graphql', '-f', 'query=query {\n  viewer { login }\n}']
+  const options = { stdin: 'ignore', reject: false, cancelSignal: new AbortController().signal }
+  const failures = await Promise.all(Array.from({ length: 3 }, () => run('gh', args, options)))
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].file, /[\\/]where\.exe$/)
+  assert.deepEqual(failures, Array.from({ length: 3 }, () => ({ code: 'ENOENT', shortMessage: 'GitHub CLI (gh) was not found.' })))
+
+  available = true
+  assert.equal(await run('gh', args, options), reply)
+  assert.equal(calls.length, 3)
+  assert.deepEqual(calls[2], { file: 'gh', args: ['api', 'graphql', '-F', 'query=@-'], options: {
+    ...options, stdin: 'pipe', input: 'query {\n  viewer { login }\n}',
+  } })
 })
 
 for (const fileOverlays of [false, true]) for (const enabled of [false, true]) {

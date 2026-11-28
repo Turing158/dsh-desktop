@@ -53,11 +53,13 @@ var React = require('react')
      * to load at all.
      */
     var Menu = null
+    var ChevronDown = null
     var Tooltip = null
     var Switch = null
     try {
       var primitives = require('@deepseek-ai/dsh-client-ui-primitives')
       if (primitives && typeof primitives.Menu === 'function') Menu = primitives.Menu
+      ChevronDown = primitives?.IconChevronDownOutlineRegular
       if (primitives && typeof primitives.Tooltip === 'function') Tooltip = primitives.Tooltip
       if (primitives && typeof primitives.Switch === 'function') Switch = primitives.Switch
     } catch (error) {
@@ -1142,7 +1144,7 @@ var React = require('react')
       result.backgroundNavigation = !section || section.backgroundTitlebar !== false || section.backgroundLeft !== false
       // Prefer the sidebar's saved tint when migrating separate controls. Only
       // fall back to the title bar when the sidebar has no saved preference.
-      result.backgroundNavigationSurfaceTransparency = 15
+      result.backgroundNavigationSurfaceTransparency = 50
       if (section) {
         for (var region of ['Left', 'Titlebar']) {
           var surface = section['background' + region + 'SurfaceTransparency']
@@ -1589,7 +1591,7 @@ var React = require('react')
     }
 
     /** The shell owns the open tabs across conversation navigation. */
-    function bindSessionTabs(ctx) {
+    function bindSessionTabs(ctx, navigation) {
       if (!Menu) return
       ctx.inject(['sessions', 'uiWorkspace', 'workspaces'], function (child) {
         const { createPortal } = require('react-dom')
@@ -1601,6 +1603,7 @@ var React = require('react')
         const anchors = [main, views, leading].join(', ')
         const transcript = '[data-conversation-content], [data-dsh-ghost]'
         const rowSelector = '[role="treeitem"]:is([data-row-key^="session:"], [class*="_sessionRow"], [class*="_searchResultRow"])'
+        const tabSelector = ':scope > [data-dsh-session-tab]'
 
         function TabsMenu({ menu, count, dismiss, select }) {
           React.useEffect(() => {
@@ -1613,7 +1616,9 @@ var React = require('react')
           return h(Menu, {
             open: true, anchor: null, portal: true, compact: true, autoFocus: true,
             listClassName: 'dshSessionTabs__menu', onClose: dismiss, onSelect: select,
-            getAnchorRect: () => menu.point,
+            // DSH versions use either a point or a virtual rectangle for portal placement.
+            anchorPoint: menu.point,
+            getAnchorRect: () => ({ left: menu.point.x, right: menu.point.x, top: menu.point.y, bottom: menu.point.y }),
             items: [
               { id: 'one', label: t('关闭该标签') },
               { id: 'others', label: t('关闭其他标签'), disabled: count === 1 },
@@ -1629,35 +1634,75 @@ var React = require('react')
           track.toggleAttribute('data-overflow-right', max - left > 1)
         }
 
-        function SessionTabs() {
+        function tabDropPosition({ track, button }, x, y, autoScroll = false) {
+          const { left, right, top, bottom, width } = track.getBoundingClientRect()
+          if (x < left || x >= right || y < top || y >= bottom) return null
+          if (autoScroll && track.scrollWidth > track.clientWidth) {
+            const edge = Math.min(24, width / 3)
+            track.scrollLeft += (Math.max(0, x - right + edge) - Math.max(0, left + edge - x)) / 2
+          }
+          const rtl = getComputedStyle(track).direction === 'rtl'
+          const buttons = Array.from(track.querySelectorAll(tabSelector))
+          const before = buttons.find(candidate => {
+            if (candidate === button) return false
+            const bounds = candidate.getBoundingClientRect()
+            const middle = bounds.left + bounds.width / 2
+            return rtl ? x > middle : x < middle
+          }) || null
+          if (before === (buttons[buttons.indexOf(button) + 1] ?? null)) return null
+          return before ? { button: before, side: 'start' } : { button: buttons.at(-1), side: 'end' }
+        }
+
+        function SessionTabs({ useRemoteAccess = () => true }) {
           useLocale(React)
+          const canStartSession = useRemoteAccess('session/create')
+          const preferences = React.useSyncExternalStore(navigation.subscribe, navigation.getState, navigation.getState)
           const [seat, setSeat] = React.useState(null)
+          const [viewRow, setViewRow] = React.useState(null)
+          const [onNewSessionPage, setOnNewSessionPage] = React.useState(false)
           const [active, setActive] = React.useState(null)
           const [tabs, setTabs] = React.useState([])
           const [menu, setMenu] = React.useState(null)
           const strip = React.useRef(null)
+          const viewRowMargins = React.useRef(undefined)
+          const drag = React.useRef(null)
+          const suppressClick = React.useRef(false)
 
           React.useLayoutEffect(function () {
             if (getComputedStyle(document.body).getPropertyValue('--dsh-session-tabs').trim() !== '1') return
-            let host = null, findHost = true, frame = 0, lastActive, clicked, initialSession
+            let host = null, row = null, phase = null, findHost = true, frame = 0, lastActive, clicked, initialSession
+            const phaseChanges = new MutationObserver(schedule)
             function sync() {
               frame = 0
               if (document.documentElement.getAttribute(MODE_ATTRIBUTE) === VANILLA) {
                 host = null
+                row = null
+                phase = null
+                phaseChanges.disconnect()
                 findHost = true
                 clicked = undefined
                 setSeat(null)
+                setViewRow(null)
                 setMenu(null)
                 return
               }
               if (findHost || !host?.isConnected) {
                 const conversation = document.querySelector(main)
-                const nextHost = conversation?.querySelector(views) || conversation?.querySelector(leading)?.closest('header') || null
+                const nextHost = conversation?.querySelector(leading)?.closest('header') || conversation?.querySelector(views) || null
                 if (host !== nextHost) setMenu(null)
                 host = nextHost
+                row = host?.querySelector(views) || null
+                const nextPhase = host?.closest('[data-phase]') || null
+                if (phase !== nextPhase) {
+                  phaseChanges.disconnect()
+                  phase = nextPhase
+                  if (phase) phaseChanges.observe(phase, { attributes: true, attributeFilter: ['data-phase'] })
+                }
                 findHost = false
                 setSeat(host)
+                setViewRow(row)
               }
+              setOnNewSessionPage(phase?.getAttribute('data-phase') === 'hero')
               const snapshot = list.getSnapshot()
               const current = selectedSessionId(snapshot)
               const summary = snapshot.byId[current]
@@ -1668,6 +1713,8 @@ var React = require('react')
               if (initialSession === undefined && summary) initialSession = summary.blank ? current : null
               const opened = summary && (explicit || current !== initialSession || !summary.blank || host?.closest('[data-phase="active"]'))
               const add = opened && !archived.includes(current) && (current !== lastActive || explicit)
+              const prepend = add && (navigation.getState().sessionNavigationNewSessionPosition === 'left') !==
+                (getComputedStyle(host || document.body).direction === 'rtl')
               clicked = undefined
               if (opened) initialSession = null
               if (!current || opened) lastActive = current
@@ -1680,7 +1727,9 @@ var React = require('react')
                   return [title === tab.title ? tab : { ...tab, title }]
                 })
                 if (add && !next.some(tab => tab.id === current)) {
-                  next.push({ id: current, title: summary.title || summary.displayTitle || current })
+                  const tab = { id: current, title: summary.title || summary.displayTitle || current }
+                  if (prepend) next.unshift(tab)
+                  else next.push(tab)
                 }
                 return next.length === previous.length && next.every((tab, i) => tab === previous[i]) ? previous : next
               })
@@ -1695,7 +1744,7 @@ var React = require('react')
               schedule()
             }
             const observer = new MutationObserver(records => {
-              if ((host && !host.isConnected) || records.some(record => record.type === 'attributes' ||
+              if ((host && !host.isConnected) || (row && !row.isConnected) || records.some(record => record.type === 'attributes' ||
                 (!record.target.closest?.(transcript) && Array.from(record.addedNodes).some(node =>
                   node.nodeType === 1 && !node.matches(transcript) && (node.matches(anchors) || node.querySelector(anchors)))))) {
                 findHost = true
@@ -1712,20 +1761,33 @@ var React = require('react')
               offList()
               offWorkspaces()
               observer.disconnect()
+              phaseChanges.disconnect()
               document.removeEventListener('click', onRowClick, true)
               cancelAnimationFrame(frame)
             }
           }, [])
 
+          const visible = Boolean(seat && tabs.length && preferences.sessionNavigationEnabled &&
+            (!onNewSessionPage || preferences.sessionNavigationShowOnNewSession))
+
           function revealCurrent() {
             const track = strip.current
             const current = track?.querySelector('[aria-current="true"]')
             if (!current) return
-            const viewport = track.getBoundingClientRect(), tab = current.getBoundingClientRect()
-            if (tab.right > viewport.right) track.scrollLeft += tab.right - viewport.right
-            else if (tab.left < viewport.left) track.scrollLeft += tab.left - viewport.left
+            const viewport = track.getBoundingClientRect()
+            let { left, right } = current.getBoundingClientRect()
+            const next = current.nextElementSibling
+            if (next?.matches('.dshSessionTabs__new')) {
+              const add = next.getBoundingClientRect()
+              const start = Math.min(left, add.left), end = Math.max(right, add.right)
+              if (end - start <= viewport.width) { left = start; right = end }
+            }
+            if (right > viewport.right) track.scrollLeft += right - viewport.right
+            else if (left < viewport.left) track.scrollLeft += left - viewport.left
           }
-          React.useLayoutEffect(revealCurrent, [seat, active, tabs])
+          // Keep the drop in view when only the order changes.
+          const currentTab = tabs.find(tab => tab.id === active)
+          React.useLayoutEffect(revealCurrent, [seat, currentTab, tabs.length, visible])
           React.useLayoutEffect(() => {
             const track = strip.current
             if (!track) return
@@ -1736,31 +1798,162 @@ var React = require('react')
             sizes.observe(track)
             for (const tab of track.children) sizes.observe(tab)
             return () => sizes.disconnect()
-          }, [seat, tabs])
+          }, [seat, tabs, visible])
 
-          if (!seat || tabs.length === 0) return null
+          React.useLayoutEffect(() => {
+            const track = strip.current
+            if (!track || seat.matches(views)) return
+            // The header and its strip stay mounted when the native view row is hidden.
+            if (viewRowMargins.current) Object.assign(track.style, viewRowMargins.current)
+            if (!viewRow?.isConnected) return
+            // Newer runtimes wrap the view list in the grid item for this row.
+            const parent = viewRow.parentElement
+            const row = parent !== seat && getComputedStyle(parent).display !== 'contents' ? parent : viewRow
+            const sizes = typeof ResizeObserver === 'function' ? new ResizeObserver(align) : null
+            function align() {
+              const { direction, columnGap } = getComputedStyle(viewRow)
+              const { marginBlockStart } = getComputedStyle(row)
+              const rowBounds = row.getBoundingClientRect()
+              let inset = 0
+              for (const button of viewRow.children) {
+                const bounds = button.getBoundingClientRect()
+                if (bounds.width) inset = Math.max(inset, direction === 'rtl' ? rowBounds.right - bounds.left : bounds.right - rowBounds.left)
+              }
+              if (!inset) return
+              viewRowMargins.current = { marginBlockStart, marginInlineStart: (inset + (parseFloat(columnGap) || 0)) + 'px' }
+              Object.assign(track.style, viewRowMargins.current)
+            }
+            function observe() {
+              sizes?.disconnect()
+              sizes?.observe(viewRow)
+              if (row !== viewRow) sizes?.observe(row)
+              for (const button of viewRow.children) sizes?.observe(button)
+              align()
+            }
+            const changes = new MutationObserver(observe)
+            changes.observe(viewRow, { childList: true })
+            observe()
+            return () => { sizes?.disconnect(); changes.disconnect() }
+          }, [seat, viewRow, visible])
+
+          function finishDrag() {
+            const moving = drag.current
+            if (!moving) return
+            drag.current = null
+            cancelAnimationFrame(moving.frame)
+            moving.marker?.removeAttribute('data-drop-side')
+            moving.track.removeAttribute('data-dragging')
+            moving.button.removeAttribute('data-dragging')
+            if (moving.button.hasPointerCapture(moving.pointerId)) moving.button.releasePointerCapture(moving.pointerId)
+          }
+          React.useLayoutEffect(() => {
+            if (!visible) {
+              setMenu(null)
+              suppressClick.current = false
+              return
+            }
+            window.addEventListener('blur', finishDrag)
+            return () => {
+              window.removeEventListener('blur', finishDrag)
+              finishDrag()
+            }
+          }, [seat, visible])
+
+          function beginDrag(event) {
+            if (!event.isPrimary || event.button !== 0) return
+            finishDrag()
+            suppressClick.current = false
+            if (event.defaultPrevented || event.pointerType === 'touch' || tabs.length < 2) return
+            const { currentTarget: button, pointerId, clientX: x, clientY: y } = event
+            button.setPointerCapture(pointerId)
+            drag.current = { button, track: strip.current, pointerId, startX: x, startY: y, x, y, frame: 0, marker: null }
+          }
+
+          function previewDrag() {
+            const moving = drag.current
+            if (!moving.button.isConnected) return finishDrag()
+            const drop = tabDropPosition(moving, moving.x, moving.y, true)
+            if (moving.marker !== drop?.button) moving.marker?.removeAttribute('data-drop-side')
+            moving.marker = drop?.button
+            if (drop && drop.button.getAttribute('data-drop-side') !== drop.side) {
+              drop.button.setAttribute('data-drop-side', drop.side)
+            }
+            moving.frame = requestAnimationFrame(previewDrag)
+          }
+
+          function moveDrag(event) {
+            const moving = drag.current
+            if (!moving || moving.pointerId !== event.pointerId) return
+            moving.x = event.clientX
+            moving.y = event.clientY
+            if (moving.frame || Math.hypot(moving.x - moving.startX, moving.y - moving.startY) < 5) return
+            suppressClick.current = true
+            moving.track.setAttribute('data-dragging', '')
+            moving.button.setAttribute('data-dragging', '')
+            setMenu(null)
+            moving.frame = requestAnimationFrame(previewDrag)
+          }
+
+          function dropTab(event) {
+            const moving = drag.current
+            if (!moving || moving.pointerId !== event.pointerId) return
+            const drop = moving.frame && tabDropPosition(moving, event.clientX, event.clientY)
+            finishDrag()
+            if (!drop) return
+            const id = moving.button.dataset.dshSessionTab
+            const before = drop.side === 'start' ? drop.button.dataset.dshSessionTab : null
+            setTabs(previous => {
+              const from = previous.findIndex(tab => tab.id === id)
+              const to = before === null ? previous.length : previous.findIndex(tab => tab.id === before)
+              if (from < 0 || to < 0 || to === from || to === from + 1) return previous
+              const next = previous.slice()
+              const [tab] = next.splice(from, 1)
+              next.splice(to > from ? to - 1 : to, 0, tab)
+              return next
+            })
+          }
+
+          if (!visible) return null
           function openMenu(event, id, keyboard) {
             event.preventDefault()
             event.stopPropagation()
             const button = event.currentTarget
-            const point = keyboard ? button.getBoundingClientRect() : { left: event.clientX, bottom: event.clientY }
-            setMenu({ id, button, point: { left: point.left, right: point.left, top: point.bottom, bottom: point.bottom } })
+            const rect = keyboard ? button.getBoundingClientRect() : null
+            const point = rect ? { x: rect.left, y: rect.bottom } : { x: event.clientX, y: event.clientY }
+            setMenu({ id, button, point })
           }
           function dismissMenu() {
             if (document.activeElement?.closest('.dshSessionTabs__menu')) menu.button.focus({ preventScroll: true })
             setMenu(null)
           }
           function closeTabs(action) {
-            const buttons = Array.from(strip.current.children)
+            const buttons = Array.from(strip.current.querySelectorAll(tabSelector))
             const index = buttons.indexOf(menu.button)
             const nextFocus = action === 'others' ? menu.button : action === 'one' ? buttons[index + 1] || buttons[index - 1] : null
-            setTabs(previous => previous.filter(tab => action === 'others' ? tab.id === menu.id : action === 'one' && tab.id !== menu.id))
+            const keepTab = tab => action === 'others' ? tab.id === menu.id : action === 'one' && tab.id !== menu.id
+            const current = selectedSessionId(list.getSnapshot())
+            const closesCurrent = tabs.some(tab => tab.id === current && !keepTab(tab))
+            setTabs(previous => previous.filter(keepTab))
             setMenu(null)
             const focus = nextFocus || seat.querySelector('.dshConversationViewToggle, button[aria-selected="true"]')
             focus?.focus()
+            if (!nextFocus) child.uiWorkspace.startSession()
+            else if (closesCurrent) child.uiWorkspace.openSession(nextFocus.dataset.dshSessionTab)
           }
           const bar = h('div', {
             className: 'dshSessionTabs', role: 'group', 'aria-label': t('会话标签'), ref: strip,
+            'data-dsh-multiple-tabs': tabs.length > 1 ? '' : undefined,
+            onPointerMove: moveDrag,
+            onPointerUp: dropTab,
+            onPointerCancel: event => { if (drag.current?.pointerId === event.pointerId) finishDrag() },
+            onLostPointerCapture: event => { if (drag.current?.pointerId === event.pointerId) finishDrag() },
+            onClickCapture: event => {
+              // Pointer capture can still deliver a click to the dragged button.
+              if (!suppressClick.current || !event.detail) return
+              event.preventDefault()
+              event.stopPropagation()
+              suppressClick.current = false
+            },
             onScroll: event => updateScrollEdges(event.currentTarget),
             onWheel: event => {
               const track = event.currentTarget
@@ -1768,7 +1961,7 @@ var React = require('react')
                 track.scrollLeft += event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? track.clientWidth : 1)
               }
             },
-            onTransitionEnd: event => { if (event.propertyName === 'min-width') revealCurrent() },
+            onTransitionEnd: event => { if (event.propertyName === 'min-width' && !drag.current?.frame) revealCurrent() },
           }, tabs.map(tab => {
             const icon = h('svg', { className: 'dshSessionTabs__icon', width: 15, height: 15, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
               h('path', { d: 'M3.5 2.5H12A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5H7l-3.5 3v-3A1.5 1.5 0 0 1 2 9V4a1.5 1.5 0 0 1 1.5-1.5ZM5 5.5h5.5M5 8h4',
@@ -1778,13 +1971,22 @@ var React = require('react')
               'data-dsh-session-tab': tab.id,
               'aria-label': tab.title, 'aria-current': tab.id === active ? 'true' : undefined,
               'aria-haspopup': 'menu', 'aria-expanded': menu?.id === tab.id,
+              onPointerDown: beginDrag,
               onClick: () => { if (tab.id !== active) child.uiWorkspace.openSession(tab.id) },
               onContextMenu: event => openMenu(event, tab.id, event.clientX === 0 && event.clientY === 0),
               onKeyDown: event => {
-                if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event, tab.id, true)
+                if (event.key === 'Escape' && drag.current?.frame) {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  finishDrag()
+                } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) openMenu(event, tab.id, true)
               },
             }, h('span', { className: 'dshSessionTabs__title', 'aria-hidden': 'true' }, tab.title), icon)
-          }))
+          }), canStartSession && h('button', {
+            className: 'dshSessionTabs__new', type: 'button', title: t('新建会话'), 'aria-label': t('新建会话'),
+            onPointerDown: () => { suppressClick.current = false },
+            onClick: () => child.uiWorkspace.startSession(),
+          }, '+'))
           return h(React.Fragment, null, createPortal(bar, seat), menu && tabs.some(tab => tab.id === menu.id) &&
             h(TabsMenu, { menu, count: tabs.length, dismiss: dismissMenu, select: closeTabs }))
         }
@@ -1990,12 +2192,88 @@ var React = require('react')
       }
     }
 
+    function sessionNavigationSettings(section) {
+      return {
+        sessionNavigationEnabled: section?.sessionNavigationEnabled !== false,
+        sessionNavigationShowOnNewSession: section?.sessionNavigationShowOnNewSession !== false,
+        sessionNavigationNewSessionPosition: section?.sessionNavigationNewSessionPosition === 'left' ? 'left' : 'right',
+      }
+    }
+
+    function createSessionNavigationSection(scope, navigation, checkSaved) {
+      return function SessionNavigationSection() {
+        useLocale(React)
+        const settings = React.useSyncExternalStore(navigation.subscribe, navigation.getState, navigation.getState)
+        const [busy, setBusy] = React.useState(false)
+        const [saveFailed, setSaveFailed] = React.useState(false)
+        const [positionOpen, setPositionOpen] = React.useState(false)
+        const disabled = busy || !settings.ready
+        const optionsDisabled = disabled || !settings.sessionNavigationEnabled
+        const showPositionMenu = positionOpen && !optionsDisabled
+
+        React.useEffect(() => {
+          if (optionsDisabled) setPositionOpen(false)
+        }, [optionsDisabled])
+
+        async function save(field, value) {
+          setBusy(true)
+          setSaveFailed(false)
+          try { checkSaved(await scope.set(field, value)) }
+          catch { setSaveFailed(true) }
+          finally { setBusy(false) }
+        }
+
+        function toggle(label, field, unavailable) {
+          const checked = settings[field]
+          const onChange = value => save(field, value)
+          return h('div', { className: 'dshSessionNavigation__row' },
+            h('span', null, label),
+            Switch ? h(Switch, { label, checked, disabled: unavailable, onChange }) :
+              h('input', { type: 'checkbox', role: 'switch', 'aria-label': label, checked, disabled: unavailable,
+                onChange: event => onChange(event.target.checked) }))
+        }
+
+        const positionLabel = t('新会话位置')
+        const position = settings.sessionNavigationNewSessionPosition
+        const positions = [{ id: 'left', label: t('最左') }, { id: 'right', label: t('最右') }]
+        const selectedLabel = positions.find(item => item.id === position)?.label
+        const positionProps = { className: 'dshSessionNavigation__position', 'aria-label': positionLabel, disabled: optionsDisabled }
+        function selectPosition(value) {
+          setPositionOpen(false)
+          if (value !== position) save('sessionNavigationNewSessionPosition', value)
+        }
+
+        return h('div', { className: 'dshSessionNavigation', 'aria-busy': busy },
+          toggle(t('启用会话导航'), 'sessionNavigationEnabled', disabled),
+          toggle(t('在新会话显示'), 'sessionNavigationShowOnNewSession', optionsDisabled),
+          h('div', { className: 'dshSessionNavigation__row' },
+            h('span', null, positionLabel),
+            Menu ? h(Menu, {
+              open: showPositionMenu, onClose: () => setPositionOpen(false), onSelect: selectPosition,
+              items: positions, selectedId: position, portal: true, align: 'end', autoFocus: true,
+              anchor: h('button', {
+                ...positionProps, type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': showPositionMenu,
+                'aria-description': selectedLabel,
+                onClick: () => setPositionOpen(open => !open),
+                onKeyDown: event => {
+                  if (showPositionMenu || !['ArrowDown', 'ArrowUp'].includes(event.key)) return
+                  event.preventDefault()
+                  setPositionOpen(true)
+                },
+              }, selectedLabel, ChevronDown && h(ChevronDown, { 'aria-hidden': true })),
+            }) : h('select', { ...positionProps, value: position, onChange: event => selectPosition(event.target.value) },
+              positions.map(({ id, label }) => h('option', { key: id, value: id }, label)))),
+          saveFailed ? h('p', { className: 'dshSessionNavigation__error', role: 'alert' }, t('会话导航设置保存失败，请重试。')) : null)
+      }
+    }
+
     function apply(ctx) {
+      const navigation = createStore({ ...sessionNavigationSettings(), ready: false })
       bindSettingsLauncher(ctx)
       bindTranscriptViewport(ctx)
       bindConversationTabs(ctx)
       bindResidentConversationHeader(ctx)
-      bindSessionTabs(ctx)
+      bindSessionTabs(ctx, navigation)
       if (Tooltip) {
         var TriggerMenuTooltips = createTriggerMenuTooltips()
         ctx.slots.inject('shell.overlay', function () {
@@ -2006,14 +2284,14 @@ var React = require('react')
         // Settings still owns the same device preference if the title bar's
         // client contribution is temporarily unmounted or reloaded.
         window.__DSH_REMOTE_THEME__?.bind(child, child.configForms.get('ui-theme'))
-        applySettings(child, child.configForms.get('desktop-appearance'))
+        applySettings(child, child.configForms.get('desktop-appearance'), navigation)
       })
       ctx.inject(['settingsScope'], function (child) {
-        applySettings(child, child.settingsScope.bind({ namespace: 'desktop-appearance' }))
+        applySettings(child, child.settingsScope.bind({ namespace: 'desktop-appearance' }), navigation)
       })
     }
 
-    function applySettings(ctx, scope) {
+    function applySettings(ctx, scope, navigation) {
       var theme = ctx.theme
 
       // configForms returns false for refused writes; the old scope resolves void.
@@ -2050,6 +2328,16 @@ var React = require('react')
         var section = snap.value
         return section && typeof section === 'object' ? section : undefined
       }
+
+      ctx.effect(function () {
+        function syncNavigation() {
+          const section = loadedSection()
+          navigation.update(section ? { ...sessionNavigationSettings(section), ready: true } : { ready: false })
+        }
+        const unsubscribe = scope.subscribe(syncNavigation)
+        syncNavigation()
+        return unsubscribe
+      }, 'desktop-appearance: session navigation preferences')
 
       /**
        * Read the persisted animation preference.
@@ -2687,7 +2975,9 @@ var React = require('react')
        */
       var sectionEntry = null
       var soundEntry = null
+      var navigationEntry = null
       var SoundSection = createSoundSection(scope)
+      var SessionNavigationSection = createSessionNavigationSection(scope, navigation, checkSaved)
 
       /**
        * Whether the `settings.section` slot has been declared yet.
@@ -2730,6 +3020,8 @@ var React = require('react')
         )
         soundEntry = ctx.slots.register({ name: 'settings.section', id: 'sound-notifications', order: 5.5,
           label: function () { return t('声音提醒') }, children: {} }, SoundSection)
+        navigationEntry = ctx.slots.register({ name: 'settings.section', id: 'session-navigation', order: 5.75,
+          label: function () { return t('会话导航') }, children: {} }, SessionNavigationSection)
       }
 
       /**
@@ -2739,6 +3031,7 @@ var React = require('react')
        * their own.
        */
       function unmountSection() {
+        if (navigationEntry) { navigationEntry(); navigationEntry = null }
         if (soundEntry) { soundEntry(); soundEntry = null }
         if (sectionEntry === null) return
         var dispose = sectionEntry

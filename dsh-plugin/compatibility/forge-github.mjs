@@ -1,7 +1,9 @@
 import * as nodeModule from 'node:module'
+import { join } from 'node:path'
 
 const providerEntry = /^file:.*\/node_modules\/@deepseek-ai\/dsh-experimental-forge-github\/lib\/index\.js(?:[?#]|$)/
 const queryField = 'query='
+const missingCli = 'GitHub CLI (gh) was not found.'
 
 export function withGitHubGraphqlInput(execa) {
   return (file, args, options) => {
@@ -20,6 +22,43 @@ export function withGitHubGraphqlInput(execa) {
   }
 }
 
+function windowsEnv(env, name) {
+  const key = Object.keys(env).sort().find(key => key.toUpperCase() === name)
+  return key === undefined ? undefined : env[key]
+}
+
+export function withGitHubCliCompatibility(execa) {
+  const run = withGitHubGraphqlInput(execa)
+  const systemRoot = windowsEnv(process.env, 'SYSTEMROOT')
+  if (!systemRoot) return run
+  const where = join(systemRoot, 'System32', 'where.exe')
+  const pendingLookups = new Map()
+
+  return async (file, args, options) => {
+    if (!/^gh(?:\.exe)?$/i.test(file) || options?.reject !== false) return run(file, args, options)
+
+    const { cwd, env, extendEnv, cancelSignal } = options
+    cancelSignal?.throwIfAborted()
+    const searchEnv = extendEnv === false && env ? env : { ...process.env, ...env }
+    const key = JSON.stringify([file, cwd ?? process.cwd(), windowsEnv(searchEnv, 'PATH'), windowsEnv(searchEnv, 'PATHEXT')])
+    let lookup = pendingLookups.get(key)
+    if (!lookup) {
+      // Execa can fall back to cmd.exe for an unresolved command. Probe once
+      // for concurrent reads so its localized stderr never reaches the UI.
+      lookup = Promise.resolve().then(() => execa(where, [file], {
+        cwd, env, extendEnv, reject: false, timeout: 3000, windowsHide: true, stdio: 'ignore',
+      })).then(result => result.exitCode === 1, () => false).finally(() => pendingLookups.delete(key))
+      pendingLookups.set(key, lookup)
+    }
+    const missing = await lookup
+    cancelSignal?.throwIfAborted()
+    if (missing) return { code: 'ENOENT', shortMessage: missingCli }
+
+    const result = await run(file, args, options)
+    return result?.code === 'ENOENT' ? { ...result, shortMessage: missingCli } : result
+  }
+}
+
 export function installGitHubCliHook() {
   if (process.platform !== 'win32' || typeof nodeModule.registerHooks !== 'function') return
 
@@ -30,10 +69,10 @@ export function installGitHubCliHook() {
     // Adapt only this provider's import, preserving the runtime's original
     // Execa dependency and the provider's identity in the DSH plugin loader.
     const dependency = JSON.stringify(original.url)
-    const source = `import { withGitHubGraphqlInput } from ${JSON.stringify(import.meta.url)};
+    const source = `import { withGitHubCliCompatibility } from ${JSON.stringify(import.meta.url)};
 import { execa as original } from ${dependency};
 export * from ${dependency};
-export const execa = withGitHubGraphqlInput(original);`
+export const execa = withGitHubCliCompatibility(original);`
     return { url: `data:text/javascript,${encodeURIComponent(source)}`, format: 'module', shortCircuit: true }
   } })
 }

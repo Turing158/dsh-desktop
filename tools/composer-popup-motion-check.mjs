@@ -4,19 +4,14 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
 const source = readFileSync('dsh-plugin/ui-overlay/dom.js', 'utf8').replace(/\r\n/g, '\n')
-const gate = source.slice(source.indexOf('  function animationsActive()'), source.indexOf('\n  /** Animate navigation'))
-const ghosts = source.slice(source.indexOf('  function ghostKindFor('), source.indexOf('\n  /**\n   * The one open menu'))
+const startup = '\n  watchRemovalGhosts()\n'
+assert.ok(source.includes(startup))
+const overlay = source.replace(startup, '\n  window.popupExitKind = ghostKindFor' + startup)
 const browser = await chromium.launch({ headless: true, channel: 'msedge' })
 try {
   const page = await browser.newPage()
   await page.setContent(`<style>${readFileSync('dsh-plugin/ui-overlay/theme.css', 'utf8')}</style>`)
-  await page.addScriptTag({ content: `
-    var GHOST_ATTRIBUTE='data-dsh-ghost', GHOST_MENU='menu', GHOST_LAYER='layer', GHOST_COLLAPSE='collapse',
-      COLLAPSE_ATTRIBUTE='data-dsh-chrome', COLLAPSE_BODY='collapse-body', GHOST_MAX_LIFETIME_MS=240;
-    function isVanilla(){return document.documentElement.dataset.dshUi==='vanilla'}
-    function isRemotePage(){return false}
-    function isOffsetFullSurfaceLayer(){return false}
-    ${gate}\n${ghosts}\nwatchRemovalGhosts();` })
+  await page.addScriptTag({ content: overlay })
   const show = kind => page.evaluate(kind => {
     const node = document.createElement('div')
     node.id = 'popup'
@@ -55,12 +50,38 @@ try {
   await page.evaluate(() => {
     document.documentElement.dataset.dshUi = 'desktop'
     document.documentElement.dataset.dshDesktopAnimation = 'on'
+    const menu = document.createElement('div')
+    menu.id = 'inline-submenu-parent'
+    menu.setAttribute('role', 'menu')
+    menu.style.cssText = 'position:fixed;left:300px;top:180px'
+    menu.innerHTML = `<div><button role="menuitem">Parent item</button>
+      <div role="menu" data-dsh-desktop="nested-menu" style="--dsh-menu-left:440px;--dsh-menu-top:180px">
+        <button role="menuitem">Child item</button>
+      </div></div>`
+    document.body.append(menu)
+  })
+  const inlineMenu = await page.locator('#inline-submenu-parent').evaluate(async menu => {
+    await Promise.all(menu.getAnimations({ subtree: true }).map(animation => animation.finished))
+    const submenu = menu.querySelector('[data-dsh-desktop="nested-menu"]')
+    const before = submenu.getBoundingClientRect().toJSON()
+    menu.remove()
+    await new Promise(requestAnimationFrame)
+    const ghost = document.querySelector('[data-dsh-ghost="menu"] [data-dsh-desktop="nested-menu"]')
+    return { before, after: ghost.getBoundingClientRect().toJSON(), animation: getComputedStyle(ghost).animationName }
+  })
+  assert.deepEqual(inlineMenu.after, inlineMenu.before, 'the submenu fades with its parent in place')
+  assert.equal(inlineMenu.animation, 'none', 'the exiting submenu does not replay its entrance')
+  await page.waitForFunction(() => !document.querySelector('[data-dsh-ghost]'))
+  console.log('PASS: dismissing a parent menu keeps its inline submenu in place')
+
+  await page.evaluate(() => {
     const layer = document.createElement('div')
-    layer.setAttribute('data-dsh-chrome', 'layer')
     layer.setAttribute('role', 'presentation')
+    layer.style.cssText = 'position:fixed;inset:0'
     layer.innerHTML = '<div id="settings-panel" class="fixture_panel" role="dialog" aria-modal="true"><section id="plugin-details"></section></div>'
     document.body.append(layer)
   })
+  await page.locator('[data-dsh-chrome="layer"] > #settings-panel').waitFor({ state: 'attached' })
   await page.waitForFunction(() => !document.getElementById('settings-panel').getAnimations().length)
   for (const contents of ['<dl><dt>Plugin</dt><dd>Enabled</dd></dl>', '', '<div><span class="fixture_percent">50%</span></div>', '']) {
     const result = await page.evaluate(async contents => {
@@ -68,7 +89,7 @@ try {
       await new Promise(requestAnimationFrame)
       const panel = document.getElementById('settings-panel')
       return { animation: getComputedStyle(panel).animationName, running: panel.getAnimations().length,
-        opacity: getComputedStyle(panel).opacity, exitKind: ghostKindFor(panel) }
+        opacity: getComputedStyle(panel).opacity, exitKind: window.popupExitKind(panel) }
     }, contents)
     assert.deepEqual(result, { animation: 'dsh-desktop-panel-in', running: 0, opacity: '1', exitKind: 'layer' })
   }

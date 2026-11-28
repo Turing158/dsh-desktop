@@ -399,8 +399,10 @@ function apply(ctx, rawConfig) {
     // (fence 403 / spent login / unreachable host) — failures the upstream
     // connection pill reports as a bare "disconnected". Functional, so it
     // rides in 原版 too, like the terminal assets below.
-    const noteAsset = readAsset(join(HERE, 'ui-overlay', 'connection-note.js'), ctx)
-    if (noteAsset !== undefined) table.push({ kind: 'script', placement: 'head', text: neutralise(noteAsset, 'script') })
+    for (const file of ['connection-note.js', 'forge-notices.js']) {
+      const asset = readAsset(join(HERE, 'ui-overlay', file), ctx)
+      if (asset !== undefined) table.push({ kind: 'script', placement: 'head', text: neutralise(asset, 'script') })
+    }
     // Functional assets survive 原版 and load before the client plugin mounts.
     for (const [file, kind, tag] of [['terminal.css', 'style', 'style'], ['terminal.js', 'script', 'script']]) {
       const asset = readAsset(join(HERE, 'sidebar-terminal', 'assets', file), ctx)

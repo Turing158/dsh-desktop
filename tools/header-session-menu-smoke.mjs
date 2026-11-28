@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
-import { offlineModelPatch, handleOnboarding, dismissInitialWelcome } from './dsh-ui-helpers.mjs'
+import { offlineModelPatch, handleOnboarding, dismissInitialWelcome, openDshSettings } from './dsh-ui-helpers.mjs'
 
 const require = createRequire(import.meta.url)
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'C:/Users/Turing_ICE/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright')
@@ -76,10 +76,19 @@ try {
   return ids
  },root)
  const tabs=page.locator('.dshSessionTabs')
- const tabA=tabs.locator('[data-dsh-session-tab="'+ids[0]+'"]')
- const tabB=tabs.locator('[data-dsh-session-tab="'+ids[1]+'"]')
+ const tabButtons=tabs.locator('[data-dsh-session-tab]')
+ const newTab=tabs.getByRole('button',{name:'新建会话',exact:true})
+ const sessionTab=id=>tabs.locator('[data-dsh-session-tab="'+id+'"]')
+ const tabA=sessionTab(ids[0]),tabB=sessionTab(ids[1])
  const sessionRow=id=>page.locator('[role="treeitem"][data-row-key="session:'+id+'"]')
  const tabMenu=page.locator('[role="menu"].dshSessionTabs__menu:not([data-dsh-ghost])')
+ async function checkTabMenuPosition(x,y){
+  await tabMenu.waitFor()
+  await tabMenu.evaluate(node=>Promise.all(node.getAnimations().map(animation=>animation.finished.catch(()=>{}))))
+  const menuBounds=await tabMenu.boundingBox()
+  assert.ok(Math.abs(menuBounds.x-x)<=1&&Math.abs(menuBounds.y-y-4)<=1,
+   `session tab menu at (${menuBounds.x}, ${menuBounds.y}) opened from (${x}, ${y})`)
+ }
  const trigger=page.getByRole('button',{name:'更多操作',exact:true})
  const viewToggle=page.locator('.dshConversationViewToggle')
  const sidebarClosed=page.locator('[class*="_frame"][data-sidebar-collapsed]')
@@ -99,8 +108,13 @@ try {
    list.set({...state,byId:{...state.byId,...Object.fromEntries(ids.map(id=>[id,{...state.byId[id],blank:false}]))}})
   },ids)
  }
- await page.locator('[data-conversation-tabs] .dshSessionTabs').waitFor()
+ await tabs.waitFor()
  await viewToggle.waitFor()
+ await page.waitForFunction(()=>{
+  const view=document.querySelector('.dshConversationViewToggle')?.getBoundingClientRect()
+  const rail=document.querySelector('.dshSessionTabs')?.getBoundingClientRect()
+  return view&&rail&&rail.left>=view.right&&Math.abs(view.bottom-rail.bottom)<=1
+ })
  const headerSelectors=['header:has([data-conversation-header-leading])','[data-conversation-header-leading]',
   '[data-conversation-tabs]','.dshConversationViewToggle','.dshSessionTabs']
  const originalHeader=await page.evaluateHandle(selectors=>selectors.map(selector=>document.querySelector(selector)),headerSelectors)
@@ -137,7 +151,7 @@ try {
  await originalHeader.dispose()
  await restoreSummaries.evaluate(restore=>restore())
  await restoreSummaries.dispose()
- assert.deepEqual(await tabs.getByRole('button').evaluateAll(nodes=>nodes.map(node=>node.title)),['Header A','Header B'])
+ assert.deepEqual(await tabButtons.evaluateAll(nodes=>nodes.map(node=>node.title)),['Header A','Header B'])
  pass('session switches keep the conversation header and view row mounted while the title and active tab update')
  await page.waitForFunction(()=>{
   const current=document.querySelector('.dshSessionTabs [aria-current="true"]')
@@ -163,33 +177,124 @@ try {
  const narrowBounds=await tabs.boundingBox()
  assert.ok(narrowBounds.x>=0&&narrowBounds.x+narrowBounds.width<=390)
  await page.setViewportSize({width:1280,height:840})
- await tabB.click({button:'right'})
+ await tabB.scrollIntoViewIfNeeded()
+ const tabBounds=await tabB.boundingBox()
+ const clickX=Math.round(tabBounds.x+tabBounds.width*.75), clickY=Math.round(tabBounds.y+tabBounds.height*.5)
+ await page.mouse.click(clickX,clickY,{button:'right'})
+ await checkTabMenuPosition(clickX,clickY)
  assert.deepEqual(await tabMenu.getByRole('menuitem').allTextContents(),['关闭该标签','关闭其他标签','关闭所有标签'])
+ async function waitForActiveTab(id){
+  const activeTab=sessionTab(id).and(tabs.locator('[aria-current="true"]'))
+  await activeTab.waitFor({state:'attached'})
+  // Reopening a fixture can reload the empty on-disk session and lose its synthetic turn.
+  await page.evaluate(id=>{
+   const {sessions}=window.__MOTION_SMOKE__
+   const session=sessions.binding(id)?.session.getSnapshot()
+   const title=sessions.list.getSnapshot().byId[id]?.title
+   if(title&&session?.blank&&!session.promptAttempted)window.__showMenuSession(id,title)
+  },id)
+  await activeTab.waitFor()
+ }
+ async function reopenTab(id){
+  await setSidebar(true)
+  await exposeSessionRows()
+  await sessionRow(id).click()
+  await waitForActiveTab(id)
+ }
+ async function closeTab(tab,action='关闭该标签'){
+  await tab.click({button:'right'})
+  await tabMenu.getByRole('menuitem',{name:action,exact:true}).click()
+  await tab.waitFor({state:'detached'})
+ }
+ async function expectNewSession(tab,action){
+  const existing=await page.evaluate(()=>window.__MOTION_SMOKE__.sessions.list.getSnapshot().ids)
+  await closeTab(tab,action)
+  await page.waitForFunction(existing=>{
+   const list=window.__MOTION_SMOKE__.sessions.list.getSnapshot()
+   const current=list.current??list.ids.find(id=>list.byId[id]?.retainedBy?.mainView>0)
+   const openTabs=Array.from(document.querySelectorAll('.dshSessionTabs [data-dsh-session-tab]'))
+   return current&&!existing.includes(current)&&list.byId[current]?.blank&&
+    openTabs.length===1&&openTabs[0].dataset.dshSessionTab===current
+  },existing)
+  await tabs.waitFor({state:'visible'})
+ }
  await tabMenu.getByRole('menuitem',{name:'关闭其他标签',exact:true}).click()
  await tabA.waitFor({state:'detached'})
- await setSidebar(true)
- await exposeSessionRows()
- assert.equal(await sessionRow(ids[0]).getAttribute('aria-selected'),'true')
- await sessionRow(ids[0]).click()
- await tabA.waitFor()
+ await waitForActiveTab(ids[1])
+ await reopenTab(ids[0])
+ await tabA.scrollIntoViewIfNeeded()
+ const keyboardBounds=await tabA.boundingBox()
  await tabA.press('Shift+F10')
  await page.waitForFunction(()=>document.activeElement?.textContent==='关闭该标签')
+ await checkTabMenuPosition(keyboardBounds.x,keyboardBounds.y+keyboardBounds.height)
  await page.keyboard.press('Escape')
  await tabMenu.waitFor({state:'detached'})
  assert.equal(await tabA.evaluate(node=>document.activeElement===node),true)
- await tabA.click({button:'right'})
- await tabMenu.getByRole('menuitem',{name:'关闭该标签',exact:true}).click()
- await tabA.waitFor({state:'detached'})
- await tabB.click({button:'right'})
- await tabMenu.getByRole('menuitem',{name:'关闭所有标签',exact:true}).click()
- await tabs.waitFor({state:'detached'})
- await setSidebar(true)
- await exposeSessionRows()
- assert.equal(await sessionRow(ids[0]).getAttribute('aria-selected'),'true')
- await sessionRow(ids[0]).click()
- await tabA.waitFor()
+ await tabB.click()
+ await waitForActiveTab(ids[1])
+ await closeTab(tabA)
+ await waitForActiveTab(ids[1])
+ await reopenTab(ids[0])
+ await closeTab(tabA)
+ await waitForActiveTab(ids[1])
+ await reopenTab(ids[0])
+ const extraId=await page.evaluate(async sessionId=>{
+  const c=window.__MOTION_SMOKE__
+  const {workspaceId}=c.workspaces.list.getSnapshot().items.find(item=>item.sessionIds.includes(sessionId))
+  const id=await c.sessions.create({workspaceId})
+  c.uiWorkspace.openSession(id)
+  await c.sessions.binding(id).session.rename('Header C')
+  window.__showMenuSession(id,'Header C')
+  return id
+ },ids[0])
+ const tabC=sessionTab(extraId)
+ await waitForActiveTab(extraId)
+ const tabIds=()=>tabButtons.evaluateAll(nodes=>nodes.map(node=>node.dataset.dshSessionTab))
+ assert.deepEqual(await tabIds(),[ids[1],ids[0],extraId])
+ async function grabTab(tab){
+  const bounds=await tab.boundingBox()
+  await page.mouse.move(bounds.x+bounds.width/2,bounds.y+bounds.height/2)
+  await page.mouse.down()
+ }
+ async function moveOverTab(tab,fraction){
+  const bounds=await tab.boundingBox()
+  await page.mouse.move(bounds.x+bounds.width*fraction,bounds.y+bounds.height/2,{steps:5})
+ }
+ await grabTab(tabA)
+ await moveOverTab(tabB,.25)
+ await tabB.and(tabs.locator('[data-drop-side="start"]')).waitFor()
+ await page.mouse.up()
+ assert.deepEqual(await tabIds(),[ids[0],ids[1],extraId])
+ await waitForActiveTab(extraId)
+ await grabTab(tabC)
+ await moveOverTab(tabA,.25)
+ await tabA.and(tabs.locator('[data-drop-side="start"]')).waitFor()
+ await page.mouse.move(20,200)
+ await page.mouse.up()
+ assert.deepEqual(await tabIds(),[ids[0],ids[1],extraId])
+ assert.equal(await tabs.locator('[data-dragging], [data-drop-side]').count(),0)
+ await grabTab(tabA)
+ await moveOverTab(tabB,.75)
+ await page.mouse.up()
+ assert.deepEqual(await tabIds(),[ids[1],ids[0],extraId])
+ await waitForActiveTab(extraId)
+ pass('dragging reorders session tabs in both directions and an outside drop cancels without switching sessions')
+ await tabA.click()
+ await waitForActiveTab(ids[0])
+ await closeTab(tabA)
+ await waitForActiveTab(extraId)
+ await tabB.click()
+ await waitForActiveTab(ids[1])
+ await closeTab(tabB)
+ await waitForActiveTab(extraId)
+ await expectNewSession(tabC)
+ await reopenTab(ids[0])
+ await reopenTab(ids[1])
+ await expectNewSession(tabB,'关闭所有标签')
+ await reopenTab(ids[0])
+ await page.evaluate(id=>window.__showMenuSession(id,'Header A'),ids[0])
  await setSidebar(false)
- pass('session tabs follow navigation and titles, animate by preference, and close or reopen independently of sessions')
+ pass('closing tabs selects the next or previous session, keeps an unaffected selection, and starts a new session when empty')
  const menu=page.locator('[role="menu"][data-dsh-header-session-id]:not([data-dsh-ghost])')
  async function open(){await trigger.click();await menu.waitFor();await menu.locator('[data-dsh-desktop="reveal-item"]').waitFor()}
  async function close(){await page.keyboard.press('Escape');await page.waitForTimeout(220)}
@@ -473,7 +578,7 @@ try {
   function measure(){
    const toggle=document.querySelector('.dshConversationViewToggle'), strip=document.querySelector('.dshSessionTabs')
    const view=toggle?.getBoundingClientRect(), rail=strip?.getBoundingClientRect()
-   samples.push({sameRow:toggle?.parentElement===strip?.parentElement&&Boolean(view&&rail)&&view.bottom>rail.top&&rail.bottom>view.top,
+   samples.push({sameRow:toggle?.closest('header')===strip?.closest('header')&&Boolean(view&&rail)&&view.bottom>rail.top&&rail.bottom>view.top&&rail.left>=view.right,
     width:strip?.clientWidth, scrollWidth:strip?.scrollWidth})
    frame=requestAnimationFrame(measure)
   }
@@ -492,6 +597,17 @@ try {
  assert.ok(samples.at(-1).width<samples[0].width,'restoring the sidebar shrinks the session strip')
  assert.ok(samples.at(-1).scrollWidth>samples.at(-1).width,'overflowing tabs scroll within the sidebar-constrained row')
  pass('switching to a session with a right sidebar keeps the view switch and horizontally scrolling tabs on one line')
+ const overflowIds=await tabIds()
+ await tabs.evaluate(strip=>{strip.scrollLeft=0})
+ await grabTab(sessionTab(overflowIds[0]))
+ const stripBounds=await tabs.boundingBox()
+ await page.mouse.move(stripBounds.x+stripBounds.width-3,stripBounds.y+stripBounds.height/2,{steps:8})
+ await sessionTab(overflowIds.at(-1)).and(tabs.locator('[data-drop-side="end"]')).waitFor()
+ await page.mouse.up()
+ assert.deepEqual(await tabIds(),[...overflowIds.slice(1),overflowIds[0]])
+ await waitForActiveTab(ids[1])
+ assert.ok(await tabs.evaluate(strip=>strip.scrollLeft>0),'the dropped tab stays in view after scrolling')
+ pass('dragging to the tab strip edge scrolls to offscreen tabs and reorders across them')
  for(const [position,left,right] of [[0,false,true],[0.5,true,true],[1,true,false]]){
   await tabs.evaluate((strip,position)=>{strip.scrollLeft=(strip.scrollWidth-strip.clientWidth)*position},position)
   await page.waitForFunction(({left,right})=>{
@@ -507,6 +623,116 @@ try {
   return strip.scrollWidth===strip.clientWidth&&['left','right'].every(edge=>style.getPropertyValue(`--dsh-session-tabs-${edge}-alpha`)==='1')
  })
  pass('8px edge fades follow both scroll boundaries and clear when the tabs fit')
+ await sessionTab(ids[1]).click({button:'right'})
+ await tabMenu.getByRole('menuitem',{name:'关闭其他标签',exact:true}).click()
+ await page.waitForFunction(()=>document.querySelectorAll('.dshSessionTabs [data-dsh-session-tab]').length===1)
+ await waitForActiveTab(ids[1])
+ await viewToggle.waitFor()
+ await page.evaluate(()=>{
+  const {sidebarRight}=window.__MOTION_SMOKE__
+  for(const tab of sidebarRight.openTabs.getSnapshot())sidebarRight.close(tab.tabId)
+ })
+ await rightPanel.waitFor({state:'detached'})
+ await page.setViewportSize({width:390,height:840})
+ const tabPosition=()=>tabs.evaluate(strip=>{
+  const {x,y}=strip.getBoundingClientRect()
+  return {x,y}
+ })
+ const activePosition=await tabPosition()
+ const sampleTabPositions=await tabs.evaluateHandle(strip=>{
+  const positions=[]
+  let frame=requestAnimationFrame(function sample(){
+   const {x,y,width}=strip.getBoundingClientRect()
+   positions.push(strip.isConnected&&width?{x,y}:null)
+   frame=requestAnimationFrame(sample)
+  })
+  return ()=>{cancelAnimationFrame(frame);return positions}
+ })
+ const blankTab=tabs.locator('[aria-current="true"]').and(page.locator('[data-phase="hero"] .dshSessionTabs__tab'))
+  .and(page.locator('[data-dsh-session-tab]:not([data-dsh-session-tab="'+ids[1]+'"])'))
+ await newTab.click()
+ await blankTab.waitFor()
+ const blankId=await blankTab.getAttribute('data-dsh-session-tab')
+ assert.deepEqual(await tabIds(),[ids[1],blankId])
+ assert.equal(await newTab.evaluate(button=>button.parentElement.lastElementChild===button&&button.textContent==='+'),true)
+ pass('the trailing plus creates and selects a new conversation')
+ assert.deepEqual(await tabPosition(),activePosition,'the session tabs stay in place when opening a blank conversation')
+ await sessionTab(ids[1]).click()
+ await waitForActiveTab(ids[1])
+ await viewToggle.waitFor()
+ assert.deepEqual(await tabPosition(),activePosition,'the session tabs stay in place when returning to a conversation')
+ await sessionTab(blankId).click()
+ await tabs.locator('[aria-current="true"]').and(sessionTab(blankId)).waitFor()
+ await viewToggle.waitFor({state:'detached'})
+ assert.deepEqual(await tabPosition(),activePosition,'switching to an open blank tab keeps the session tabs in place')
+ const positions=await sampleTabPositions.evaluate(stop=>stop())
+ await sampleTabPositions.dispose()
+ assert.ok(positions.length>0)
+ assert.deepEqual([...new Set(positions.map(position=>JSON.stringify(position)))],[JSON.stringify(activePosition)],
+  'the same tab strip stays in place throughout each transition')
+ pass('blank and populated conversations place their session tabs on the same row and inset')
+
+ await page.setViewportSize({width:1280,height:840})
+ await sessionTab(ids[1]).click()
+ await waitForActiveTab(ids[1])
+ const settings=page.locator('[data-shortcut-modal="settings"]:not([data-dsh-ghost] *)')
+ async function openNavigationSettings(){
+  await openDshSettings(page)
+  await settings.getByRole('button',{name:'会话导航',exact:true}).click()
+ }
+ async function closeNavigationSettings(){
+  await page.keyboard.press('Escape')
+  await settings.waitFor({state:'detached'})
+ }
+ await openNavigationSettings()
+ const enableNavigation=settings.getByRole('switch',{name:'启用会话导航',exact:true})
+ const showOnNew=settings.getByRole('switch',{name:'在新会话显示',exact:true})
+ const newPosition=settings.getByRole('button',{name:'新会话位置',exact:true})
+ const positionMenu=page.getByRole('menu').filter({has:page.getByRole('menuitem',{name:'最左',exact:true})})
+ const leftPosition=positionMenu.getByRole('menuitem',{name:'最左',exact:true})
+ const rightPosition=positionMenu.getByRole('menuitem',{name:'最右',exact:true})
+ assert.equal(await enableNavigation.isChecked(),true)
+ assert.equal(await showOnNew.isChecked(),true)
+ assert.equal(await newPosition.innerText(),'最右')
+ await enableNavigation.click()
+ await tabs.waitFor({state:'detached'})
+ assert.equal(await showOnNew.isDisabled(),true)
+ assert.equal(await newPosition.isDisabled(),true)
+ await enableNavigation.click()
+ await tabs.waitFor()
+ assert.deepEqual(await tabIds(),[ids[1],blankId])
+ await showOnNew.click()
+ await newPosition.click()
+ await rightPosition.locator('[class*="_check"]').waitFor()
+ assert.equal(await leftPosition.locator('[class*="_check"]').count(),0)
+ await page.keyboard.press('Escape')
+ await positionMenu.waitFor({state:'hidden'})
+ assert.equal(await newPosition.evaluate(button=>button===document.activeElement),true)
+ await newPosition.press('ArrowDown')
+ await leftPosition.waitFor()
+ await page.keyboard.press('Home')
+ await page.keyboard.press('Enter')
+ await positionMenu.waitFor({state:'hidden'})
+ await page.waitForFunction(()=>window.__MOTION_SMOKE__.configForms.get('desktop-appearance').getSnapshot().value?.sessionNavigationNewSessionPosition==='left')
+ await closeNavigationSettings()
+ await sessionTab(blankId).click()
+ await tabs.waitFor({state:'detached'})
+ await page.evaluate(id=>{
+  window.__MOTION_SMOKE__.uiWorkspace.openSession(id)
+  window.__showMenuSession(id,'Header B')
+ },ids[1])
+ await waitForActiveTab(ids[1])
+ await newTab.click()
+ await tabs.waitFor({state:'detached'})
+ await openNavigationSettings()
+ assert.equal(await showOnNew.isChecked(),false)
+ assert.equal(await newPosition.innerText(),'最左')
+ await showOnNew.click()
+ await tabs.waitFor({state:'attached'})
+ await closeNavigationSettings()
+ const leftBlankId=await tabs.locator('[aria-current="true"]').getAttribute('data-dsh-session-tab')
+ assert.deepEqual(await tabIds(),[leftBlankId,ids[1],blankId])
+ pass('session navigation settings hide the rail, control blank pages and insert new tabs on the chosen side')
 } catch(error) {
  report.error=error.stack
  report.pageErrors=errors

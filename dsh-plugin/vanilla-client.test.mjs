@@ -362,7 +362,7 @@ test('the plugin registers a settings section and a mode attribute on load', () 
   module.apply(ctx)
 
   assert.equal(state.injections, 1, 'the settings section slot must be injected')
-  assert.deepEqual([...state.sections.keys()], ['appearance', 'sound-notifications'], 'sound reminders follow appearance')
+  assert.deepEqual([...state.sections.keys()], ['appearance', 'sound-notifications', 'session-navigation'])
   assert.equal(state.sections.get('sound-notifications').order, 5.5)
   // Desktop is the default, and it is written explicitly so the page states it.
   assert.equal(document.mode(), 'desktop', 'the mode attribute must be set on load')
@@ -405,7 +405,7 @@ test('the menu request persists the mode, applies it, and announces it', () => {
   assert.equal(document.mode(), 'desktop')
   assert.deepEqual(state.writes, [['ui', 'vanilla'], ['ui', 'desktop']])
   assert.deepEqual(events, ['vanilla', 'desktop'])
-  assert.deepEqual([...state.sections.keys()], ['appearance', 'sound-notifications'], 'and must come back')
+  assert.deepEqual([...state.sections.keys()], ['appearance', 'sound-notifications', 'session-navigation'], 'and must come back')
 })
 
 test('an unknown mode in the request is ignored rather than applied', () => {
@@ -965,7 +965,8 @@ test('navigation transparency migrates separate settings and saves one shared va
   await new Promise(resolve => setImmediate(resolve))
   const slider = () => renderSection(state.sectionComponent,
     node => node.type === 'input' && node.props['aria-label'] === '标题栏与左边导航栏底色透明度')
-  assert.equal(slider().props.value, 15)
+  assert.equal(slider().props.value, 50)
+  assert.equal(document.bodyStyle.get('--dsh-background-navigation-opacity'), '0.5')
   for (const [section, expected] of [
     [{ backgroundLeftSurfaceTransparency: 60, backgroundTitlebarSurfaceTransparency: 20 }, 60],
     [{ backgroundLeftTransparency: 30, backgroundTitlebarSurfaceTransparency: 20 }, 70],

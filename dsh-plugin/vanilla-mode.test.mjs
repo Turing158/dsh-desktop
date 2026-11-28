@@ -239,6 +239,17 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
   }
   assert.throws(() => rehydrated({ notifications: { sound: 'invalid' } }), /sound/)
 
+  const sessionNavigation = {
+    sessionNavigationEnabled: false,
+    sessionNavigationShowOnNewSession: false,
+    sessionNavigationNewSessionPosition: 'left',
+  }
+  assert.deepEqual(rehydrated(sessionNavigation), module.normalize(sessionNavigation))
+  for (const [field, value] of Object.entries({ sessionNavigationEnabled: 'false', sessionNavigationShowOnNewSession: 0, sessionNavigationNewSessionPosition: 'middle' })) {
+    assert.throws(() => rehydrated({ [field]: value }), new RegExp(field))
+    assert.deepEqual(module.SettingsSchema['~standard'].validate({ [field]: value }).issues[0].path, [field])
+  }
+
   assert.deepEqual(rehydrated({}), {
     animation: 'system',
     ui: 'desktop',
@@ -366,6 +377,7 @@ test('the hand-written envelope rehydrates and validates like a compiled schema'
     'notifications',
     'popupFrostedIntensity', 'popupGlassIntensity', 'popupMaterial', 'popupTransparency',
     'reasoningControl',
+    'sessionNavigationEnabled', 'sessionNavigationNewSessionPosition', 'sessionNavigationShowOnNewSession',
     'titlebar',
     'titlebarHover',
     'ui',

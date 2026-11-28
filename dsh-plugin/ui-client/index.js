@@ -52,6 +52,11 @@ const REASONING_CONTROL_FIELD = 'reasoningControl'
 const REASONING_CONTROLS = ['select', 'slider']
 const COLOR_SCHEME_FIELD = 'colorScheme'
 const COLOR_SCHEMES = ['default', 'blue', 'teal', 'moss', 'violet', 'amber', 'rose']
+const SESSION_NAVIGATION_VALUES = {
+  sessionNavigationEnabled: [true, false],
+  sessionNavigationShowOnNewSession: [true, false],
+  sessionNavigationNewSessionPosition: ['left', 'right'],
+}
 
 // Store the imported clip with the preferences so it survives port changes,
 // profile backups and moving the original file. The client converts to PCM WAV.
@@ -225,6 +230,12 @@ function normalize(value) {
   }
 
   const section = { [ANIMATION_FIELD]: animation, [UI_MODE_FIELD]: ui, [TITLEBAR_MODE_FIELD]: titlebar, [TITLEBAR_HOVER_FIELD]: titlebarHover }
+  for (const [field, accepted] of Object.entries(SESSION_NAVIGATION_VALUES)) {
+    const preference = value[field]
+    if (preference === undefined) continue
+    if (!accepted.includes(preference)) return undefined
+    section[field] = preference
+  }
   if (value.notifications !== undefined) {
     const notifications = notificationSettings(value.notifications)
     if (!notifications) return undefined
@@ -349,11 +360,16 @@ const SCHEMA_ENVELOPE = {
     76: { type: 'const', meta: { required: true }, value: 'rose' },
     77: { type: 'union', list: [71, 72, 78, 73, 74, 75, 76] },
     78: { type: 'const', meta: { required: true }, value: 'teal' },
+    98: { type: 'boolean' },
+    99: { type: 'const', meta: { required: true }, value: 'left' },
+    100: { type: 'const', meta: { required: true }, value: 'right' },
+    101: { type: 'union', list: [99, 100] },
     // The object schema itself, including optional appearance preferences.
     14: {
       type: 'object',
       meta: { default: {} },
-      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, dialogMaterial: 64, popupMaterial: 64, reasoningControl: 70, colorScheme: 77 },
+      dict: { animation: 7, ui: 13, fontSizeOverride: 22, titlebar: 28, titlebarHover: 34, composerMaterial: 64, dialogMaterial: 64, popupMaterial: 64, reasoningControl: 70, colorScheme: 77,
+        sessionNavigationEnabled: 98, sessionNavigationShowOnNewSession: 98, sessionNavigationNewSessionPosition: 101 },
     },
   },
 }
@@ -478,6 +494,7 @@ SettingsSchema['~standard'] = {
       const badBackground = Object.keys(BACKGROUND_FIELDS).find(field => raw[field] !== undefined && normalize({ [field]: raw[field] }) === undefined)
       if (badBackground) return { issues: [{ message: badBackground + ' contains an invalid background setting', path: [badBackground] }] }
       const fieldValues = [
+        ...Object.entries(SESSION_NAVIGATION_VALUES),
         [COLOR_SCHEME_FIELD, COLOR_SCHEMES],
         [UI_MODE_FIELD, UI_MODES],
         [FONT_SIZE_OVERRIDE_FIELD, FONT_SIZE_OVERRIDES],

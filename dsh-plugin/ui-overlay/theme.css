@@ -134,9 +134,13 @@ html:not([data-dsh-ui='vanilla']) body {
   --dsh-session-tab-motion-duration: 180ms;
 }
 
-html:not([data-dsh-ui='vanilla']) body [data-conversation-tabs]:has(> .dshSessionTabs) {
+html:not([data-dsh-ui='vanilla']) body :is([data-conversation-tabs]:has(> .dshSessionTabs), header:has(> .dshSessionTabs) [data-conversation-tabs]) {
   gap: 12px;
   min-width: 0;
+}
+
+html:not([data-dsh-ui='vanilla']) body header:has(> .dshSessionTabs) :is([data-conversation-tabs], :has(> [data-conversation-tabs])) {
+  grid-row: 2;
 }
 
 /* A sidebar can narrow the header while a long tab strip is still visible. */
@@ -185,42 +189,82 @@ html:not([data-dsh-ui='vanilla']) body .dshSessionTabs[data-overflow-right] {
   --dsh-session-tabs-right-alpha: 0;
 }
 
-/* Single-view and blank conversations can have a header without a view row. */
+/* The session strip shares the second grid row with the optional view control. */
 html:not([data-dsh-ui='vanilla']) body header > .dshSessionTabs {
   grid-column: 1 / -1;
-  margin-block-start: 6px;
-  padding-inline-start: 8px;
+  grid-row: 2;
+  margin-block-start: 10px;
+  margin-inline-start: 7px;
+  z-index: 1;
 }
 
-html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab {
-  position: relative;
+html:not([data-dsh-ui='vanilla']) body :is(.dshSessionTabs__tab, .dshSessionTabs__new) {
   flex: none;
   box-sizing: border-box;
-  width: max-content;
-  min-width: 72px;
-  max-width: 192px;
   height: 26px;
-  padding: 0 10px;
-  overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2, rgb(128 128 128 / 25%));
   border-radius: 8px 8px 0 0;
   background: var(--dsw-alias-turn-trigger-bg);
   color: var(--dsw-alias-label-primary, inherit);
   font: inherit;
+  cursor: pointer;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab {
+  position: relative;
+  width: max-content;
+  min-width: 72px;
+  max-width: 192px;
+  padding: 0 10px;
+  overflow: hidden;
   font-size: 12px;
   line-height: 24px;
   text-align: start;
-  cursor: pointer;
   transition: min-width var(--dsh-session-tab-motion-duration) ease,
     max-width var(--dsh-session-tab-motion-duration) ease,
     background-color var(--dsh-session-tab-motion-duration) ease;
 }
 
-html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab:hover {
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__new {
+  display: grid;
+  place-items: center;
+  inline-size: 32px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+html:not([data-dsh-ui='vanilla']) body :is(.dshSessionTabs__tab, .dshSessionTabs__new):hover {
   background: var(--dsw-alias-turn-trigger-bg-hover);
 }
 
-html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab:focus-visible {
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs[data-dsh-multiple-tabs] .dshSessionTabs__tab {
+  cursor: grab;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs[data-dragging],
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs[data-dragging] .dshSessionTabs__tab {
+  cursor: grabbing;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[data-dragging] {
+  opacity: .5;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[data-drop-side]::after {
+  content: '';
+  position: absolute;
+  inset-block: 2px 0;
+  inline-size: 2px;
+  border-radius: 2px;
+  background: var(--dsw-alias-link);
+  pointer-events: none;
+}
+
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[data-drop-side='start']::after { inset-inline-start: 0; }
+html:not([data-dsh-ui='vanilla']) body .dshSessionTabs__tab[data-drop-side='end']::after { inset-inline-end: 0; }
+
+html:not([data-dsh-ui='vanilla']) body :is(.dshSessionTabs__tab, .dshSessionTabs__new):focus-visible {
   outline: 2px solid var(--dsw-alias-link);
   outline-offset: -2px;
 }
@@ -1532,7 +1576,7 @@ html:not([data-dsh-ui='vanilla']) body :where([data-sidebar-right-panel] [class*
 /* Small composited movement leaves the menu's anchor coordinates untouched.
    Keep the animation when the reasoning slider changes the menu role to group.
    No fill: transforms disappear after entering, including for fixed submenus. */
-html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-dsh-reasoning-slider]):not([data-dsh-ghost]) {
+html:not([data-dsh-ui='vanilla']) body :is([role='menu'], [data-dsh-reasoning-slider]):not([data-dsh-ghost], [data-dsh-ghost] *) {
   transform-origin: top left;
   animation: dsh-desktop-menu-in 160ms cubic-bezier(.2, .8, .2, 1);
 }
@@ -1622,6 +1666,10 @@ html body [data-dsh-ghost] {
 html body [data-dsh-ghost='menu'] {
   transform-origin: top left;
   animation-name: dsh-desktop-menu-out;
+}
+/* Moving or scaling the parent would rebase its viewport-fixed submenu. */
+html body [data-dsh-ghost='menu']:has([data-dsh-desktop='nested-menu']) {
+  animation-name: dsh-desktop-fade-out;
 }
 html body [data-dsh-ghost='surface'],
 html body [data-dsh-ghost='layer'] [role='dialog'] {
@@ -2247,20 +2295,28 @@ html:not([data-dsh-ui='vanilla']) body :where([role='dialog'] [class*='_navList'
   outline-offset: -2px;
 }
 
-/* Settings navigation: palette and wireless display, drawn on the same 16px
-   grid and 1.3px outline as the neighbouring glyphs. Keep React's fallback icon
-   in its tree; the mask inherits the row colour in either theme and state. */
+/* Settings navigation glyphs use the same 16px grid and 1.3px outline as the
+   neighbouring glyphs. The mask inherits the row colour in either theme and
+   state, with React's fallback icon still in the tree. */
 @supports (mask-image: none) or (-webkit-mask-image: none) {
   html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-appearance'] {
     --dsh-settings-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.75C4.55 1.75 1.75 4.55 1.75 8s2.8 6.25 6.25 6.25h.75c1.25 0 1.9-1.5 1-2.4l-.15-.15c-.55-.55-.15-1.5.65-1.5h1.25c1.6 0 2.75-1.2 2.75-2.75C14.25 4.05 11.4 1.75 8 1.75Z' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cg fill='%23000'%3E%3Ccircle cx='5' cy='5.5' r='.8'/%3E%3Ccircle cx='8.5' cy='4.5' r='.8'/%3E%3Ccircle cx='11' cy='6.7' r='.8'/%3E%3Ccircle cx='4.5' cy='9' r='.8'/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-sound'] {
+    --dsh-settings-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M7.5 2.75 4.25 5.5H2.5a.75 .75 0 0 0-.75 .75v3.5a.75 .75 0 0 0 .75 .75h1.75l3.25 2.75zM10 5.5a3.5 3.5 0 0 1 0 5M12 3.5a6.35 6.35 0 0 1 0 9' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+
+  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-session-navigation'] {
+    --dsh-settings-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='1.75' y='2.75' width='12.5' height='10.5' rx='1.5'/%3E%3Cpath d='M1.75 6.5h12.5M6 2.75V6.5M10 2.75V6.5'/%3E%3C/svg%3E");
   }
 
   html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-remote'] {
     --dsh-settings-glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M7.75 3.25h-4.5c-.83 0-1.5.67-1.5 1.5v5c0 .83.67 1.5 1.5 1.5h9.5c.83 0 1.5-.67 1.5-1.5v-1.5M8 11.25v3M5.5 14.25h5M10.25 1.75a4 4 0 0 1 4 4M10.25 4.25a1.5 1.5 0 0 1 1.5 1.5' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='10.25' cy='6.5' r='.7' fill='%23000'/%3E%3C/svg%3E");
   }
 
-  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-appearance']::before,
-  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-remote']::before {
+  html:not([data-dsh-ui='vanilla']) body :is([data-dsh-desktop='settings-appearance'], [data-dsh-desktop='settings-sound'],
+    [data-dsh-desktop='settings-session-navigation'], [data-dsh-desktop='settings-remote'])::before {
     content: '';
     width: 16px;
     height: 16px;
@@ -2270,8 +2326,8 @@ html:not([data-dsh-ui='vanilla']) body :where([role='dialog'] [class*='_navList'
     mask: var(--dsh-settings-glyph) center / contain no-repeat;
   }
 
-  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-appearance'] > [class*='_navIcon'],
-  html:not([data-dsh-ui='vanilla']) body [data-dsh-desktop='settings-remote'] > [class*='_navIcon'] {
+  html:not([data-dsh-ui='vanilla']) body :is([data-dsh-desktop='settings-appearance'], [data-dsh-desktop='settings-sound'],
+    [data-dsh-desktop='settings-session-navigation'], [data-dsh-desktop='settings-remote']) > [class*='_navIcon'] {
     display: none;
   }
 }
@@ -4815,9 +4871,25 @@ html[data-dsh-desktop-animation='off'] .dshChanges button { transition: none; }
 .dshHistory__expanded .dshChanges__placeholder { min-height: 96px; padding: 12px; }
 
 /* Sound reminders share the settings page's spacing, surfaces and switches. */
-.dshSound { max-width: 640px; color: var(--dsw-alias-label-primary); font-size: 14px; }
-.dshSound__row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--dsw-alias-border-l2); }
-.dshSound__row > :last-child { flex-shrink: 0; }
+:is(.dshSound, .dshSessionNavigation) { max-width: 640px; color: var(--dsw-alias-label-primary); font-size: 14px; }
+:is(.dshSound__row, .dshSessionNavigation__row) { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+:is(.dshSound__row, .dshSessionNavigation__row) > :last-child { flex-shrink: 0; }
+.dshSessionNavigation__position {
+  box-sizing: border-box;
+  min-height: 36px;
+  min-width: 88px;
+  padding-inline: 12px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: inherit;
+  font: inherit;
+}
+button.dshSessionNavigation__position { display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+button.dshSessionNavigation__position svg { width: 12px; height: 12px; flex: none; color: var(--dsw-alias-label-secondary); }
+button.dshSessionNavigation__position:hover:not(:disabled) { background-color: var(--dsw-alias-interactive-bg-hover); }
+.dshSessionNavigation__position:disabled { opacity: .5; cursor: default; }
+.dshSessionNavigation__position:focus-visible { outline: 2px solid var(--dsw-alias-link); outline-offset: 2px; }
 .dshSound__label { font-size: 14px; font-weight: 500; line-height: 22px; }
 .dshSound__hint { margin: 4px 0 0; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 1.7; }
 .dshSound__effects { min-width: 0; margin: 24px 0 0; padding: 0; border: 0; }
@@ -4833,7 +4905,7 @@ html[data-dsh-desktop-animation='off'] .dshChanges button { transition: none; }
 .dshSound__effects:disabled { opacity: .5; }
 .dshSound button:disabled { cursor: default; }
 .dshSound__filename { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
-.dshSound__error { color: var(--dsw-alias-state-error-primary, #d74d64); font-size: 12px; line-height: 1.7; }
+:is(.dshSound__error, .dshSessionNavigation__error) { color: var(--dsw-alias-state-error-primary, #d74d64); font-size: 12px; line-height: 1.7; }
 @media (max-width: 560px) { .dshSound__options { grid-template-columns: 1fr; } }
 @container (max-width: 280px) {
   .dshHistory__refs { max-width: 38%; }

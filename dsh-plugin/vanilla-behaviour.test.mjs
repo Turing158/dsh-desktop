@@ -1534,6 +1534,32 @@ test('a closing menu is replayed as a fading ghost where it was portalled', () =
   )
 })
 
+test('a portalled submenu fades at its last visible position after losing its CSS anchor', () => {
+  const { document } = createPage()
+  const sandbox = runOverlay(document)
+  setMode(document, 'desktop')
+
+  const submenu = menu('_submenu_abc123')
+  let bounds = { left: 310, top: 201, width: 112, height: 45 }
+  submenu.getBoundingClientRect = () => bounds
+  document.body.append(submenu)
+  sandbox.deliverAdded([{ type: 'childList', target: document.body, addedNodes: [submenu] }])
+  // The upstream portal sets its layout attribute once the submenu is measured.
+  submenu.setAttribute('data-submenu-layout', 'side')
+  sandbox.deliverAttribute(submenu, 'data-submenu-layout')
+  bounds = { ...bounds, left: 350 }
+  document.dispatchEvent({ type: 'pointerout', target: document.body })
+
+  document.body.removeChild(submenu)
+  sandbox.deliverRemoval([{ type: 'childList', target: document.body, removedNodes: [submenu], addedNodes: [] }])
+
+  const ghost = document.querySelector('[data-dsh-ghost="menu"]')
+  assert.equal(ghost.style.positionAnchor, 'none')
+  assert.equal(ghost.style.positionTryFallbacks, 'none')
+  assert.equal(ghost.style.left, '350px')
+  assert.equal(ghost.style.top, '201px')
+})
+
 test('a closing ghost cannot shadow a reopened menu or its controls by ID', () => {
   const { document } = createPage()
   const sandbox = runOverlay(document)
